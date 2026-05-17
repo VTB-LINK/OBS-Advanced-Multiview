@@ -56,9 +56,6 @@
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
-      // Visual Studio 版本配置（根据你安装的版本选择）：
-      // VS 2026: "Visual Studio 18 2026" (当前配置，MSVC v180+)
-      // VS 2022: "Visual Studio 17 2022" (需改为此，MSVC v143)
       "generator": "Visual Studio 18 2026",
       "architecture": "x64,version=10.0.22621",
       "warnings": { "dev": true, "deprecated": true }

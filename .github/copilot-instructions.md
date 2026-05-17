@@ -9,14 +9,12 @@
 当用户询问项目相关问题时，优先参考以下文档：
 
 1. **开发工作流** → [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-   - 构建流程  
+   - 构建流程
    - 提交前检查清单
    - 发布流程
-   
 2. **环境配置** → [docs/setup/README.md](docs/setup/README.md)
    - 首次配置步骤
    - VS 版本兼容性
-   
 3. **项目计划** → [plan.md](plan.md)
    - 功能规划
    - 里程碑
@@ -28,11 +26,13 @@
 **询问用途**，然后选择对应配置：
 
 - **正在开发/调试** → `Debug`
+
   ```powershell
   cmake --build build_x64 --config Debug
   ```
 
 - **功能完成/准备测试** → `RelWithDebInfo` ⭐ **推荐**
+
   ```powershell
   cmake --build build_x64 --config RelWithDebInfo
   ```
@@ -69,6 +69,7 @@ cmake --build build_x64 --config RelWithDebInfo
 ```
 
 部署脚本会自动：
+
 - 从 buildspec.json 读取插件名称
 - 检测 OBS 安装路径（Portable/用户目录/系统安装）
 - 复制 DLL 到正确位置
@@ -78,6 +79,7 @@ cmake --build build_x64 --config RelWithDebInfo
 当前配置：**Visual Studio 2026**
 
 如需切换到 VS 2022：
+
 1. 修改 `CMakePresets.json` 第 59 行
 2. 详见 [docs/setup/VS-VERSION-COMPATIBILITY.md](docs/setup/VS-VERSION-COMPATIBILITY.md)
 
@@ -135,15 +137,19 @@ build_x64/               # 构建输出（Git 忽略）
 ## 常见错误处理
 
 ### "CMake 找不到"
+
 → 引导查看：[docs/setup/TROUBLESHOOTING.md](docs/setup/TROUBLESHOOTING.md)
 
 ### "插件未加载"
+
 → 检查：
+
 1. OBS 版本 >= 31.1.1
 2. DLL 是否在正确目录
 3. OBS 日志中的错误信息
 
 ### "构建失败 - 找不到 VS 工具链"
+
 → 引导查看：[docs/setup/VS-VERSION-COMPATIBILITY.md](docs/setup/VS-VERSION-COMPATIBILITY.md)
 
 ## 发布流程简要
@@ -179,6 +185,7 @@ build_x64/               # 构建输出（Git 忽略）
 ### 当用户说"完成了"
 
 **自动检查**：
+
 1. 提醒构建 RelWithDebInfo
 2. 提醒部署测试
 3. 展示提交前检查清单
