@@ -34,7 +34,8 @@ $BuildSpecPath = Join-Path $ProjectRoot "buildspec.json"
 if (Test-Path $BuildSpecPath) {
     $BuildSpec = Get-Content $BuildSpecPath | ConvertFrom-Json
     $PluginName = $BuildSpec.name
-} else {
+}
+else {
     Write-Host "✗ buildspec.json not found at: $BuildSpecPath" -ForegroundColor Red
     exit 1
 }
@@ -44,13 +45,16 @@ $ObsPluginDir = $null
 if (Test-Path $OBS_PORTABLE_PATH) {
     $ObsPluginDir = $OBS_PORTABLE_PATH
     Write-Host "→ 使用 OBS Portable 路径" -ForegroundColor Cyan
-} elseif (Test-Path $OBS_USER_PLUGIN_PATH) {
+}
+elseif (Test-Path $OBS_USER_PLUGIN_PATH) {
     $ObsPluginDir = $OBS_USER_PLUGIN_PATH
     Write-Host "→ 使用用户插件路径" -ForegroundColor Cyan
-} elseif (Test-Path $OBS_INSTALLED_PATH) {
+}
+elseif (Test-Path $OBS_INSTALLED_PATH) {
     $ObsPluginDir = $OBS_INSTALLED_PATH
     Write-Host "→ 使用已安装 OBS 路径（可能需要管理员权限）" -ForegroundColor Yellow
-} else {
+}
+else {
     Write-Host "✗ 未找到 OBS 插件目录！" -ForegroundColor Red
     Write-Host ""
     Write-Host "请修改脚本顶部的路径配置：" -ForegroundColor Yellow
@@ -94,7 +98,8 @@ try {
         Write-Host "✓ 插件数据部署成功！" -ForegroundColor Green
         Write-Host "  From: $DataSource" -ForegroundColor Gray
         Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
-    } else {
+    }
+    else {
         Write-Host "⚠ 未找到插件数据目录，跳过 data 部署" -ForegroundColor Yellow
     }
 
@@ -103,10 +108,12 @@ try {
     if (Test-Path $OBS_EXE_PATH) {
         Write-Host "现在可以启动 OBS 测试插件：" -ForegroundColor Cyan
         Write-Host "  $OBS_EXE_PATH" -ForegroundColor White
-    } else {
+    }
+    else {
         Write-Host "提示：重启 OBS Studio 以加载插件" -ForegroundColor Cyan
     }
-} catch {
+}
+catch {
     Write-Host "✗ 部署失败：$_" -ForegroundColor Red
     if ($ObsPluginDir -eq $OBS_INSTALLED_PATH) {
         Write-Host ""

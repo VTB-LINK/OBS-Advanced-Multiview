@@ -41,6 +41,10 @@ target_sources(
           src/multiview-instance.cpp
           src/config-manager.hpp
           src/config-manager.cpp
+          src/layout-engine.hpp
+          src/layout-engine.cpp
+          src/grid-preview-widget.hpp
+          src/grid-preview-widget.cpp
           src/manager-dialog.hpp
           src/manager-dialog.cpp)
 

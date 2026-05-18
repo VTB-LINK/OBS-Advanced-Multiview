@@ -28,6 +28,7 @@ class QStackedWidget;
 class QLabel;
 class QSpinBox;
 class QCheckBox;
+class GridPreviewWidget;
 
 class ManagerDialog : public QDialog {
 	Q_OBJECT
@@ -47,6 +48,7 @@ private slots:
 	void on_open_instance();
 	void on_instance_selection_changed();
 	void on_global_settings_clicked();
+	void on_edit_grid_clicked();
 
 private:
 	void setup_ui();
@@ -54,7 +56,9 @@ private:
 	void setup_right_panel(QWidget *panel);
 	void show_instance_detail(const std::string &uuid);
 	void show_global_settings();
+	void show_grid_editor(const std::string &uuid);
 	void update_button_states();
+	void update_grid_preview();
 
 	ConfigManager *config_;
 
@@ -72,6 +76,7 @@ private:
 	QWidget *page_empty_;
 	QWidget *page_instance_detail_;
 	QWidget *page_global_settings_;
+	QWidget *page_grid_editor_;
 
 	/* Instance detail page widgets */
 	QLabel *detail_name_label_;
@@ -80,10 +85,29 @@ private:
 	QCheckBox *detail_use_global_gutter_;
 	QSpinBox *detail_gutter_spin_;
 	QLabel *detail_gutter_effective_;
+	QPushButton *btn_edit_grid_;
 	std::string current_detail_uuid_;
+
+	/* Grid editor page widgets */
+	QLabel *grid_editor_title_;
+	QSpinBox *grid_rows_spin_;
+	QSpinBox *grid_cols_spin_;
+	GridPreviewWidget *grid_preview_;
+	QPushButton *btn_grid_save_;
+	QPushButton *btn_grid_back_;
+	QPushButton *btn_add_span_;
+	QPushButton *btn_remove_span_;
+	QLabel *grid_span_info_;
+	std::string grid_edit_uuid_;
+	LayoutData grid_edit_layout_; /* working copy */
 
 	/* Global settings page widgets */
 	QSpinBox *spin_default_gutter_;
 
-	enum { PAGE_EMPTY = 0, PAGE_INSTANCE_DETAIL, PAGE_GLOBAL_SETTINGS };
+	enum {
+		PAGE_EMPTY = 0,
+		PAGE_INSTANCE_DETAIL,
+		PAGE_GLOBAL_SETTINGS,
+		PAGE_GRID_EDITOR
+	};
 };

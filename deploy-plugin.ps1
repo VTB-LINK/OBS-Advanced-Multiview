@@ -12,7 +12,8 @@ $BuildSpecPath = "$PSScriptRoot\buildspec.json"
 if (Test-Path $BuildSpecPath) {
     $BuildSpec = Get-Content $BuildSpecPath | ConvertFrom-Json
     $PluginName = $BuildSpec.name
-} else {
+}
+else {
     Write-Host "✗ buildspec.json not found" -ForegroundColor Red
     exit 1
 }
@@ -49,14 +50,16 @@ try {
         Write-Host "✓ Plugin data deployed successfully" -ForegroundColor Green
         Write-Host "  From: $DataSource" -ForegroundColor Gray
         Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
-    } else {
+    }
+    else {
         Write-Host "⚠ Plugin data directory not found, skipping data deploy" -ForegroundColor Yellow
     }
 
     Write-Host ""
     Write-Host "You can now start OBS to test the plugin:" -ForegroundColor Cyan
     Write-Host "  C:\Downloads\OBS-Studio-31.1.1-Windows-x64\bin\64bit\obs64.exe" -ForegroundColor Cyan
-} catch {
+}
+catch {
     Write-Host "✗ Failed to deploy plugin: $_" -ForegroundColor Red
     exit 1
 }

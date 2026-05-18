@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "manager-dialog.hpp"
+#include "grid-preview-widget.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -29,9 +30,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
-#include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+
+#include <set>
 
 ManagerDialog::ManagerDialog(ConfigManager *config, QWidget *parent)
 	: QDialog(parent), config_(config)
@@ -53,20 +55,15 @@ void ManagerDialog::setup_ui()
 {
 	auto *main_layout = new QHBoxLayout(this);
 
-	auto *splitter = new QSplitter(Qt::Horizontal, this);
-
 	auto *left_panel = new QWidget(this);
 	setup_left_panel(left_panel);
-	splitter->addWidget(left_panel);
+	left_panel->setFixedWidth(200);
 
 	auto *right_panel = new QWidget(this);
 	setup_right_panel(right_panel);
-	splitter->addWidget(right_panel);
 
-	splitter->setStretchFactor(0, 1);
-	splitter->setStretchFactor(1, 2);
-
-	main_layout->addWidget(splitter);
+	main_layout->addWidget(left_panel);
+	main_layout->addWidget(right_panel, 1);
 }
 
 void ManagerDialog::setup_left_panel(QWidget *panel)
@@ -218,12 +215,12 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 
 	detail_layout->addStretch();
 
-	auto *detail_hint = new QLabel(
-		QStringLiteral("Grid editor will be available in Milestone 2"),
-		page_instance_detail_);
-	detail_hint->setAlignment(Qt::AlignCenter);
-	detail_hint->setStyleSheet(QStringLiteral("color: gray;"));
-	detail_layout->addWidget(detail_hint);
+	btn_edit_grid_ =
+		new QPushButton(QStringLiteral("Edit Grid..."),
+				page_instance_detail_);
+	detail_layout->addWidget(btn_edit_grid_);
+	connect(btn_edit_grid_, &QPushButton::clicked, this,
+		&ManagerDialog::on_edit_grid_clicked);
 
 	right_stack_->addWidget(page_instance_detail_);
 
@@ -264,6 +261,265 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	});
 
 	right_stack_->addWidget(page_global_settings_);
+
+	/* Page 3: grid editor */
+	page_grid_editor_ = new QWidget();
+	auto *ge_layout = new QVBoxLayout(page_grid_editor_);
+
+	/* Title + back button row */
+	auto *ge_top_row = new QHBoxLayout();
+	btn_grid_back_ = new QPushButton(
+		QStringLiteral("<< Back"), page_grid_editor_);
+	ge_top_row->addWidget(btn_grid_back_);
+	grid_editor_title_ = new QLabel(page_grid_editor_);
+	grid_editor_title_->setStyleSheet(
+		QStringLiteral("font-size: 16px; font-weight: bold;"));
+	ge_top_row->addWidget(grid_editor_title_);
+	ge_top_row->addStretch();
+	ge_layout->addLayout(ge_top_row);
+
+	/* Controls row: rows, cols, gutter */
+	auto *ge_ctrl_row = new QHBoxLayout();
+
+	ge_ctrl_row->addWidget(
+		new QLabel(QStringLiteral("Rows:"), page_grid_editor_));
+	grid_rows_spin_ = new QSpinBox(page_grid_editor_);
+	grid_rows_spin_->setRange(1, 10);
+	ge_ctrl_row->addWidget(grid_rows_spin_);
+
+	ge_ctrl_row->addWidget(
+		new QLabel(QStringLiteral("Cols:"), page_grid_editor_));
+	grid_cols_spin_ = new QSpinBox(page_grid_editor_);
+	grid_cols_spin_->setRange(1, 10);
+	ge_ctrl_row->addWidget(grid_cols_spin_);
+
+	ge_ctrl_row->addStretch();
+	ge_layout->addLayout(ge_ctrl_row);
+
+	/* Span controls row */
+	auto *ge_span_row = new QHBoxLayout();
+	btn_add_span_ = new QPushButton(
+		QStringLiteral("Add Span..."), page_grid_editor_);
+	btn_remove_span_ = new QPushButton(
+		QStringLiteral("Remove Selected Span"), page_grid_editor_);
+	ge_span_row->addWidget(btn_add_span_);
+	ge_span_row->addWidget(btn_remove_span_);
+	grid_span_info_ = new QLabel(page_grid_editor_);
+	grid_span_info_->setStyleSheet(QStringLiteral("color: gray;"));
+	ge_span_row->addWidget(grid_span_info_);
+	ge_span_row->addStretch();
+	ge_layout->addLayout(ge_span_row);
+
+	/* Grid preview */
+	grid_preview_ = new GridPreviewWidget(page_grid_editor_);
+	ge_layout->addWidget(grid_preview_, 1);
+
+	/* Save button */
+	btn_grid_save_ = new QPushButton(
+		QStringLiteral("Save Layout"), page_grid_editor_);
+	ge_layout->addWidget(btn_grid_save_);
+
+	/* Connections */
+	connect(btn_grid_back_, &QPushButton::clicked, this, [this]() {
+		show_instance_detail(grid_edit_uuid_);
+	});
+
+	connect(grid_rows_spin_,
+		QOverload<int>::of(&QSpinBox::valueChanged), this,
+		[this](int val) {
+			grid_edit_layout_.rows = val;
+			/* Remove spans that go out of bounds */
+			auto &spans = grid_edit_layout_.spans;
+			spans.erase(
+				std::remove_if(
+					spans.begin(), spans.end(),
+					[&](const SpanRegion &s) {
+						return s.row + s.rowSpan > val;
+					}),
+				spans.end());
+			update_grid_preview();
+		});
+
+	connect(grid_cols_spin_,
+		QOverload<int>::of(&QSpinBox::valueChanged), this,
+		[this](int val) {
+			grid_edit_layout_.columns = val;
+			auto &spans = grid_edit_layout_.spans;
+			spans.erase(
+				std::remove_if(
+					spans.begin(), spans.end(),
+					[&](const SpanRegion &s) {
+						return s.col + s.colSpan > val;
+					}),
+				spans.end());
+			update_grid_preview();
+		});
+
+	connect(btn_add_span_, &QPushButton::clicked, this, [this]() {
+		SelectionRect sr;
+		if (!grid_preview_->selection_is_mergeable(sr)) {
+			QMessageBox::information(
+				this, QStringLiteral("Add Span"),
+				QStringLiteral(
+					"Select a rectangular group of cells "
+					"(Ctrl+Click or Shift+Click) to merge."));
+			return;
+		}
+
+		/* Check overlap with existing spans */
+		if (grid_preview_->selection_overlaps_span()) {
+			QMessageBox::warning(
+				this, QStringLiteral("Add Span"),
+				QStringLiteral(
+					"Selection overlaps an existing span. "
+					"Remove it first."));
+			return;
+		}
+
+		SpanRegion newSpan{sr.row, sr.col, sr.rowSpan, sr.colSpan};
+
+		/* Validate with layout engine */
+		LayoutEngine validator;
+		validator.set_layout(grid_edit_layout_);
+		if (validator.validate_span(newSpan) !=
+		    LayoutEngine::SpanError::None) {
+			QMessageBox::warning(
+				this, QStringLiteral("Add Span"),
+				QStringLiteral(
+					"Cannot create this span. "
+					"It may overlap or be out of bounds."));
+			return;
+		}
+
+		grid_edit_layout_.spans.push_back(newSpan);
+		grid_preview_->clear_selection();
+		update_grid_preview();
+	});
+
+	connect(btn_remove_span_, &QPushButton::clicked, this, [this]() {
+		/* Find which span is selected (first selected position that is inside a span) */
+		auto &sel = grid_preview_->selected_positions();
+		if (sel.empty())
+			return;
+
+		std::set<int> span_indices;
+		for (auto &[r, c] : sel) {
+			for (int i = 0;
+			     i < (int)grid_edit_layout_.spans.size(); i++) {
+				auto &s = grid_edit_layout_.spans[i];
+				if (r >= s.row && r < s.row + s.rowSpan &&
+				    c >= s.col && c < s.col + s.colSpan) {
+					span_indices.insert(i);
+				}
+			}
+		}
+
+		if (span_indices.empty()) {
+			QMessageBox::information(
+				this, QStringLiteral("Remove Span"),
+				QStringLiteral(
+					"No span in current selection."));
+			return;
+		}
+
+		/* Remove in reverse order to keep indices valid */
+		for (auto it = span_indices.rbegin();
+		     it != span_indices.rend(); ++it) {
+			grid_edit_layout_.spans.erase(
+				grid_edit_layout_.spans.begin() + *it);
+		}
+
+		grid_preview_->clear_selection();
+		update_grid_preview();
+	});
+
+	connect(btn_grid_save_, &QPushButton::clicked, this, [this]() {
+		MultiviewInstance *inst =
+			config_->find_instance(grid_edit_uuid_);
+		if (!inst)
+			return;
+
+		/* Validate all spans */
+		auto err =
+			LayoutEngine::validate_all_spans(grid_edit_layout_);
+		if (err != LayoutEngine::SpanError::None) {
+			QMessageBox::warning(
+				this, QStringLiteral("Save Layout"),
+				QStringLiteral(
+					"Layout has invalid spans. "
+					"Please fix before saving."));
+			return;
+		}
+
+		inst->layout.rows = grid_edit_layout_.rows;
+		inst->layout.columns = grid_edit_layout_.columns;
+		inst->layout.spans = grid_edit_layout_.spans;
+		inst->layoutDirty = true;
+		config_->save();
+
+		obs_log(LOG_INFO, "layout saved: %dx%d, %d spans",
+			inst->layout.rows, inst->layout.columns,
+			(int)inst->layout.spans.size());
+
+		show_instance_detail(grid_edit_uuid_);
+	});
+
+	connect(grid_preview_, &GridPreviewWidget::selection_changed, this,
+		[this]() {
+			auto &sel = grid_preview_->selected_positions();
+			if (sel.empty()) {
+				grid_span_info_->setText(QString());
+				btn_add_span_->setEnabled(false);
+				btn_remove_span_->setEnabled(false);
+				return;
+			}
+
+			/* Check if selection contains a span */
+			bool has_span = grid_preview_->selection_overlaps_span();
+
+			/* Check if selection is a valid mergeable rectangle */
+			SelectionRect sr;
+			bool mergeable =
+				grid_preview_->selection_is_mergeable(sr);
+
+			/* Update button states */
+			btn_add_span_->setEnabled(mergeable && !has_span);
+			btn_remove_span_->setEnabled(has_span);
+
+			/* Update info label */
+			if (sel.size() == 1) {
+				auto [r, c] = *sel.begin();
+				if (has_span) {
+					grid_span_info_->setText(
+						QStringLiteral(
+							"Selected: span cell at %1,%2")
+							.arg(r)
+							.arg(c));
+				} else {
+					grid_span_info_->setText(
+						QStringLiteral(
+							"Selected: cell %1,%2")
+							.arg(r)
+							.arg(c));
+				}
+			} else if (mergeable && !has_span) {
+				grid_span_info_->setText(
+					QStringLiteral(
+						"Selected: %1x%2 rectangle at %3,%4 - ready to merge")
+						.arg(sr.rowSpan)
+						.arg(sr.colSpan)
+						.arg(sr.row)
+						.arg(sr.col));
+			} else if (!mergeable) {
+				grid_span_info_->setText(QStringLiteral(
+					"Selection is not a valid rectangle (must be contiguous rectangular area)"));
+			} else {
+				grid_span_info_->setText(QStringLiteral(
+					"Selection overlaps existing span - remove it first"));
+			}
+		});
+
+	right_stack_->addWidget(page_grid_editor_);
 
 	layout->addWidget(right_stack_);
 }
@@ -453,4 +709,53 @@ void ManagerDialog::show_global_settings()
 	spin_default_gutter_->setValue(
 		config_->global_settings().defaultGutterPx);
 	right_stack_->setCurrentIndex(PAGE_GLOBAL_SETTINGS);
+}
+
+void ManagerDialog::on_edit_grid_clicked()
+{
+	if (current_detail_uuid_.empty())
+		return;
+	show_grid_editor(current_detail_uuid_);
+}
+
+void ManagerDialog::show_grid_editor(const std::string &uuid)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid);
+	if (!inst)
+		return;
+
+	grid_edit_uuid_ = uuid;
+	grid_edit_layout_ = inst->layout;
+	/* Grid editor uses gutter=0 for seamless preview */
+	grid_edit_layout_.gutterPx = 0;
+
+	grid_editor_title_->setText(
+		QStringLiteral("Edit Grid: %1")
+			.arg(QString::fromStdString(inst->name)));
+
+	grid_rows_spin_->blockSignals(true);
+	grid_cols_spin_->blockSignals(true);
+
+	grid_rows_spin_->setValue(grid_edit_layout_.rows);
+	grid_cols_spin_->setValue(grid_edit_layout_.columns);
+
+	grid_rows_spin_->blockSignals(false);
+	grid_cols_spin_->blockSignals(false);
+
+	grid_span_info_->setText(
+		QStringLiteral("%1 span(s)")
+			.arg(grid_edit_layout_.spans.size()));
+	btn_add_span_->setEnabled(false);
+	btn_remove_span_->setEnabled(false);
+
+	update_grid_preview();
+	right_stack_->setCurrentIndex(PAGE_GRID_EDITOR);
+}
+
+void ManagerDialog::update_grid_preview()
+{
+	grid_preview_->set_layout(grid_edit_layout_);
+	grid_span_info_->setText(
+		QStringLiteral("%1 span(s)")
+			.arg(grid_edit_layout_.spans.size()));
 }
