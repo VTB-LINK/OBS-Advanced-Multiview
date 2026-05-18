@@ -63,7 +63,13 @@ cmake --build build_x64 --config RelWithDebInfo
 
 ### 部署插件到 OBS
 
+⚠️ **部署前必须先执行 clang-format**：
+
 ```powershell
+# 1. 格式化所有源文件
+& "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\clang-format.exe" -i src/*.cpp src/*.hpp src/*.c src/*.h
+
+# 2. 部署
 .\docs\setup\deploy-plugin.ps1              # Debug 版本
 .\docs\setup\deploy-plugin.ps1 RelWithDebInfo  # RelWithDebInfo 版本
 ```
@@ -202,7 +208,14 @@ build_x64/               # 构建输出（Git 忽略）
 
 ### 当用户要求"部署"
 
-默认使用 RelWithDebInfo 配置，除非明确说明要 Debug。
+**必须执行以下步骤**：
+
+1. 先运行 clang-format 格式化所有源文件：
+   ```powershell
+   & "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\clang-format.exe" -i src/*.cpp src/*.hpp src/*.c src/*.h
+   ```
+2. 构建（默认 RelWithDebInfo，除非明确说明要 Debug）
+3. 部署到 OBS
 
 ## 文档更新原则
 
