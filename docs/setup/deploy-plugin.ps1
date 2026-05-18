@@ -78,9 +78,26 @@ try {
     }
     
     Copy-Item $PluginDll -Destination $ObsPluginDir -Force
-    Write-Host "✓ 插件部署成功！" -ForegroundColor Green
+    Write-Host "✓ 插件 DLL 部署成功！" -ForegroundColor Green
     Write-Host "  From: $PluginDll" -ForegroundColor Gray
     Write-Host "  To:   $ObsPluginDir" -ForegroundColor Gray
+
+    # 部署 data 文件（locale 等）
+    $DataSource = Join-Path $ProjectRoot "build_x64\rundir\$BuildConfig\$PluginName"
+    # OBS data 目录：与 obs-plugins 同级的 data/obs-plugins/<plugin-name>/
+    $ObsDataDir = Join-Path (Split-Path (Split-Path $ObsPluginDir)) "data\obs-plugins\$PluginName"
+    if (Test-Path $DataSource) {
+        if (-not (Test-Path $ObsDataDir)) {
+            New-Item -Path $ObsDataDir -ItemType Directory -Force | Out-Null
+        }
+        Copy-Item "$DataSource\*" -Destination $ObsDataDir -Recurse -Force
+        Write-Host "✓ 插件数据部署成功！" -ForegroundColor Green
+        Write-Host "  From: $DataSource" -ForegroundColor Gray
+        Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
+    } else {
+        Write-Host "⚠ 未找到插件数据目录，跳过 data 部署" -ForegroundColor Yellow
+    }
+
     Write-Host ""
     
     if (Test-Path $OBS_EXE_PATH) {

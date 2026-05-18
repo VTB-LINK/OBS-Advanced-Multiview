@@ -33,13 +33,13 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.plugintemplate-for-obs"
+            "bundleId": "com.vtb-link.obs-advanced-multiview"
         }
     },
-    "name": "plugintemplate-for-obs",
-    "displayName": "Plugin Template for OBS",
-    "version": "1.0.0",
-    "author": "Your Name Here",
-    "website": "https://example.com",
+    "name": "obs-advanced-multiview",
+    "displayName": "OBS Advanced Multiview",
+    "version": "0.1.0",
+    "author": "VTB-LINK",
+    "website": "https://github.com/VTB-LINK/OBS-Advanced-Multiview",
     "email": "me@example.com"
 }

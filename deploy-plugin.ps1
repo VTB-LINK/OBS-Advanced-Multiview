@@ -34,9 +34,25 @@ if (-not (Test-Path $ObsPluginDir)) {
 
 try {
     Copy-Item $PluginDll -Destination $ObsPluginDir -Force
-    Write-Host "✓ Plugin deployed successfully" -ForegroundColor Green
+    Write-Host "✓ Plugin DLL deployed successfully" -ForegroundColor Green
     Write-Host "  From: $PluginDll" -ForegroundColor Gray
     Write-Host "  To:   $ObsPluginDir" -ForegroundColor Gray
+
+    # Deploy data files (locale etc.)
+    $DataSource = "$PSScriptRoot\build_x64\rundir\$BuildConfig\$PluginName"
+    $ObsDataDir = "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\data\obs-plugins\$PluginName"
+    if (Test-Path $DataSource) {
+        if (-not (Test-Path $ObsDataDir)) {
+            New-Item -Path $ObsDataDir -ItemType Directory -Force | Out-Null
+        }
+        Copy-Item "$DataSource\*" -Destination $ObsDataDir -Recurse -Force
+        Write-Host "✓ Plugin data deployed successfully" -ForegroundColor Green
+        Write-Host "  From: $DataSource" -ForegroundColor Gray
+        Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
+    } else {
+        Write-Host "⚠ Plugin data directory not found, skipping data deploy" -ForegroundColor Yellow
+    }
+
     Write-Host ""
     Write-Host "You can now start OBS to test the plugin:" -ForegroundColor Cyan
     Write-Host "  C:\Downloads\OBS-Studio-31.1.1-Windows-x64\bin\64bit\obs64.exe" -ForegroundColor Cyan

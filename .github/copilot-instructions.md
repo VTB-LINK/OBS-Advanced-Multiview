@@ -85,9 +85,9 @@ cmake --build build_x64 --config RelWithDebInfo
 
 ### 构建产物位置
 
-- Debug: `build_x64/Debug/plugintemplate-for-obs.dll` (54 KB)
-- RelWithDebInfo: `build_x64/RelWithDebInfo/plugintemplate-for-obs.dll` (12 KB) ⭐
-- Release: `build_x64/Release/plugintemplate-for-obs.dll` (~10 KB)
+- Debug: `build_x64/Debug/obs-advanced-multiview.dll`
+- RelWithDebInfo: `build_x64/RelWithDebInfo/obs-advanced-multiview.dll` ⭐
+- Release: `build_x64/Release/obs-advanced-multiview.dll`
 
 ## 代码风格和约定
 
@@ -119,7 +119,9 @@ cmake --build build_x64 --config RelWithDebInfo
 
 ```
 src/
-  ├── plugin-main.c        # 插件入口点
+  ├── plugin-main.cpp      # 插件入口点（工具菜单注册、配置路径初始化）
+  ├── manager-dialog.hpp   # 管理 / 设置 Dialog
+  ├── manager-dialog.cpp   # 管理 / 设置 Dialog 实现
   ├── plugin-support.c.in  # 支持函数（模板）
   └── plugin-support.h     # 头文件
 
