@@ -321,14 +321,18 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		obs_source_t *src = nullptr;
 		OBSSourceAutoRelease srcHolder;
 		bool isPrvwFallback = false;
+		bool isPgm = false;
 
 		if (i < (int)cell_sources_.size()) {
 			const auto &cs = cell_sources_[i];
 
 			if (cs.type == "pgm") {
-				/* Resolve PGM fresh each frame */
+				/* PGM: we use obs_render_main_texture() for
+				 * composited output (includes transitions).
+				 * Still get current scene to verify non-null. */
 				srcHolder = obs_frontend_get_current_scene();
 				src = srcHolder;
+				isPgm = true;
 			} else if (cs.type == "prvw") {
 				/* Resolve PRVW fresh each frame */
 				srcHolder =
@@ -348,9 +352,18 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		}
 
 		if (src) {
-			/* Render source with letterbox/pillarbox */
-			uint32_t srcW = obs_source_get_width(src);
-			uint32_t srcH = obs_source_get_height(src);
+			/* Determine source dimensions for letterbox */
+			uint32_t srcW, srcH;
+			if (isPgm) {
+				/* PGM uses canvas resolution (composited output) */
+				struct obs_video_info ovi;
+				obs_get_video_info(&ovi);
+				srcW = ovi.base_width;
+				srcH = ovi.base_height;
+			} else {
+				srcW = obs_source_get_width(src);
+				srcH = obs_source_get_height(src);
+			}
 
 			if (srcW == 0 || srcH == 0) {
 				/* Source not ready, draw black */
@@ -378,10 +391,13 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				gs_draw_sprite(nullptr, 0, cell.w, cell.h);
 			endRegion();
 
-			/* Render source into video rect */
+			/* Render into video rect */
 			startRegion(vrX, vrY, vr.w, vr.h, 0.0f,
 				    (float)srcW, 0.0f, (float)srcH);
-			obs_source_video_render(src);
+			if (isPgm)
+				obs_render_main_texture();
+			else
+				obs_source_video_render(src);
 			endRegion();
 
 			/* Draw PRVW fallback indicator (yellow bar at bottom) */
