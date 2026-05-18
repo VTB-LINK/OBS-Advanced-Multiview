@@ -438,6 +438,13 @@ bool MultiviewWindow::event(QEvent *event)
 
 void MultiviewWindow::closeEvent(QCloseEvent *event)
 {
+	/* Stop rendering and release all source refs immediately.
+	 * This ensures obs_source_dec_showing is called, which stops
+	 * screen capture sources from signaling the OS (yellow border). */
+	ready_ = false;
+	destroy_display();
+	release_source_refs();
+
 	emit window_closed(uuid_);
 	event->accept();
 	hide();

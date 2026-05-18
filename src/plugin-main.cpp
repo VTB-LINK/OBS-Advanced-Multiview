@@ -92,7 +92,11 @@ void open_multiview_window(const std::string &uuid)
 
 	QObject::connect(window, &MultiviewWindow::window_closed,
 			 [](const std::string &closedUuid) {
-				 open_windows.erase(closedUuid);
+				 auto it = open_windows.find(closedUuid);
+				 if (it != open_windows.end()) {
+					 it->second->deleteLater();
+					 open_windows.erase(it);
+				 }
 			 });
 
 	open_windows[uuid] = window;
@@ -117,6 +121,8 @@ static void close_all_multiview_windows()
 {
 	for (auto &[uuid, window] : open_windows) {
 		if (window) {
+			/* Disconnect signal to avoid modifying map during iteration */
+			window->disconnect();
 			window->close();
 			delete window;
 		}
