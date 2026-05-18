@@ -226,6 +226,7 @@ void MultiviewWindow::update_source_refs()
 	cell_sources_.resize(cellCount);
 
 	for (size_t i = 0; i < cellCount; i++) {
+		cell_sources_[i].type.clear();
 		cell_sources_[i].weak_ref = nullptr;
 		cell_sources_[i].showing = false;
 		cell_sources_[i].prvw_fallback = false;
@@ -237,23 +238,14 @@ void MultiviewWindow::update_source_refs()
 		if (ca.type.empty())
 			continue;
 
-		obs_source_t *src = nullptr;
+		cell_sources_[i].type = ca.type;
 
-		if (ca.type == "pgm") {
-			src = obs_frontend_get_current_scene();
-		} else if (ca.type == "prvw") {
-			src = obs_frontend_get_current_preview_scene();
-			if (!src) {
-				/* Studio Mode not active, fall back to PGM */
-				src = obs_frontend_get_current_scene();
-				cell_sources_[i].prvw_fallback = (src != nullptr);
-			}
-		} else if (ca.type == "scene") {
-			src = obs_get_source_by_name(ca.name.c_str());
-		} else if (ca.type == "source") {
-			src = obs_get_source_by_name(ca.name.c_str());
-		}
+		/* PGM/PRVW are resolved per-frame in render(), no caching */
+		if (ca.type == "pgm" || ca.type == "prvw")
+			continue;
 
+		/* Scene/Source: cache weak ref and inc_showing */
+		obs_source_t *src = obs_get_source_by_name(ca.name.c_str());
 		if (src) {
 			cell_sources_[i].weak_ref = OBSGetWeakRef(src);
 			obs_source_inc_showing(src);
@@ -330,11 +322,29 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		OBSSourceAutoRelease srcHolder;
 		bool isPrvwFallback = false;
 
-		if (i < (int)cell_sources_.size() &&
-		    cell_sources_[i].weak_ref) {
-			srcHolder = OBSGetStrongRef(cell_sources_[i].weak_ref);
-			src = srcHolder;
-			isPrvwFallback = cell_sources_[i].prvw_fallback;
+		if (i < (int)cell_sources_.size()) {
+			const auto &cs = cell_sources_[i];
+
+			if (cs.type == "pgm") {
+				/* Resolve PGM fresh each frame */
+				srcHolder = obs_frontend_get_current_scene();
+				src = srcHolder;
+			} else if (cs.type == "prvw") {
+				/* Resolve PRVW fresh each frame */
+				srcHolder =
+					obs_frontend_get_current_preview_scene();
+				if (!srcHolder) {
+					/* No Studio Mode → fallback to PGM */
+					srcHolder =
+						obs_frontend_get_current_scene();
+					isPrvwFallback = (srcHolder != nullptr);
+				}
+				src = srcHolder;
+			} else if (cs.weak_ref) {
+				/* scene/source: use cached ref */
+				srcHolder = OBSGetStrongRef(cs.weak_ref);
+				src = srcHolder;
+			}
 		}
 
 		if (src) {
@@ -495,12 +505,12 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 	menu.addSeparator();
 
 	if (cellIndex >= 0) {
-		/* Check if cell has a source */
+		/* Check if cell has a source assigned */
 		bool hasSource = false;
 		{
 			std::lock_guard<std::mutex> lock(source_mutex_);
 			if (cellIndex < (int)cell_sources_.size() &&
-			    cell_sources_[cellIndex].weak_ref)
+			    !cell_sources_[cellIndex].type.empty())
 				hasSource = true;
 		}
 

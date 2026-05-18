@@ -90,7 +90,8 @@ private:
 
 	/* Sources per cell (indexed same as engine_.cells()) */
 	struct CellSource {
-		OBSWeakSource weak_ref;
+		std::string type;           /* "pgm", "prvw", "scene", "source", "" */
+		OBSWeakSource weak_ref;     /* cached for scene/source only */
 		bool showing = false;
 		bool prvw_fallback = false; /* PRVW fell back to PGM */
 	};
