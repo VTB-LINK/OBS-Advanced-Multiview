@@ -24,15 +24,14 @@
 
 - **Move Up / Move Down（排序）**：按钮已禁用，排序持久化未实现。
 - **删除已打开实例**：当前删除实例不会自动关闭已打开的对应窗口（窗口可能变为孤儿状态）。后续需实现删除前自动关闭或阻止删除。
-- **空 folder 持久化**：空 folder 不会保存到配置文件，重启后消失。只有包含实例的 folder 会恢复。
 
 ## Source Identity
 
-- **基于 name 的引用**：当前 Scene / Source assignment 以名称为主键。Source rename / undo / uuid 匹配的更稳健策略排期到后续 Milestone。
+- **基于 name 的引用**：当前 Scene / Source assignment 以名称为主键。删除后 undo 恢复已通过 lazy re-resolve 机制支持（按名重新查找）。基于 UUID 的完整匹配排期到后续 Milestone。
 
 ## Cell Assignment 保存语义
 
-- **自动保存**：当前 cell assignment 修改（添加/更换/清空）会立即自动保存。Save Cell Assignments 菜单保留为显式保存入口，但语义上与自动保存重叠。后续如需 dirty workflow 需重新设计。
+- **自动保存**：当前 cell assignment 修改（添加/更换/清空）会立即自动保存。后续如需 dirty workflow 需重新设计。
 
 ## 分发
 

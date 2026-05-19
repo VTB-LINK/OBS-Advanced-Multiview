@@ -38,6 +38,12 @@
 
 ## MultiviewWindow
 
+### 已修复
+
+- **置顶切换 window 重建**：Windows 平台已改用 Win32 `SetWindowPos(HWND_TOPMOST/HWND_NOTOPMOST)` 实现，不再调用 `setWindowFlags`，不会触发 HWND 重建，无 flicker / 焦点丢失。
+- **obs_get_source_by_name 依赖 name**：实现 lazy re-resolve 机制——当 source 被删除（`weak_ref` 失效）时按保存的 name 重新查找。支持 undo 恢复场景。re-resolve 频率可在 Global Settings 配置（继承 OBS fps 或自定义 1~120 fps）。
+- **PRVW fallback 颜色**：无 Studio Mode 时的指示条颜色已修正为黄色（`0xCCFFD400`），与 PGM 红色条区分。
+
 ### 观察项
 
 - **OBSDisplay 释放确认**：`destroy_display()` 置空 `OBSDisplay` 依赖 RAII wrapper 释放底层资源。需确认 `obs.hpp` 中 `OBSDisplay` 的析构行为符合预期。
@@ -46,10 +52,6 @@
   - 后续考虑将 cell source 快照复制到局部变量，缩短 `source_mutex_` 持有时间。
   - 当前不建议贸然大改，避免破坏稳定性。
 
-- **obs_get_source_by_name 依赖 name**：当前 Scene / Source 引用按 name 获取。后续 Milestone 需补充更稳健的 source identity / rename / delete / undo 策略。
-
-- **置顶切换 window 重建**：always-on-top 先 destroy display 再 setWindowFlags 再 recreate，时序较为敏感。需确认在连续快速切换时不产生 race condition。
-
 ---
 
 ## ManagerDialog
@@ -57,20 +59,22 @@
 ### 已修复
 
 - **Move Up / Move Down 禁用**：排序功能未实现前，按钮已禁用并更新 tooltip 提示。
+- **Folder 功能已移除**：Milestone 3 后决定移除 folder grouping 功能，简化实例管理。空 folder 不持久化问题已不存在。
 
 ### 观察项
 
 - **删除已打开实例**：`on_delete_instance()` 删除 config 中实例后，对应已打开 MultiviewWindow 可能变成孤儿。后续需给 `plugin-main.cpp` 增加"关闭指定 uuid 窗口"全局函数，ManagerDialog 删除前调用。
 
-- **空 folder 不持久化**：空 folder 当前不会持久化；只有有实例引用的 folder 会恢复。这是已知设计，非 bug。
-
 ---
 
 ## Source Lifecycle
 
-### 观察项
+### 已修复
 
-- **on_add_source() 立即 save**：当前 cell assignment 修改会立即保存配置。Save Cell Assignments 菜单保留为显式入口但语义重叠。后续如需 dirty workflow 需重新设计。
+- **Source 删除 + Undo 恢复**：通过 lazy re-resolve 机制支持。删除后 weak_ref 失效不崩溃，undo 恢复后自动按名重建引用。
+- **Save Cell Assignments 菜单语义重叠**：已移除独立的 Save Cell Assignments 菜单项，改为纯自动保存。
+
+### 观察项
 
 - **source showing / dec_showing 配对**：需验证在多窗口、多 cell 引用同一 source 场景下关闭窗口时 dec_showing 正确配对。
 
