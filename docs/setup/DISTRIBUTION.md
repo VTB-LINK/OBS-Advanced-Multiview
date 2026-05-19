@@ -17,16 +17,16 @@
 #### Debug 版本
 ```
 build_x64\Debug\
-  ├── plugintemplate-for-obs.dll    (54 KB)  ← 插件主文件
-  ├── plugintemplate-for-obs.pdb    (884 KB) ← 调试符号文件
+  ├── obs-advanced-multiview.dll    (54 KB)  ← 插件主文件
+  ├── obs-advanced-multiview.pdb    (884 KB) ← 调试符号文件
   └── plugin-support.pdb            (60 KB)  ← 支持库符号（编译时使用）
 ```
 
 #### RelWithDebInfo 版本（推荐分发）
 ```
 build_x64\RelWithDebInfo\
-  ├── plugintemplate-for-obs.dll    (12 KB)  ← 插件主文件（优化版）
-  ├── plugintemplate-for-obs.pdb    (476 KB) ← 调试符号文件
+  ├── obs-advanced-multiview.dll    (12 KB)  ← 插件主文件（优化版）
+  ├── obs-advanced-multiview.pdb    (476 KB) ← 调试符号文件
   └── plugin-support.pdb            (60 KB)  ← 支持库符号（编译时使用）
 ```
 
@@ -35,7 +35,7 @@ build_x64\RelWithDebInfo\
 ### 方案一：最小分发包（推荐）
 
 **文件**：
-- `plugintemplate-for-obs.dll` (12 KB)
+- `obs-advanced-multiview.dll` (12 KB)
 
 **优点**：
 - 文件小，下载快
@@ -50,7 +50,7 @@ build_x64\RelWithDebInfo\
 New-Item -Path "dist" -ItemType Directory -Force
 
 # 复制 DLL
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" "dist\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" "dist\"
 
 # 创建 ZIP（需要安装 7-Zip 或使用 Windows 内置压缩）
 Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v1.0.0.zip" -Force
@@ -59,8 +59,8 @@ Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v1.0.0.
 ### 方案二：带调试符号的分发包
 
 **文件**：
-- `plugintemplate-for-obs.dll` (12 KB)
-- `plugintemplate-for-obs.pdb` (476 KB)
+- `obs-advanced-multiview.dll` (12 KB)
+- `obs-advanced-multiview.pdb` (476 KB)
 
 **优点**：
 - 用户崩溃时可以提供详细堆栈跟踪
@@ -72,8 +72,8 @@ Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v1.0.0.
 **打包命令**：
 ```powershell
 New-Item -Path "dist" -ItemType Directory -Force
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" "dist\"
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.pdb" "dist\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" "dist\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.pdb" "dist\"
 Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v1.0.0-with-symbols.zip" -Force
 ```
 
@@ -82,11 +82,11 @@ Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v1.0.0-
 **文件结构**：
 ```
 OBS-Advanced-Multiview-v1.0.0\
-  ├── plugintemplate-for-obs.dll        ← 插件文件
+  ├── obs-advanced-multiview.dll        ← 插件文件
   ├── README.txt                        ← 安装说明
   ├── LICENSE.txt                       ← 许可证
   └── symbols\                          ← 可选：调试符号
-      └── plugintemplate-for-obs.pdb
+      └── obs-advanced-multiview.pdb
 ```
 
 **创建脚本**：
@@ -99,8 +99,8 @@ New-Item -Path "$distDir" -ItemType Directory -Force
 New-Item -Path "$distDir\symbols" -ItemType Directory -Force
 
 # 复制文件
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" "$distDir\"
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.pdb" "$distDir\symbols\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" "$distDir\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.pdb" "$distDir\symbols\"
 Copy-Item "LICENSE" "$distDir\LICENSE.txt"
 
 # 创建 README.txt
@@ -109,7 +109,7 @@ OBS Advanced Multiview Plugin v$version
 
 安装说明：
 1. 关闭 OBS Studio
-2. 将 plugintemplate-for-obs.dll 复制到以下目录之一：
+2. 将 obs-advanced-multiview.dll 复制到以下目录之一：
    - OBS Portable: OBS-Studio\obs-plugins\64bit\
    - OBS 已安装版: C:\Program Files\obs-studio\obs-plugins\64bit\
 3. 重新启动 OBS Studio
@@ -136,14 +136,14 @@ Write-Host "✓ 分发包已创建：OBS-Advanced-Multiview-v$version-full.zip" 
 **OBS Portable 版本**：
 ```powershell
 # 复制到 OBS Portable 目录
-Copy-Item "plugintemplate-for-obs.dll" `
+Copy-Item "obs-advanced-multiview.dll" `
           "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\obs-plugins\64bit\"
 ```
 
 **OBS 已安装版本**（需管理员权限）：
 ```powershell
 # 以管理员身份运行 PowerShell
-Copy-Item "plugintemplate-for-obs.dll" `
+Copy-Item "obs-advanced-multiview.dll" `
           "C:\Program Files\obs-studio\obs-plugins\64bit\"
 ```
 
@@ -152,7 +152,7 @@ Copy-Item "plugintemplate-for-obs.dll" `
 # 复制到用户插件目录（无需管理员权限）
 $pluginDir = "$env:APPDATA\obs-studio\obs-plugins\64bit"
 New-Item -Path $pluginDir -ItemType Directory -Force
-Copy-Item "plugintemplate-for-obs.dll" $pluginDir
+Copy-Item "obs-advanced-multiview.dll" $pluginDir
 ```
 
 ### 自动部署脚本
@@ -169,9 +169,9 @@ $obsPortable = "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\obs-plugins\64bit"
 $obsUser = "$env:APPDATA\obs-studio\obs-plugins\64bit"
 
 # 检查当前目录中的 DLL
-$dllPath = ".\plugintemplate-for-obs.dll"
+$dllPath = ".\obs-advanced-multiview.dll"
 if (-not (Test-Path $dllPath)) {
-    Write-Host "✗ 错误：找不到 plugintemplate-for-obs.dll" -ForegroundColor Red
+    Write-Host "✗ 错误：找不到 obs-advanced-multiview.dll" -ForegroundColor Red
     Write-Host "  请确保在正确的目录中运行此脚本。" -ForegroundColor Yellow
     pause
     exit 1

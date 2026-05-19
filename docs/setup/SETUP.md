@@ -116,27 +116,27 @@ C:\Downloads\OBS-Studio-31.1.1-Windows-x64\bin\64bit\obs64.exe
 ### 4. 手动部署或分发插件
 
 构建产物位于：
-- **Debug 版本**：`build_x64\Debug\plugintemplate-for-obs.dll`（54 KB + 884 KB PDB）
-- **RelWithDebInfo 版本**：`build_x64\RelWithDebInfo\plugintemplate-for-obs.dll`（12 KB + 476 KB PDB）
+- **Debug 版本**：`build_x64\Debug\obs-advanced-multiview.dll`（54 KB + 884 KB PDB）
+- **RelWithDebInfo 版本**：`build_x64\RelWithDebInfo\obs-advanced-multiview.dll`（12 KB + 476 KB PDB）
 
 **分发时只需要 DLL 文件**：
 ```powershell
 # 最小分发包（仅 DLL，12 KB）
-build_x64\RelWithDebInfo\plugintemplate-for-obs.dll
+build_x64\RelWithDebInfo\obs-advanced-multiview.dll
 
 # 带调试符号（便于用户反馈崩溃）
-build_x64\RelWithDebInfo\plugintemplate-for-obs.dll
-build_x64\RelWithDebInfo\plugintemplate-for-obs.pdb
+build_x64\RelWithDebInfo\obs-advanced-multiview.dll
+build_x64\RelWithDebInfo\obs-advanced-multiview.pdb
 ```
 
 **手动部署到 OBS**：
 ```powershell
 # OBS Portable 版本
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" `
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" `
           "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\obs-plugins\64bit\"
 
 # OBS 已安装版本（需管理员权限）
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" `
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" `
           "C:\Program Files\obs-studio\obs-plugins\64bit\"
 ```
 

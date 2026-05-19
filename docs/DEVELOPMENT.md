@@ -218,12 +218,12 @@ $version = "1.0.0"  # 修改为实际版本号
 
 # 最小分发包（仅 DLL，12 KB）
 New-Item -Path "dist" -ItemType Directory -Force
-Copy-Item "build_x64\Release\plugintemplate-for-obs.dll" "dist\"
+Copy-Item "build_x64\Release\obs-advanced-multiview.dll" "dist\"
 Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v$version.zip" -Force
 
 # 带调试符号的分发包（推荐）
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" "dist\"
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.pdb" "dist\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" "dist\"
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.pdb" "dist\"
 Compress-Archive -Path "dist\*" -DestinationPath "OBS-Advanced-Multiview-v$version-with-symbols.zip" -Force
 ```
 
@@ -325,11 +325,11 @@ cmake --build build_x64 --config RelWithDebInfo
 ```
 build_x64/
   ├── Debug/                     # Debug 构建产物
-  │   └── plugintemplate-for-obs.dll (54 KB + PDB)
+  │   └── obs-advanced-multiview.dll (+ PDB)
   ├── RelWithDebInfo/            # RelWithDebInfo 构建产物（推荐分发）
-  │   └── plugintemplate-for-obs.dll (12 KB + PDB)
+  │   └── obs-advanced-multiview.dll (+ PDB)
   └── Release/                   # Release 构建产物
-      └── plugintemplate-for-obs.dll (~10 KB)
+      └── obs-advanced-multiview.dll
 ```
 
 ---

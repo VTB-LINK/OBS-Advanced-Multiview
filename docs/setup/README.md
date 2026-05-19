@@ -127,37 +127,37 @@ cmake --build build_x64 --config RelWithDebInfo
 ### Debug 版本（用于调试）
 ```
 build_x64\Debug\
-  ├── plugintemplate-for-obs.dll    (54 KB)  ← 插件主文件
-  ├── plugintemplate-for-obs.pdb    (884 KB) ← 调试符号文件
+  ├── obs-advanced-multiview.dll    (54 KB)  ← 插件主文件
+  ├── obs-advanced-multiview.pdb    (884 KB) ← 调试符号文件
   └── plugin-support.pdb            (60 KB)  ← 支持库符号
 ```
 
 ### RelWithDebInfo 版本（日常开发/分发）
 ```
 build_x64\RelWithDebInfo\
-  ├── plugintemplate-for-obs.dll    (12 KB)  ← 插件主文件（优化版）
-  ├── plugintemplate-for-obs.pdb    (476 KB) ← 调试符号文件
+  ├── obs-advanced-multiview.dll    (12 KB)  ← 插件主文件（优化版）
+  ├── obs-advanced-multiview.pdb    (476 KB) ← 调试符号文件
   └── plugin-support.pdb            (60 KB)  ← 支持库符号
 ```
 
 ### 手动部署或分发
 
 **最小分发包**（仅需 DLL）：
-- `build_x64\RelWithDebInfo\plugintemplate-for-obs.dll`（12 KB）
+- `build_x64\RelWithDebInfo\obs-advanced-multiview.dll`（12 KB）
 - 复制到 OBS 的 `obs-plugins\64bit\` 目录
 
 **带调试符号的分发包**（便于用户反馈崩溃信息）：
-- `plugintemplate-for-obs.dll`（12 KB）
-- `plugintemplate-for-obs.pdb`（476 KB）
+- `obs-advanced-multiview.dll`（12 KB）
+- `obs-advanced-multiview.pdb`（476 KB）
 
 **手动部署步骤**：
 ```powershell
 # 复制到 OBS Portable
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" `
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" `
           "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\obs-plugins\64bit\"
 
 # 或复制到已安装的 OBS（需管理员权限）
-Copy-Item "build_x64\RelWithDebInfo\plugintemplate-for-obs.dll" `
+Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" `
           "C:\Program Files\obs-studio\obs-plugins\64bit\"
 ```
 

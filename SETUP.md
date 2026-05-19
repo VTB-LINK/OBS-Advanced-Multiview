@@ -99,7 +99,7 @@ C:\Downloads\OBS-Studio-31.1.1-Windows-x64\bin\64bit\obs64.exe
 
 ### 4. 使用 VS Code 调试
 - 在 VS Code 中打开项目
-- 在 src/plugin-main.c 中设置断点
+- 在 src/plugin-main.cpp 或其他 C++ 源文件中设置断点
 - 按 F5 启动调试
 - OBS 会自动启动并附加调试器
 
