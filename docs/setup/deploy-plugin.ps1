@@ -11,9 +11,11 @@ param(
 
 #region 配置区域 - 根据你的环境修改这里
 
-# OBS 部署目标路径（按优先级尝试）
-# 1. 首选：OBS Portable 版本（无需管理员权限）
-$OBS_PORTABLE_PATH = "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\obs-plugins\64bit\"
+# OBS 部署目标路径（可同时部署到多个版本）
+$OBS_PORTABLE_PATHS = @(
+    "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\obs-plugins\64bit\",
+    "C:\Downloads\OBS-Studio-32.1.2-Windows-x64\obs-plugins\64bit\"
+)
 
 # 2. 备选：用户插件目录（推荐，无需管理员权限）
 $OBS_USER_PLUGIN_PATH = "$env:APPDATA\obs-studio\obs-plugins\64bit"
@@ -22,7 +24,7 @@ $OBS_USER_PLUGIN_PATH = "$env:APPDATA\obs-studio\obs-plugins\64bit"
 $OBS_INSTALLED_PATH = "C:\Program Files\obs-studio\obs-plugins\64bit"
 
 # OBS 可执行文件路径（用于提示启动命令）
-$OBS_EXE_PATH = "C:\Downloads\OBS-Studio-31.1.1-Windows-x64\bin\64bit\obs64.exe"
+$OBS_EXE_PATH = "C:\Downloads\OBS-Studio-32.1.2-Windows-x64\bin\64bit\obs64.exe"
 
 #endregion
 
@@ -40,27 +42,28 @@ else {
     exit 1
 }
 
-# 确定 OBS 插件目录（按优先级尝试）
-$ObsPluginDir = $null
-if (Test-Path $OBS_PORTABLE_PATH) {
-    $ObsPluginDir = $OBS_PORTABLE_PATH
-    Write-Host "→ 使用 OBS Portable 路径" -ForegroundColor Cyan
+# 确定 OBS 插件目录（部署到所有存在的 Portable 路径，回退到用户/系统路径）
+$DeployTargets = @()
+foreach ($p in $OBS_PORTABLE_PATHS) {
+    if (Test-Path $p) {
+        $DeployTargets += $p
+    }
+}
+if ($DeployTargets.Count -gt 0) {
+    Write-Host "→ 找到 $($DeployTargets.Count) 个 OBS Portable 路径" -ForegroundColor Cyan
 }
 elseif (Test-Path $OBS_USER_PLUGIN_PATH) {
-    $ObsPluginDir = $OBS_USER_PLUGIN_PATH
+    $DeployTargets += $OBS_USER_PLUGIN_PATH
     Write-Host "→ 使用用户插件路径" -ForegroundColor Cyan
 }
 elseif (Test-Path $OBS_INSTALLED_PATH) {
-    $ObsPluginDir = $OBS_INSTALLED_PATH
+    $DeployTargets += $OBS_INSTALLED_PATH
     Write-Host "→ 使用已安装 OBS 路径（可能需要管理员权限）" -ForegroundColor Yellow
 }
 else {
     Write-Host "✗ 未找到 OBS 插件目录！" -ForegroundColor Red
     Write-Host ""
-    Write-Host "请修改脚本顶部的路径配置：" -ForegroundColor Yellow
-    Write-Host "  OBS_PORTABLE_PATH    = \"$OBS_PORTABLE_PATH\"" -ForegroundColor Gray
-    Write-Host "  OBS_USER_PLUGIN_PATH = \"$OBS_USER_PLUGIN_PATH\"" -ForegroundColor Gray
-    Write-Host "  OBS_INSTALLED_PATH   = \"$OBS_INSTALLED_PATH\"" -ForegroundColor Gray
+    Write-Host "请修改脚本顶部的路径配置" -ForegroundColor Yellow
     exit 1
 }
 
@@ -75,35 +78,36 @@ if (-not (Test-Path $PluginDll)) {
 }
 
 try {
-    # 确保目标目录存在（用户插件目录可能需要创建）
-    if (-not (Test-Path $ObsPluginDir)) {
-        Write-Host "→ 创建插件目录：$ObsPluginDir" -ForegroundColor Cyan
-        New-Item -Path $ObsPluginDir -ItemType Directory -Force | Out-Null
-    }
-    
-    Copy-Item $PluginDll -Destination $ObsPluginDir -Force
-    Write-Host "✓ 插件 DLL 部署成功！" -ForegroundColor Green
-    Write-Host "  From: $PluginDll" -ForegroundColor Gray
-    Write-Host "  To:   $ObsPluginDir" -ForegroundColor Gray
-
-    # 部署 data 文件（locale 等）
-    $DataSource = Join-Path $ProjectRoot "build_x64\rundir\$BuildConfig\$PluginName"
-    # OBS data 目录：与 obs-plugins 同级的 data/obs-plugins/<plugin-name>/
-    $ObsDataDir = Join-Path (Split-Path (Split-Path $ObsPluginDir)) "data\obs-plugins\$PluginName"
-    if (Test-Path $DataSource) {
-        if (-not (Test-Path $ObsDataDir)) {
-            New-Item -Path $ObsDataDir -ItemType Directory -Force | Out-Null
+    foreach ($ObsPluginDir in $DeployTargets) {
+        # 确保目标目录存在
+        if (-not (Test-Path $ObsPluginDir)) {
+            Write-Host "→ 创建插件目录：$ObsPluginDir" -ForegroundColor Cyan
+            New-Item -Path $ObsPluginDir -ItemType Directory -Force | Out-Null
         }
-        Copy-Item "$DataSource\*" -Destination $ObsDataDir -Recurse -Force
-        Write-Host "✓ 插件数据部署成功！" -ForegroundColor Green
-        Write-Host "  From: $DataSource" -ForegroundColor Gray
-        Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
-    }
-    else {
-        Write-Host "⚠ 未找到插件数据目录，跳过 data 部署" -ForegroundColor Yellow
-    }
+    
+        Copy-Item $PluginDll -Destination $ObsPluginDir -Force
+        Write-Host "✓ 插件 DLL 部署成功！" -ForegroundColor Green
+        Write-Host "  From: $PluginDll" -ForegroundColor Gray
+        Write-Host "  To:   $ObsPluginDir" -ForegroundColor Gray
 
-    Write-Host ""
+        # 部署 data 文件（locale 等）
+        $DataSource = Join-Path $ProjectRoot "build_x64\rundir\$BuildConfig\$PluginName"
+        # OBS data 目录：与 obs-plugins 同级的 data/obs-plugins/<plugin-name>/
+        $ObsDataDir = Join-Path (Split-Path (Split-Path $ObsPluginDir)) "data\obs-plugins\$PluginName"
+        if (Test-Path $DataSource) {
+            if (-not (Test-Path $ObsDataDir)) {
+                New-Item -Path $ObsDataDir -ItemType Directory -Force | Out-Null
+            }
+            Copy-Item "$DataSource\*" -Destination $ObsDataDir -Recurse -Force
+            Write-Host "✓ 插件数据部署成功！" -ForegroundColor Green
+            Write-Host "  From: $DataSource" -ForegroundColor Gray
+            Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
+        }
+        else {
+            Write-Host "⚠ 未找到插件数据目录，跳过 data 部署" -ForegroundColor Yellow
+        }
+        Write-Host ""
+    }
     
     if (Test-Path $OBS_EXE_PATH) {
         Write-Host "现在可以启动 OBS 测试插件：" -ForegroundColor Cyan
@@ -115,11 +119,5 @@ try {
 }
 catch {
     Write-Host "✗ 部署失败：$_" -ForegroundColor Red
-    if ($ObsPluginDir -eq $OBS_INSTALLED_PATH) {
-        Write-Host ""
-        Write-Host "提示：部署到系统目录需要管理员权限" -ForegroundColor Yellow
-        Write-Host "  请右键选择 '以管理员身份运行 PowerShell' 后重试" -ForegroundColor Yellow
-        Write-Host "  或者修改脚本使用用户插件目录（无需管理员）" -ForegroundColor Yellow
-    }
     exit 1
 }

@@ -54,9 +54,6 @@ private slots:
 	void on_delete_instance();
 	void on_open_instance();
 	void on_instance_selection_changed();
-	void on_new_folder();
-	void on_move_to_folder();
-	void on_rename_folder(QTreeWidgetItem *folder_item);
 
 private:
 	void setup_ui();
@@ -70,9 +67,7 @@ private:
 	void auto_save_layout();
 	void select_instance_by_uuid(const std::string &uuid);
 	void show_context_menu(const QPoint &pos);
-	QTreeWidgetItem *find_or_create_folder_item(const std::string &folder);
 	std::string get_item_uuid(QTreeWidgetItem *item) const;
-	bool is_folder_item(QTreeWidgetItem *item) const;
 
 	ConfigManager *config_;
 

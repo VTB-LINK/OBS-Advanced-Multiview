@@ -44,6 +44,7 @@ public:
 	bool delete_instance(const std::string &uuid);
 	MultiviewInstance *find_instance(const std::string &uuid);
 	const std::vector<MultiviewInstance> &instances() const;
+	std::vector<MultiviewInstance> &instances_mutable();
 
 	/* Global settings */
 	GlobalSettings &global_settings();

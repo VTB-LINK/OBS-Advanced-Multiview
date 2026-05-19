@@ -114,6 +114,7 @@ private:
 
 /* Global functions (defined in plugin-main) */
 void open_multiview_window(const std::string &uuid);
+void close_multiview_window(const std::string &uuid);
 void open_manager_dialog();
 void notify_multiview_layout_changed(const std::string &uuid = "");
 void notify_multiview_name_changed(const std::string &uuid);

@@ -274,6 +274,11 @@ const std::vector<MultiviewInstance> &ConfigManager::instances() const
 	return instances_;
 }
 
+std::vector<MultiviewInstance> &ConfigManager::instances_mutable()
+{
+	return instances_;
+}
+
 /* ---- global settings ---- */
 
 GlobalSettings &ConfigManager::global_settings()
