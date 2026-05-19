@@ -28,6 +28,7 @@ class QTreeWidgetItem;
 class QPushButton;
 class QStackedWidget;
 class QLabel;
+class QLineEdit;
 class QSpinBox;
 class QCheckBox;
 class QSplitter;
@@ -43,6 +44,9 @@ public:
 
 	void refresh_instance_list();
 
+protected:
+	bool eventFilter(QObject *obj, QEvent *event) override;
+
 private slots:
 	void on_new_instance();
 	void on_rename_instance();
@@ -50,7 +54,6 @@ private slots:
 	void on_delete_instance();
 	void on_open_instance();
 	void on_instance_selection_changed();
-	void on_edit_grid_clicked();
 	void on_new_folder();
 	void on_move_to_folder();
 	void on_rename_folder(QTreeWidgetItem *folder_item);
@@ -62,9 +65,10 @@ private:
 	void setup_right_panel(QWidget *panel);
 	void setup_settings_tab(QWidget *tab);
 	void show_instance_detail(const std::string &uuid);
-	void show_grid_editor(const std::string &uuid);
 	void update_button_states();
 	void update_grid_preview();
+	void auto_save_layout();
+	void select_instance_by_uuid(const std::string &uuid);
 	void show_context_menu(const QPoint &pos);
 	QTreeWidgetItem *find_or_create_folder_item(const std::string &folder);
 	std::string get_item_uuid(QTreeWidgetItem *item) const;
@@ -88,34 +92,34 @@ private:
 	/* Right panel (Instances tab) */
 	QStackedWidget *right_stack_;
 	QWidget *page_empty_;
-	QWidget *page_instance_detail_;
-	QWidget *page_grid_editor_;
+	QWidget *page_instance_;
 
-	/* Instance detail page widgets */
-	QLabel *detail_name_label_;
+	/* Instance page widgets */
+	QLineEdit *detail_name_edit_;
 	QLabel *detail_uuid_label_;
-	QLabel *detail_layout_label_;
+	QPushButton *btn_detail_open_;
+	QPushButton *btn_detail_delete_;
+	QPushButton *btn_detail_clone_;
+	QString name_edit_original_; /* for cancel on Esc/focus-out */
+
+	/* Gutter section */
 	QCheckBox *detail_use_global_gutter_;
 	QSpinBox *detail_gutter_spin_;
 	QLabel *detail_gutter_effective_;
-	QPushButton *btn_edit_grid_;
-	std::string current_detail_uuid_;
 
-	/* Grid editor page widgets */
-	QLabel *grid_editor_title_;
+	/* Grid editor (inline) */
 	QSpinBox *grid_rows_spin_;
 	QSpinBox *grid_cols_spin_;
 	GridPreviewWidget *grid_preview_;
-	QPushButton *btn_grid_save_;
-	QPushButton *btn_grid_back_;
 	QPushButton *btn_add_span_;
 	QPushButton *btn_remove_span_;
+	QPushButton *btn_reset_all_;
 	QLabel *grid_span_info_;
-	std::string grid_edit_uuid_;
+	std::string current_detail_uuid_;
 	LayoutData grid_edit_layout_; /* working copy */
 
 	/* Global settings page widgets */
 	QSpinBox *spin_default_gutter_;
 
-	enum { PAGE_EMPTY = 0, PAGE_INSTANCE_DETAIL, PAGE_GRID_EDITOR };
+	enum { PAGE_EMPTY = 0, PAGE_INSTANCE };
 };

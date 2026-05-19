@@ -27,10 +27,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QApplication>
 #include <QCheckBox>
 #include <QDir>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
@@ -110,6 +113,26 @@ ManagerDialog::ManagerDialog(ConfigManager *config, QWidget *parent) : QDialog(p
 }
 
 ManagerDialog::~ManagerDialog() = default;
+
+bool ManagerDialog::eventFilter(QObject *obj, QEvent *event)
+{
+	if (obj == detail_name_edit_) {
+		if (event->type() == QEvent::FocusIn) {
+			name_edit_original_ = detail_name_edit_->text();
+		} else if (event->type() == QEvent::FocusOut) {
+			/* Cancel: revert to original */
+			detail_name_edit_->setText(name_edit_original_);
+		} else if (event->type() == QEvent::KeyPress) {
+			auto *ke = static_cast<QKeyEvent *>(event);
+			if (ke->key() == Qt::Key_Escape) {
+				detail_name_edit_->setText(name_edit_original_);
+				detail_name_edit_->clearFocus();
+				return true; /* eat the event so dialog doesn't close */
+			}
+		}
+	}
+	return QDialog::eventFilter(obj, event);
+}
 
 /* ---- UI setup ---- */
 
@@ -288,38 +311,150 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	empty_layout->addWidget(empty_label);
 	right_stack_->addWidget(page_empty_);
 
-	/* Page 1: instance detail */
-	page_instance_detail_ = new QWidget();
-	auto *detail_layout = new QVBoxLayout(page_instance_detail_);
+	/* Page 1: unified instance page (info + gutter + grid editor) */
+	page_instance_ = new QWidget();
+	auto *p_layout = new QVBoxLayout(page_instance_);
+	p_layout->setContentsMargins(8, 8, 8, 8);
 
-	detail_name_label_ = new QLabel(page_instance_detail_);
-	detail_name_label_->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold;"));
-	detail_layout->addWidget(detail_name_label_);
+	/* --- Top row: name (editable) + action buttons right-aligned --- */
+	auto *top_row = new QHBoxLayout();
+	detail_name_edit_ = new QLineEdit(page_instance_);
+	detail_name_edit_->setStyleSheet(QStringLiteral("QLineEdit { font-size: 14px; font-weight: bold; "
+							"border: none; background: transparent; padding: 2px; }"
+							"QLineEdit:focus { border: 1px solid palette(highlight); "
+							"background: palette(base); }"));
+	detail_name_edit_->installEventFilter(this);
+	top_row->addWidget(detail_name_edit_, 1);
 
-	detail_uuid_label_ = new QLabel(page_instance_detail_);
-	detail_uuid_label_->setStyleSheet(QStringLiteral("color: gray;"));
-	detail_layout->addWidget(detail_uuid_label_);
+	btn_detail_open_ = new QPushButton(page_instance_);
+	btn_detail_open_->setIcon(make_open_icon());
+	btn_detail_open_->setFixedSize(24, 24);
+	btn_detail_open_->setFlat(true);
+	btn_detail_open_->setToolTip(QStringLiteral("Open"));
+	top_row->addWidget(btn_detail_open_);
 
-	detail_layout_label_ = new QLabel(page_instance_detail_);
-	detail_layout->addWidget(detail_layout_label_);
+	btn_detail_delete_ = new QPushButton(page_instance_);
+	btn_detail_delete_->setIcon(obs_theme_icon("trash"));
+	btn_detail_delete_->setFixedSize(24, 24);
+	btn_detail_delete_->setFlat(true);
+	btn_detail_delete_->setToolTip(QStringLiteral("Delete"));
+	top_row->addWidget(btn_detail_delete_);
 
-	/* Gutter settings per instance */
-	detail_use_global_gutter_ =
-		new QCheckBox(QStringLiteral("Inherit gutter from Global Settings"), page_instance_detail_);
-	detail_layout->addWidget(detail_use_global_gutter_);
+	btn_detail_clone_ = new QPushButton(page_instance_);
+	btn_detail_clone_->setIcon(obs_theme_icon("popout"));
+	btn_detail_clone_->setFixedSize(24, 24);
+	btn_detail_clone_->setFlat(true);
+	btn_detail_clone_->setToolTip(QStringLiteral("Clone"));
+	top_row->addWidget(btn_detail_clone_);
 
-	auto *gutter_inst_row = new QHBoxLayout();
-	gutter_inst_row->addWidget(new QLabel(QStringLiteral("Gutter (px):"), page_instance_detail_));
-	detail_gutter_spin_ = new QSpinBox(page_instance_detail_);
+	p_layout->addLayout(top_row);
+
+	/* UUID label */
+	detail_uuid_label_ = new QLabel(page_instance_);
+	detail_uuid_label_->setStyleSheet(QStringLiteral("color: gray; font-size: 11px;"));
+	p_layout->addWidget(detail_uuid_label_);
+
+	/* --- Separator --- */
+	auto *sep1 = new QFrame(page_instance_);
+	sep1->setFrameShape(QFrame::HLine);
+	sep1->setFrameShadow(QFrame::Sunken);
+	p_layout->addWidget(sep1);
+
+	/* --- Gutter settings (single row) --- */
+	auto *gutter_row = new QHBoxLayout();
+	detail_use_global_gutter_ = new QCheckBox(QStringLiteral("Inherit gutter from Settings"), page_instance_);
+	gutter_row->addWidget(detail_use_global_gutter_);
+	gutter_row->addStretch();
+	gutter_row->addWidget(new QLabel(QStringLiteral("Gutter (px):"), page_instance_));
+	detail_gutter_spin_ = new QSpinBox(page_instance_);
 	detail_gutter_spin_->setRange(0, 50);
-	gutter_inst_row->addWidget(detail_gutter_spin_);
-	gutter_inst_row->addStretch();
-	detail_layout->addLayout(gutter_inst_row);
-
-	detail_gutter_effective_ = new QLabel(page_instance_detail_);
+	detail_gutter_spin_->setMinimumWidth(60);
+	gutter_row->addWidget(detail_gutter_spin_);
+	detail_gutter_effective_ = new QLabel(page_instance_);
 	detail_gutter_effective_->setStyleSheet(QStringLiteral("color: gray;"));
-	detail_layout->addWidget(detail_gutter_effective_);
+	gutter_row->addWidget(detail_gutter_effective_);
+	p_layout->addLayout(gutter_row);
 
+	/* --- Separator --- */
+	auto *sep2 = new QFrame(page_instance_);
+	sep2->setFrameShape(QFrame::HLine);
+	sep2->setFrameShadow(QFrame::Sunken);
+	p_layout->addWidget(sep2);
+
+	/* --- Grid controls row --- */
+	auto *grid_ctrl_row = new QHBoxLayout();
+	grid_ctrl_row->addWidget(new QLabel(QStringLiteral("Rows:"), page_instance_));
+	grid_rows_spin_ = new QSpinBox(page_instance_);
+	grid_rows_spin_->setRange(1, 10);
+	grid_rows_spin_->setMinimumWidth(60);
+	grid_ctrl_row->addWidget(grid_rows_spin_);
+
+	grid_ctrl_row->addWidget(new QLabel(QStringLiteral("Cols:"), page_instance_));
+	grid_cols_spin_ = new QSpinBox(page_instance_);
+	grid_cols_spin_->setRange(1, 10);
+	grid_cols_spin_->setMinimumWidth(60);
+	grid_ctrl_row->addWidget(grid_cols_spin_);
+
+	grid_ctrl_row->addStretch();
+
+	btn_add_span_ = new QPushButton(QStringLiteral("Merge"), page_instance_);
+	btn_add_span_->setEnabled(false);
+	grid_ctrl_row->addWidget(btn_add_span_);
+
+	btn_remove_span_ = new QPushButton(QStringLiteral("Unmerge"), page_instance_);
+	btn_remove_span_->setEnabled(false);
+	grid_ctrl_row->addWidget(btn_remove_span_);
+
+	p_layout->addLayout(grid_ctrl_row);
+
+	/* Span info row: label left, Reset All button right */
+	auto *span_row = new QHBoxLayout();
+	grid_span_info_ = new QLabel(page_instance_);
+	grid_span_info_->setStyleSheet(QStringLiteral("color: gray;"));
+	span_row->addWidget(grid_span_info_, 1);
+	btn_reset_all_ = new QPushButton(QStringLiteral("Reset All"), page_instance_);
+	btn_reset_all_->setFixedWidth(btn_remove_span_->sizeHint().width());
+	span_row->addWidget(btn_reset_all_);
+	p_layout->addLayout(span_row);
+
+	/* --- Grid preview (fills remaining space) --- */
+	grid_preview_ = new GridPreviewWidget(page_instance_);
+	p_layout->addWidget(grid_preview_, 1);
+
+	right_stack_->addWidget(page_instance_);
+
+	/* ---- Connections ---- */
+
+	/* Name edit: Enter applies, Esc/focus-out cancels (see eventFilter) */
+	connect(detail_name_edit_, &QLineEdit::returnPressed, this, [this]() {
+		if (current_detail_uuid_.empty())
+			return;
+		QString newName = detail_name_edit_->text().trimmed();
+		if (newName.isEmpty()) {
+			detail_name_edit_->setText(name_edit_original_);
+			detail_name_edit_->clearFocus();
+			return;
+		}
+		MultiviewInstance *inst = config_->find_instance(current_detail_uuid_);
+		if (!inst || QString::fromStdString(inst->name) == newName) {
+			detail_name_edit_->clearFocus();
+			return;
+		}
+		name_edit_original_ = newName; /* update so focus-out won't revert */
+		config_->rename_instance(current_detail_uuid_, newName.toStdString());
+		config_->save();
+		refresh_instance_list();
+		select_instance_by_uuid(current_detail_uuid_);
+		notify_multiview_name_changed(current_detail_uuid_);
+		detail_name_edit_->clearFocus();
+	});
+
+	/* Action buttons */
+	connect(btn_detail_open_, &QPushButton::clicked, this, &ManagerDialog::on_open_instance);
+	connect(btn_detail_delete_, &QPushButton::clicked, this, &ManagerDialog::on_delete_instance);
+	connect(btn_detail_clone_, &QPushButton::clicked, this, &ManagerDialog::on_clone_instance);
+
+	/* Gutter */
 	connect(detail_use_global_gutter_, &QCheckBox::toggled, this, [this](bool checked) {
 		detail_gutter_spin_->setEnabled(!checked);
 		MultiviewInstance *inst = config_->find_instance(current_detail_uuid_);
@@ -329,7 +464,7 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 		if (!checked)
 			inst->layout.gutterPx = detail_gutter_spin_->value();
 		int eff = inst->effective_gutter(config_->global_settings().defaultGutterPx);
-		detail_gutter_effective_->setText(QStringLiteral("Effective gutter: %1px").arg(eff));
+		detail_gutter_effective_->setText(QStringLiteral("Effective: %1px").arg(eff));
 		config_->save();
 		notify_multiview_layout_changed(current_detail_uuid_);
 	});
@@ -339,80 +474,20 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 		if (!inst || inst->useGlobalGutter)
 			return;
 		inst->layout.gutterPx = value;
-		detail_gutter_effective_->setText(QStringLiteral("Effective gutter: %1px").arg(value));
+		detail_gutter_effective_->setText(QStringLiteral("Effective: %1px").arg(value));
 		config_->save();
 		notify_multiview_layout_changed(current_detail_uuid_);
 	});
 
-	detail_layout->addStretch();
-
-	btn_edit_grid_ = new QPushButton(QStringLiteral("Edit Grid..."), page_instance_detail_);
-	detail_layout->addWidget(btn_edit_grid_);
-	connect(btn_edit_grid_, &QPushButton::clicked, this, &ManagerDialog::on_edit_grid_clicked);
-
-	right_stack_->addWidget(page_instance_detail_);
-
-	/* Page 2: grid editor */
-	page_grid_editor_ = new QWidget();
-	auto *ge_layout = new QVBoxLayout(page_grid_editor_);
-
-	/* Title + back button row */
-	auto *ge_top_row = new QHBoxLayout();
-	btn_grid_back_ = new QPushButton(QStringLiteral("<< Back"), page_grid_editor_);
-	ge_top_row->addWidget(btn_grid_back_);
-	grid_editor_title_ = new QLabel(page_grid_editor_);
-	grid_editor_title_->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold;"));
-	ge_top_row->addWidget(grid_editor_title_);
-	ge_top_row->addStretch();
-	ge_layout->addLayout(ge_top_row);
-
-	/* Controls row: rows, cols, gutter */
-	auto *ge_ctrl_row = new QHBoxLayout();
-
-	ge_ctrl_row->addWidget(new QLabel(QStringLiteral("Rows:"), page_grid_editor_));
-	grid_rows_spin_ = new QSpinBox(page_grid_editor_);
-	grid_rows_spin_->setRange(1, 10);
-	ge_ctrl_row->addWidget(grid_rows_spin_);
-
-	ge_ctrl_row->addWidget(new QLabel(QStringLiteral("Cols:"), page_grid_editor_));
-	grid_cols_spin_ = new QSpinBox(page_grid_editor_);
-	grid_cols_spin_->setRange(1, 10);
-	ge_ctrl_row->addWidget(grid_cols_spin_);
-
-	ge_ctrl_row->addStretch();
-	ge_layout->addLayout(ge_ctrl_row);
-
-	/* Span controls row */
-	auto *ge_span_row = new QHBoxLayout();
-	btn_add_span_ = new QPushButton(QStringLiteral("Add Span..."), page_grid_editor_);
-	btn_remove_span_ = new QPushButton(QStringLiteral("Remove Selected Span"), page_grid_editor_);
-	ge_span_row->addWidget(btn_add_span_);
-	ge_span_row->addWidget(btn_remove_span_);
-	grid_span_info_ = new QLabel(page_grid_editor_);
-	grid_span_info_->setStyleSheet(QStringLiteral("color: gray;"));
-	ge_span_row->addWidget(grid_span_info_);
-	ge_span_row->addStretch();
-	ge_layout->addLayout(ge_span_row);
-
-	/* Grid preview */
-	grid_preview_ = new GridPreviewWidget(page_grid_editor_);
-	ge_layout->addWidget(grid_preview_, 1);
-
-	/* Save button */
-	btn_grid_save_ = new QPushButton(QStringLiteral("Save Layout"), page_grid_editor_);
-	ge_layout->addWidget(btn_grid_save_);
-
-	/* Connections */
-	connect(btn_grid_back_, &QPushButton::clicked, this, [this]() { show_instance_detail(grid_edit_uuid_); });
-
+	/* Grid rows/cols - auto save */
 	connect(grid_rows_spin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int val) {
 		grid_edit_layout_.rows = val;
-		/* Remove spans that go out of bounds */
 		auto &spans = grid_edit_layout_.spans;
 		spans.erase(std::remove_if(spans.begin(), spans.end(),
 					   [&](const SpanRegion &s) { return s.row + s.rowSpan > val; }),
 			    spans.end());
 		update_grid_preview();
+		auto_save_layout();
 	});
 
 	connect(grid_cols_spin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int val) {
@@ -422,44 +497,30 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 					   [&](const SpanRegion &s) { return s.col + s.colSpan > val; }),
 			    spans.end());
 		update_grid_preview();
+		auto_save_layout();
 	});
 
+	/* Span controls */
 	connect(btn_add_span_, &QPushButton::clicked, this, [this]() {
 		SelectionRect sr;
-		if (!grid_preview_->selection_is_mergeable(sr)) {
-			QMessageBox::information(this, QStringLiteral("Add Span"),
-						 QStringLiteral("Select a rectangular group of cells "
-								"(Ctrl+Click or Shift+Click) to merge."));
+		if (!grid_preview_->selection_is_mergeable(sr))
 			return;
-		}
-
-		/* Check overlap with existing spans */
-		if (grid_preview_->selection_overlaps_span()) {
-			QMessageBox::warning(this, QStringLiteral("Add Span"),
-					     QStringLiteral("Selection overlaps an existing span. "
-							    "Remove it first."));
+		if (grid_preview_->selection_overlaps_span())
 			return;
-		}
 
 		SpanRegion newSpan{sr.row, sr.col, sr.rowSpan, sr.colSpan};
-
-		/* Validate with layout engine */
 		LayoutEngine validator;
 		validator.set_layout(grid_edit_layout_);
-		if (validator.validate_span(newSpan) != LayoutEngine::SpanError::None) {
-			QMessageBox::warning(this, QStringLiteral("Add Span"),
-					     QStringLiteral("Cannot create this span. "
-							    "It may overlap or be out of bounds."));
+		if (validator.validate_span(newSpan) != LayoutEngine::SpanError::None)
 			return;
-		}
 
 		grid_edit_layout_.spans.push_back(newSpan);
 		grid_preview_->clear_selection();
 		update_grid_preview();
+		auto_save_layout();
 	});
 
 	connect(btn_remove_span_, &QPushButton::clicked, this, [this]() {
-		/* Find which span is selected (first selected position that is inside a span) */
 		auto &sel = grid_preview_->selected_positions();
 		if (sel.empty())
 			return;
@@ -468,53 +529,31 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 		for (auto &[r, c] : sel) {
 			for (int i = 0; i < (int)grid_edit_layout_.spans.size(); i++) {
 				auto &s = grid_edit_layout_.spans[i];
-				if (r >= s.row && r < s.row + s.rowSpan && c >= s.col && c < s.col + s.colSpan) {
+				if (r >= s.row && r < s.row + s.rowSpan && c >= s.col && c < s.col + s.colSpan)
 					span_indices.insert(i);
-				}
 			}
 		}
-
-		if (span_indices.empty()) {
-			QMessageBox::information(this, QStringLiteral("Remove Span"),
-						 QStringLiteral("No span in current selection."));
+		if (span_indices.empty())
 			return;
-		}
 
-		/* Remove in reverse order to keep indices valid */
-		for (auto it = span_indices.rbegin(); it != span_indices.rend(); ++it) {
+		for (auto it = span_indices.rbegin(); it != span_indices.rend(); ++it)
 			grid_edit_layout_.spans.erase(grid_edit_layout_.spans.begin() + *it);
-		}
 
 		grid_preview_->clear_selection();
 		update_grid_preview();
+		auto_save_layout();
 	});
 
-	connect(btn_grid_save_, &QPushButton::clicked, this, [this]() {
-		MultiviewInstance *inst = config_->find_instance(grid_edit_uuid_);
-		if (!inst)
+	connect(btn_reset_all_, &QPushButton::clicked, this, [this]() {
+		if (grid_edit_layout_.spans.empty())
 			return;
-
-		/* Validate all spans */
-		auto err = LayoutEngine::validate_all_spans(grid_edit_layout_);
-		if (err != LayoutEngine::SpanError::None) {
-			QMessageBox::warning(this, QStringLiteral("Save Layout"),
-					     QStringLiteral("Layout has invalid spans. "
-							    "Please fix before saving."));
-			return;
-		}
-
-		inst->layout.rows = grid_edit_layout_.rows;
-		inst->layout.columns = grid_edit_layout_.columns;
-		inst->layout.spans = grid_edit_layout_.spans;
-		inst->layoutDirty = true;
-		config_->save();
-
-		obs_log(LOG_INFO, "layout saved: %dx%d, %d spans", inst->layout.rows, inst->layout.columns,
-			(int)inst->layout.spans.size());
-
-		show_instance_detail(grid_edit_uuid_);
+		grid_edit_layout_.spans.clear();
+		grid_preview_->clear_selection();
+		update_grid_preview();
+		auto_save_layout();
 	});
 
+	/* Grid selection feedback */
 	connect(grid_preview_, &GridPreviewWidget::selection_changed, this, [this]() {
 		auto &sel = grid_preview_->selected_positions();
 		if (sel.empty()) {
@@ -524,40 +563,29 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 			return;
 		}
 
-		/* Check if selection contains a span */
 		bool has_span = grid_preview_->selection_overlaps_span();
-
-		/* Check if selection is a valid mergeable rectangle */
 		SelectionRect sr;
 		bool mergeable = grid_preview_->selection_is_mergeable(sr);
 
-		/* Update button states */
 		btn_add_span_->setEnabled(mergeable && !has_span);
 		btn_remove_span_->setEnabled(has_span);
 
-		/* Update info label */
 		if (sel.size() == 1) {
 			auto [r, c] = *sel.begin();
-			if (has_span) {
-				grid_span_info_->setText(QStringLiteral("Selected: span cell at %1,%2").arg(r).arg(c));
-			} else {
-				grid_span_info_->setText(QStringLiteral("Selected: cell %1,%2").arg(r).arg(c));
-			}
+			grid_span_info_->setText(has_span ? QStringLiteral("Span cell at %1,%2").arg(r).arg(c)
+							  : QStringLiteral("Cell %1,%2").arg(r).arg(c));
 		} else if (mergeable && !has_span) {
-			grid_span_info_->setText(QStringLiteral("Selected: %1x%2 rectangle at %3,%4 - ready to merge")
+			grid_span_info_->setText(QStringLiteral("%1x%2 at %3,%4 - ready to merge")
 							 .arg(sr.rowSpan)
 							 .arg(sr.colSpan)
 							 .arg(sr.row)
 							 .arg(sr.col));
 		} else if (!mergeable) {
-			grid_span_info_->setText(QStringLiteral(
-				"Selection is not a valid rectangle (must be contiguous rectangular area)"));
+			grid_span_info_->setText(QStringLiteral("Not a valid rectangle"));
 		} else {
-			grid_span_info_->setText(QStringLiteral("Selection overlaps existing span - remove it first"));
+			grid_span_info_->setText(QStringLiteral("Overlaps existing span"));
 		}
 	});
-
-	right_stack_->addWidget(page_grid_editor_);
 
 	layout->addWidget(right_stack_);
 }
@@ -611,6 +639,30 @@ void ManagerDialog::refresh_instance_list()
 
 	instance_tree_->expandAll();
 	update_button_states();
+}
+
+void ManagerDialog::select_instance_by_uuid(const std::string &uuid)
+{
+	if (uuid.empty())
+		return;
+	QString target = QString::fromStdString(uuid);
+	std::function<QTreeWidgetItem *(QTreeWidgetItem *)> find_item;
+	find_item = [&](QTreeWidgetItem *parent) -> QTreeWidgetItem * {
+		int count = parent ? parent->childCount() : instance_tree_->topLevelItemCount();
+		for (int i = 0; i < count; i++) {
+			auto *item = parent ? parent->child(i) : instance_tree_->topLevelItem(i);
+			if (item->data(0, Qt::UserRole).toString() == target)
+				return item;
+			if (auto *found = find_item(item))
+				return found;
+		}
+		return nullptr;
+	};
+	if (auto *item = find_item(nullptr)) {
+		instance_tree_->blockSignals(true);
+		instance_tree_->setCurrentItem(item);
+		instance_tree_->blockSignals(false);
+	}
 }
 
 QTreeWidgetItem *ManagerDialog::find_or_create_folder_item(const std::string &folder)
@@ -732,6 +784,7 @@ void ManagerDialog::on_rename_instance()
 	config_->rename_instance(uuid, name.trimmed().toStdString());
 	config_->save();
 	refresh_instance_list();
+	select_instance_by_uuid(uuid);
 	notify_multiview_name_changed(uuid);
 }
 
@@ -978,12 +1031,15 @@ void ManagerDialog::show_instance_detail(const std::string &uuid)
 
 	current_detail_uuid_ = uuid;
 
-	detail_name_label_->setText(QString::fromStdString(inst->name));
-	detail_uuid_label_->setText(QStringLiteral("UUID: %1").arg(QString::fromStdString(inst->uuid)));
-	detail_layout_label_->setText(
-		QStringLiteral("Layout: %1 x %2").arg(inst->layout.rows).arg(inst->layout.columns));
+	/* Name */
+	detail_name_edit_->blockSignals(true);
+	detail_name_edit_->setText(QString::fromStdString(inst->name));
+	detail_name_edit_->blockSignals(false);
 
-	/* Block signals to avoid triggering save during UI update */
+	/* UUID */
+	detail_uuid_label_->setText(QString::fromStdString(inst->uuid));
+
+	/* Gutter */
 	detail_use_global_gutter_->blockSignals(true);
 	detail_gutter_spin_->blockSignals(true);
 
@@ -992,49 +1048,43 @@ void ManagerDialog::show_instance_detail(const std::string &uuid)
 	detail_gutter_spin_->setEnabled(!inst->useGlobalGutter);
 
 	int eff = inst->effective_gutter(config_->global_settings().defaultGutterPx);
-	detail_gutter_effective_->setText(QStringLiteral("Effective gutter: %1px").arg(eff));
+	detail_gutter_effective_->setText(QStringLiteral("Effective: %1px").arg(eff));
 
 	detail_use_global_gutter_->blockSignals(false);
 	detail_gutter_spin_->blockSignals(false);
 
-	right_stack_->setCurrentIndex(PAGE_INSTANCE_DETAIL);
-}
-
-void ManagerDialog::on_edit_grid_clicked()
-{
-	if (current_detail_uuid_.empty())
-		return;
-	show_grid_editor(current_detail_uuid_);
-}
-
-void ManagerDialog::show_grid_editor(const std::string &uuid)
-{
-	MultiviewInstance *inst = config_->find_instance(uuid);
-	if (!inst)
-		return;
-
-	grid_edit_uuid_ = uuid;
+	/* Grid editor */
 	grid_edit_layout_ = inst->layout;
-	/* Grid editor uses gutter=0 for seamless preview */
 	grid_edit_layout_.gutterPx = 0;
-
-	grid_editor_title_->setText(QStringLiteral("Edit Grid: %1").arg(QString::fromStdString(inst->name)));
 
 	grid_rows_spin_->blockSignals(true);
 	grid_cols_spin_->blockSignals(true);
-
 	grid_rows_spin_->setValue(grid_edit_layout_.rows);
 	grid_cols_spin_->setValue(grid_edit_layout_.columns);
-
 	grid_rows_spin_->blockSignals(false);
 	grid_cols_spin_->blockSignals(false);
 
-	grid_span_info_->setText(QStringLiteral("%1 span(s)").arg(grid_edit_layout_.spans.size()));
+	grid_span_info_->setText(QString());
 	btn_add_span_->setEnabled(false);
 	btn_remove_span_->setEnabled(false);
-
+	grid_preview_->clear_selection();
 	update_grid_preview();
-	right_stack_->setCurrentIndex(PAGE_GRID_EDITOR);
+
+	right_stack_->setCurrentIndex(PAGE_INSTANCE);
+}
+
+void ManagerDialog::auto_save_layout()
+{
+	MultiviewInstance *inst = config_->find_instance(current_detail_uuid_);
+	if (!inst)
+		return;
+
+	inst->layout.rows = grid_edit_layout_.rows;
+	inst->layout.columns = grid_edit_layout_.columns;
+	inst->layout.spans = grid_edit_layout_.spans;
+	inst->layoutDirty = true;
+	config_->save();
+	notify_multiview_layout_changed(current_detail_uuid_);
 }
 
 void ManagerDialog::update_grid_preview()
