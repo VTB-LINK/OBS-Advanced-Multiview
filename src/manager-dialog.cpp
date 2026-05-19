@@ -273,14 +273,16 @@ void ManagerDialog::setup_left_panel(QWidget *panel)
 	btn_move_up_->setIcon(obs_theme_icon("up"));
 	btn_move_up_->setFixedSize(btn_sz, btn_sz);
 	btn_move_up_->setFlat(true);
-	btn_move_up_->setToolTip(QStringLiteral("Move Up"));
+	btn_move_up_->setToolTip(QStringLiteral("Reorder is not implemented yet"));
+	btn_move_up_->setEnabled(false);
 	toolbar->addWidget(btn_move_up_);
 
 	btn_move_down_ = new QPushButton(panel);
 	btn_move_down_->setIcon(obs_theme_icon("down"));
 	btn_move_down_->setFixedSize(btn_sz, btn_sz);
 	btn_move_down_->setFlat(true);
-	btn_move_down_->setToolTip(QStringLiteral("Move Down"));
+	btn_move_down_->setToolTip(QStringLiteral("Reorder is not implemented yet"));
+	btn_move_down_->setEnabled(false);
 	toolbar->addWidget(btn_move_down_);
 
 	layout->addLayout(toolbar);
@@ -716,8 +718,7 @@ void ManagerDialog::update_button_states()
 	btn_clone_->setEnabled(has_instance && selected.size() == 1);
 	btn_delete_->setEnabled(!selected.isEmpty());
 	btn_open_->setEnabled(has_instance);
-	btn_move_up_->setEnabled(has_instance);
-	btn_move_down_->setEnabled(has_instance);
+	/* Move Up/Down kept disabled until reorder is implemented */
 }
 
 /* ---- slots ---- */

@@ -81,6 +81,10 @@ std::string ConfigManager::get_config_file_path() const
 
 bool ConfigManager::load()
 {
+	if (config_dir_.empty()) {
+		obs_log(LOG_ERROR, "config_dir_ is empty, cannot load config");
+		return false;
+	}
 	current_collection_ = get_current_scene_collection();
 	std::string path = get_config_file_path();
 	return load_from_file(path);
@@ -151,6 +155,10 @@ bool ConfigManager::load_from_file(const std::string &path)
 
 bool ConfigManager::save()
 {
+	if (config_dir_.empty()) {
+		obs_log(LOG_ERROR, "config_dir_ is empty, cannot save config");
+		return false;
+	}
 	std::string path = get_config_file_path();
 	return save_to_file(path);
 }
@@ -186,8 +194,6 @@ bool ConfigManager::save_to_file(const std::string &path)
 	obs_data_array_release(parr);
 
 	/* atomic save: write to tmp then rename */
-	std::string tmp_path = path + ".tmp";
-
 	bool ok = obs_data_save_json_safe(data, path.c_str(), ".tmp", ".bak");
 	obs_data_release(data);
 
