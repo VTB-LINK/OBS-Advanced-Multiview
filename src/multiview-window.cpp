@@ -457,10 +457,39 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				continue;
 			}
 
-			/* Calculate letterbox/pillarbox rect */
-			VideoRect vr = engine_.video_rect(i, srcW, srcH);
-			int vrX = vr.x + vpX;
-			int vrY = vr.y + vpY;
+			/* Determine content area (may be reduced for Below label mode) */
+			int contentX = cellX;
+			int contentY = cellY;
+			int contentW = cell.w;
+			int contentH = cell.h;
+
+			if (i < (int)effective_visuals_.size() &&
+			    effective_visuals_[i].label.displayMode == LabelDisplayMode::Below) {
+				/* Reserve bottom 1/6 of cell for label */
+				int labelRegionH = cell.h / 6;
+				if (labelRegionH < 16)
+					labelRegionH = 16;
+				contentH = cell.h - labelRegionH;
+				if (contentH < 16)
+					contentH = 16;
+			}
+
+			/* Calculate letterbox/pillarbox rect within content area */
+			double srcAspect = (double)srcW / (double)srcH;
+			double contentAspect = (double)contentW / (double)contentH;
+
+			int vrX, vrY, vrW, vrH;
+			if (srcAspect > contentAspect) {
+				vrW = contentW;
+				vrH = (int)((double)contentW / srcAspect + 0.5);
+				vrX = contentX;
+				vrY = contentY + (contentH - vrH) / 2;
+			} else {
+				vrH = contentH;
+				vrW = (int)((double)contentH * srcAspect + 0.5);
+				vrX = contentX + (contentW - vrW) / 2;
+				vrY = contentY;
+			}
 
 			/* Draw black background for the entire cell first */
 			startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
@@ -470,7 +499,7 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			endRegion();
 
 			/* Render into video rect */
-			startRegion(vrX, vrY, vr.w, vr.h, 0.0f, (float)srcW, 0.0f, (float)srcH);
+			startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)srcW, 0.0f, (float)srcH);
 			if (isPgm)
 				obs_render_main_texture();
 			else
@@ -631,10 +660,33 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	int cellY = cell.y + vpY;
 	int margin = ls.margin;
 
-	/* Calculate label position */
-	int labelX, labelY;
+	/* Compute target label height based on scale mode */
+	int targetH;
+	if (ls.fontScaleMode == FontScaleMode::ScaleWithCell) {
+		/* Scale: label is ~15% of cell height, clamped by min/max */
+		targetH = cell.h * 15 / 100;
+		int minH = ls.minFontSize;
+		int maxH = ls.maxFontSize;
+		if (targetH < minH)
+			targetH = minH;
+		if (targetH > maxH)
+			targetH = maxH;
+	} else {
+		/* Fixed: use 1/4 cell height as max */
+		targetH = cell.h / 4;
+		if (targetH < 8)
+			targetH = 8;
+	}
+
 	int drawW = (int)labelW;
 	int drawH = (int)labelH;
+
+	/* Scale label to targetH */
+	if (drawH > targetH) {
+		float scale = (float)targetH / (float)drawH;
+		drawH = targetH;
+		drawW = (int)((float)drawW * scale);
+	}
 
 	/* Clamp label width to cell width - 2*margin */
 	int maxW = cell.w - 2 * margin;
@@ -646,23 +698,23 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 		drawH = (int)((float)drawH * scale);
 	}
 
-	/* Clamp label height to 1/4 of cell height */
-	int maxH = cell.h / 4;
-	if (maxH < 8)
-		maxH = 8;
-	if (drawH > maxH) {
-		float scale = (float)maxH / (float)drawH;
-		drawH = maxH;
-		drawW = (int)((float)drawW * scale);
-	}
+	/* Calculate label position */
+	int labelX, labelY;
 
 	/* Horizontal centering */
 	labelX = cellX + (cell.w - drawW) / 2;
 
-	if (ls.position == LabelPosition::Top) {
+	if (ls.displayMode == LabelDisplayMode::Below) {
+		/* Below mode: label is at the very bottom of the cell
+		 * (video was already compressed above) */
+		int labelRegionH = cell.h / 6;
+		if (labelRegionH < 16)
+			labelRegionH = 16;
+		labelY = cellY + cell.h - labelRegionH + (labelRegionH - drawH) / 2;
+	} else if (ls.position == LabelPosition::Top) {
 		labelY = cellY + margin;
 	} else {
-		/* Bottom */
+		/* Bottom (Overlay) */
 		labelY = cellY + cell.h - drawH - margin;
 	}
 
@@ -679,11 +731,35 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 		uint8_t alpha = (uint8_t)(ls.backgroundOpacity * 255.0);
 		uint32_t bgColor = ((uint32_t)alpha << 24) | 0x000000;
 
-		startRegion(bgX, bgY, bgW, bgH, 0.0f, (float)bgW, 0.0f, (float)bgH);
-		gs_effect_set_color(colorParam, bgColor);
-		while (gs_effect_loop(solid, "Solid"))
-			gs_draw_sprite(nullptr, 0, bgW, bgH);
-		endRegion();
+		if (ls.backgroundRounded && bgW > 8 && bgH > 8) {
+			/* Rounded background: cross-shape approximation
+			 * (horizontal strip + vertical strip overlapping) */
+			int radius = (std::min)(bgH / 4, bgW / 4);
+			if (radius < 2)
+				radius = 2;
+
+			/* Horizontal strip (full width, inset vertically) */
+			startRegion(bgX, bgY + radius, bgW, bgH - 2 * radius, 0.0f, (float)bgW, 0.0f,
+				    (float)(bgH - 2 * radius));
+			gs_effect_set_color(colorParam, bgColor);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, bgW, bgH - 2 * radius);
+			endRegion();
+
+			/* Vertical strip (full height, inset horizontally) */
+			startRegion(bgX + radius, bgY, bgW - 2 * radius, bgH, 0.0f, (float)(bgW - 2 * radius), 0.0f,
+				    (float)bgH);
+			gs_effect_set_color(colorParam, bgColor);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, bgW - 2 * radius, bgH);
+			endRegion();
+		} else {
+			startRegion(bgX, bgY, bgW, bgH, 0.0f, (float)bgW, 0.0f, (float)bgH);
+			gs_effect_set_color(colorParam, bgColor);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, bgW, bgH);
+			endRegion();
+		}
 	}
 
 	/* Render text source */
