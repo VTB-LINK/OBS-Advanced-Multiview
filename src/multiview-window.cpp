@@ -221,41 +221,47 @@ void MultiviewWindow::refresh_sources()
 
 void MultiviewWindow::refresh_visual_settings()
 {
-	std::lock_guard<std::mutex> lock(source_mutex_);
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
-	MultiviewInstance *inst = config_->find_instance(uuid_);
-	if (!inst) {
-		effective_visuals_.clear();
-		return;
+		MultiviewInstance *inst = config_->find_instance(uuid_);
+		if (!inst) {
+			effective_visuals_.clear();
+			return;
+		}
+
+		const GlobalVisualSettings &globalVS = config_->global_settings().visualSettings;
+		const InstanceVisualSettings &instVS = inst->visualSettings;
+
+		/* Recompute layout to know cell positions */
+		LayoutEngine tmpEngine;
+		tmpEngine.set_layout(layout_);
+		tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+		tmpEngine.compute();
+
+		const auto &cells = tmpEngine.cells();
+		effective_visuals_.resize(cells.size());
+
+		for (size_t i = 0; i < cells.size(); i++) {
+			int r = cells[i].gridRow;
+			int c = cells[i].gridCol;
+			const CellVisualSettings *cellVS = inst->find_cell_visual(r, c);
+			effective_visuals_[i] = resolve_effective_visual_settings(globalVS, instVS, cellVS);
+		}
+
+		rebuild_label_sources();
 	}
 
-	const GlobalVisualSettings &globalVS = config_->global_settings().visualSettings;
-	const InstanceVisualSettings &instVS = inst->visualSettings;
-
-	/* Recompute layout to know cell positions */
-	LayoutEngine tmpEngine;
-	tmpEngine.set_layout(layout_);
-	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
-	tmpEngine.compute();
-
-	const auto &cells = tmpEngine.cells();
-	effective_visuals_.resize(cells.size());
-
-	for (size_t i = 0; i < cells.size(); i++) {
-		int r = cells[i].gridRow;
-		int c = cells[i].gridCol;
-		const CellVisualSettings *cellVS = inst->find_cell_visual(r, c);
-		effective_visuals_[i] = resolve_effective_visual_settings(globalVS, instVS, cellVS);
-	}
-
-	rebuild_label_sources();
+	/* Image rebuild involves obs_enter_graphics() which must be called
+	 * without holding source_mutex_ to prevent ABBA deadlock with the
+	 * render thread (render thread: graphics lock -> source_mutex_). */
 	rebuild_bg_images();
 	rebuild_overlay_images();
 }
 
 void MultiviewWindow::update_source_refs()
 {
-	std::lock_guard<std::mutex> lock(source_mutex_);
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
 	MultiviewInstance *inst = config_->find_instance(uuid_);
 	if (!inst)
@@ -311,27 +317,53 @@ void MultiviewWindow::update_source_refs()
 
 void MultiviewWindow::release_source_refs()
 {
-	std::lock_guard<std::mutex> lock(source_mutex_);
+	/* Collect textures to destroy outside the mutex to avoid
+	 * deadlock: render thread holds graphics lock then takes mutex,
+	 * so we must never hold mutex while calling obs_enter_graphics(). */
+	std::vector<gs_texture_t *> textures_to_destroy;
 
-	for (auto &cs : cell_sources_) {
-		if (cs.showing) {
-			OBSSourceAutoRelease src = OBSGetStrongRef(cs.weak_ref);
-			if (src)
-				obs_source_dec_showing(src);
-			cs.showing = false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+		for (auto &cs : cell_sources_) {
+			if (cs.showing) {
+				OBSSourceAutoRelease src = OBSGetStrongRef(cs.weak_ref);
+				if (src)
+					obs_source_dec_showing(src);
+				cs.showing = false;
+			}
+			cs.weak_ref = nullptr;
 		}
-		cs.weak_ref = nullptr;
+		cell_sources_.clear();
+
+		/* Release label text sources */
+		label_sources_.clear();
+
+		/* Collect bg/overlay textures and clear vectors under lock */
+		for (auto &bgi : bg_images_) {
+			if (bgi.texture)
+				textures_to_destroy.push_back(bgi.texture);
+			bgi.texture = nullptr;
+			bgi.path.clear();
+		}
+		bg_images_.clear();
+
+		for (auto &oi : overlay_images_) {
+			if (oi.texture)
+				textures_to_destroy.push_back(oi.texture);
+			oi.texture = nullptr;
+			oi.path.clear();
+		}
+		overlay_images_.clear();
 	}
-	cell_sources_.clear();
 
-	/* Release label text sources */
-	label_sources_.clear();
-
-	/* Release background images (needs graphics context, handled inside) */
-	release_bg_images();
-
-	/* Release overlay images */
-	release_overlay_images();
+	/* Destroy textures outside mutex, respecting lock order */
+	if (!textures_to_destroy.empty()) {
+		obs_enter_graphics();
+		for (auto *tex : textures_to_destroy)
+			gs_texture_destroy(tex);
+		obs_leave_graphics();
+	}
 }
 
 /* ---- Rendering ---- */
@@ -346,7 +378,7 @@ void MultiviewWindow::render_callback(void *data, uint32_t cx, uint32_t cy)
 
 void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 {
-	std::lock_guard<std::mutex> lock(source_mutex_);
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
 	/* Throttle lazy re-resolution: attempt once per re-resolve interval.
 	 * Interval is determined by OBS canvas FPS or custom setting. */
@@ -713,8 +745,9 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 
 void MultiviewWindow::rebuild_label_sources()
 {
-	/* Must be called from graphics or with OBS context.
-	 * We create private text sources for each cell that needs a label. */
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	/* We create private text sources for each cell that needs a label. */
 	LayoutEngine tmpEngine;
 	tmpEngine.set_layout(layout_);
 	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
@@ -982,81 +1015,116 @@ void MultiviewWindow::rebuild_bg_images()
 
 	size_t cellCount = tmpEngine.cells().size();
 
-	/* Grow vector if needed */
-	while (bg_images_.size() < cellCount)
-		bg_images_.push_back(BgImage{});
+	/* Phase 1: determine what changed under lock, collect old textures */
+	struct ImageOp {
+		size_t index;
+		std::string newPath;
+		gs_texture_t *oldTexture = nullptr;
+	};
+	std::vector<ImageOp> ops;
+	std::vector<gs_texture_t *> textures_to_destroy;
 
-	for (size_t i = 0; i < cellCount; i++) {
-		const BackgroundSettings *bg = nullptr;
-		if (i < effective_visuals_.size())
-			bg = &effective_visuals_[i].background;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
-		std::string wantPath;
-		if (bg && bg->imageEnabled && !bg->imagePath.empty())
-			wantPath = bg->imagePath;
+		while (bg_images_.size() < cellCount)
+			bg_images_.push_back(BgImage{});
 
-		if (bg_images_[i].path == wantPath)
-			continue; /* no change */
+		for (size_t i = 0; i < cellCount; i++) {
+			const BackgroundSettings *bg = nullptr;
+			if (i < effective_visuals_.size())
+				bg = &effective_visuals_[i].background;
 
-		/* Free old texture */
-		if (bg_images_[i].texture) {
-			obs_enter_graphics();
-			gs_texture_destroy(bg_images_[i].texture);
-			obs_leave_graphics();
+			std::string wantPath;
+			if (bg && bg->imageEnabled && !bg->imagePath.empty())
+				wantPath = bg->imagePath;
+
+			if (bg_images_[i].path == wantPath)
+				continue; /* no change */
+
+			ImageOp op;
+			op.index = i;
+			op.newPath = wantPath;
+			op.oldTexture = bg_images_[i].texture;
+
+			/* Clear immediately under lock */
 			bg_images_[i].texture = nullptr;
 			bg_images_[i].width = 0;
 			bg_images_[i].height = 0;
+			bg_images_[i].path = wantPath;
+
+			if (op.oldTexture)
+				textures_to_destroy.push_back(op.oldTexture);
+
+			if (!wantPath.empty())
+				ops.push_back(std::move(op));
 		}
-
-		bg_images_[i].path = wantPath;
-
-		if (wantPath.empty())
-			continue;
-
-		/* Load image via gs_image_file, extract texture */
-		gs_image_file_t imgFile = {};
-		gs_image_file_init(&imgFile, wantPath.c_str());
-
-		if (imgFile.loaded) {
-			obs_enter_graphics();
-			gs_image_file_init_texture(&imgFile);
-			obs_leave_graphics();
-
-			if (imgFile.texture) {
-				/* Steal the texture pointer */
-				bg_images_[i].texture = imgFile.texture;
-				bg_images_[i].width = imgFile.cx;
-				bg_images_[i].height = imgFile.cy;
-				/* Prevent gs_image_file_free from destroying our texture */
-				imgFile.texture = nullptr;
-			}
-		} else {
-			blog(LOG_WARNING, "[adv-multiview] Failed to load background image: %s", wantPath.c_str());
-		}
-
-		gs_image_file_free(&imgFile);
 	}
+
+	/* Phase 2: load images from disk (no lock needed) */
+	struct LoadedImage {
+		size_t index;
+		gs_image_file_t imgFile = {};
+		bool loaded = false;
+	};
+	std::vector<LoadedImage> loaded;
+	loaded.reserve(ops.size());
+
+	for (auto &op : ops) {
+		LoadedImage li;
+		li.index = op.index;
+		gs_image_file_init(&li.imgFile, op.newPath.c_str());
+		li.loaded = li.imgFile.loaded;
+		if (!li.loaded)
+			blog(LOG_WARNING, "[adv-multiview] Failed to load background image: %s",
+			     op.newPath.c_str());
+		loaded.push_back(std::move(li));
+	}
+
+	/* Phase 3: graphics operations (destroy old + create new textures) */
+	if (!textures_to_destroy.empty() || !loaded.empty()) {
+		obs_enter_graphics();
+
+		for (auto *tex : textures_to_destroy)
+			gs_texture_destroy(tex);
+
+		for (auto &li : loaded) {
+			if (li.loaded)
+				gs_image_file_init_texture(&li.imgFile);
+		}
+
+		obs_leave_graphics();
+	}
+
+	/* Phase 4: install new textures under lock */
+	if (!loaded.empty()) {
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+		for (auto &li : loaded) {
+			if (li.loaded && li.imgFile.texture) {
+				bg_images_[li.index].texture = li.imgFile.texture;
+				bg_images_[li.index].width = li.imgFile.cx;
+				bg_images_[li.index].height = li.imgFile.cy;
+				li.imgFile.texture = nullptr; /* prevent free */
+			}
+		}
+	}
+
+	/* Free image file data (no lock needed) */
+	for (auto &li : loaded)
+		gs_image_file_free(&li.imgFile);
 }
 
 void MultiviewWindow::release_bg_images()
 {
-	obs_enter_graphics();
-	for (auto &bgi : bg_images_) {
-		if (bgi.texture) {
-			gs_texture_destroy(bgi.texture);
-			bgi.texture = nullptr;
-		}
-		bgi.path.clear();
-	}
-	obs_leave_graphics();
-	bg_images_.clear();
+	/* Called only from release_source_refs() which already handles
+	 * texture destruction outside the mutex. This is now a no-op stub
+	 * kept for interface compatibility. */
 }
 
 /* ---- Overlay image management ---- */
 
 void MultiviewWindow::rebuild_overlay_images()
 {
-	/* Must be called with source_mutex_ held and effective_visuals_ up to date */
 	LayoutEngine tmpEngine;
 	tmpEngine.set_layout(layout_);
 	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
@@ -1064,70 +1132,107 @@ void MultiviewWindow::rebuild_overlay_images()
 
 	size_t cellCount = tmpEngine.cells().size();
 
-	while (overlay_images_.size() < cellCount)
-		overlay_images_.push_back(OverlayImage{});
+	/* Phase 1: determine what changed under lock, collect old textures */
+	struct ImageOp {
+		size_t index;
+		std::string newPath;
+		gs_texture_t *oldTexture = nullptr;
+	};
+	std::vector<ImageOp> ops;
+	std::vector<gs_texture_t *> textures_to_destroy;
 
-	for (size_t i = 0; i < cellCount; i++) {
-		const OverlaySettings *ovl = nullptr;
-		if (i < effective_visuals_.size())
-			ovl = &effective_visuals_[i].overlay;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
-		std::string wantPath;
-		if (ovl && ovl->enabled && !ovl->imagePath.empty())
-			wantPath = ovl->imagePath;
+		while (overlay_images_.size() < cellCount)
+			overlay_images_.push_back(OverlayImage{});
 
-		if (overlay_images_[i].path == wantPath)
-			continue;
+		for (size_t i = 0; i < cellCount; i++) {
+			const OverlaySettings *ovl = nullptr;
+			if (i < effective_visuals_.size())
+				ovl = &effective_visuals_[i].overlay;
 
-		/* Free old texture */
-		if (overlay_images_[i].texture) {
-			obs_enter_graphics();
-			gs_texture_destroy(overlay_images_[i].texture);
-			obs_leave_graphics();
+			std::string wantPath;
+			if (ovl && ovl->enabled && !ovl->imagePath.empty())
+				wantPath = ovl->imagePath;
+
+			if (overlay_images_[i].path == wantPath)
+				continue;
+
+			ImageOp op;
+			op.index = i;
+			op.newPath = wantPath;
+			op.oldTexture = overlay_images_[i].texture;
+
 			overlay_images_[i].texture = nullptr;
 			overlay_images_[i].width = 0;
 			overlay_images_[i].height = 0;
+			overlay_images_[i].path = wantPath;
+
+			if (op.oldTexture)
+				textures_to_destroy.push_back(op.oldTexture);
+
+			if (!wantPath.empty())
+				ops.push_back(std::move(op));
 		}
-
-		overlay_images_[i].path = wantPath;
-
-		if (wantPath.empty())
-			continue;
-
-		gs_image_file_t imgFile = {};
-		gs_image_file_init(&imgFile, wantPath.c_str());
-
-		if (imgFile.loaded) {
-			obs_enter_graphics();
-			gs_image_file_init_texture(&imgFile);
-			obs_leave_graphics();
-
-			if (imgFile.texture) {
-				overlay_images_[i].texture = imgFile.texture;
-				overlay_images_[i].width = imgFile.cx;
-				overlay_images_[i].height = imgFile.cy;
-				imgFile.texture = nullptr;
-			}
-		} else {
-			blog(LOG_WARNING, "[adv-multiview] Failed to load overlay image: %s", wantPath.c_str());
-		}
-
-		gs_image_file_free(&imgFile);
 	}
+
+	/* Phase 2: load images from disk (no lock needed) */
+	struct LoadedImage {
+		size_t index;
+		gs_image_file_t imgFile = {};
+		bool loaded = false;
+	};
+	std::vector<LoadedImage> loaded;
+	loaded.reserve(ops.size());
+
+	for (auto &op : ops) {
+		LoadedImage li;
+		li.index = op.index;
+		gs_image_file_init(&li.imgFile, op.newPath.c_str());
+		li.loaded = li.imgFile.loaded;
+		if (!li.loaded)
+			blog(LOG_WARNING, "[adv-multiview] Failed to load overlay image: %s", op.newPath.c_str());
+		loaded.push_back(std::move(li));
+	}
+
+	/* Phase 3: graphics operations (destroy old + create new textures) */
+	if (!textures_to_destroy.empty() || !loaded.empty()) {
+		obs_enter_graphics();
+
+		for (auto *tex : textures_to_destroy)
+			gs_texture_destroy(tex);
+
+		for (auto &li : loaded) {
+			if (li.loaded)
+				gs_image_file_init_texture(&li.imgFile);
+		}
+
+		obs_leave_graphics();
+	}
+
+	/* Phase 4: install new textures under lock */
+	if (!loaded.empty()) {
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+		for (auto &li : loaded) {
+			if (li.loaded && li.imgFile.texture) {
+				overlay_images_[li.index].texture = li.imgFile.texture;
+				overlay_images_[li.index].width = li.imgFile.cx;
+				overlay_images_[li.index].height = li.imgFile.cy;
+				li.imgFile.texture = nullptr;
+			}
+		}
+	}
+
+	for (auto &li : loaded)
+		gs_image_file_free(&li.imgFile);
 }
 
 void MultiviewWindow::release_overlay_images()
 {
-	obs_enter_graphics();
-	for (auto &oi : overlay_images_) {
-		if (oi.texture) {
-			gs_texture_destroy(oi.texture);
-			oi.texture = nullptr;
-		}
-		oi.path.clear();
-	}
-	obs_leave_graphics();
-	overlay_images_.clear();
+	/* Called only from release_source_refs() which already handles
+	 * texture destruction outside the mutex. This is now a no-op stub
+	 * kept for interface compatibility. */
 }
 
 /* ---- Events ---- */
@@ -1232,7 +1337,7 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 		/* Check if cell has a source assigned */
 		bool hasSource = false;
 		{
-			std::lock_guard<std::mutex> lock(source_mutex_);
+			std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 			if (cellIndex < (int)cell_sources_.size() && !cell_sources_[cellIndex].type.empty())
 				hasSource = true;
 		}

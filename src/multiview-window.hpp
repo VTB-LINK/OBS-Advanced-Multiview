@@ -104,7 +104,7 @@ private:
 		bool prvw_fallback = false; /* PRVW fell back to PGM */
 	};
 	std::vector<CellSource> cell_sources_;
-	std::mutex source_mutex_;
+	std::recursive_mutex source_mutex_;
 
 	/* Canvas aspect ratio for fixed-ratio viewport */
 	double canvas_aspect_ = 16.0 / 9.0;
