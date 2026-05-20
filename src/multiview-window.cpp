@@ -755,29 +755,50 @@ void MultiviewWindow::rebuild_label_sources()
 		if (!label_sources_[i].source) {
 			std::string srcName = "adv_mv_label_" + uuid_ + "_" + std::to_string(i);
 
-			/* Font settings are nested in a "font" object for text_ft2_source_v2 */
-			const char *fontFace = ls->fontFamily.empty()
-#ifdef _WIN32
-						       ? "Microsoft YaHei"
-#elif __APPLE__
-						       ? "PingFang SC"
-#else
-						       ? "Noto Sans CJK SC"
-#endif
-						       : ls->fontFamily.c_str();
+			/* Pad text with spaces for horizontal padding (same as OBS native) */
+			std::string paddedText = " " + labelText + " ";
+
 			/* Use maxFontSize for ScaleWithCell so we always scale DOWN
 			 * (avoids blurry upscaling of small bitmap textures) */
 			int renderFontSize = ls->fontSize;
 			if (ls->fontScaleMode == FontScaleMode::ScaleWithCell)
 				renderFontSize = ls->maxFontSize > 0 ? ls->maxFontSize : 72;
 
+#ifdef _WIN32
+			/* Windows: use text_gdiplus for automatic CJK font fallback */
+			const char *fontFace = ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str();
 			obs_data_t *fontObj = obs_data_create();
 			obs_data_set_int(fontObj, "size", renderFontSize);
 			obs_data_set_string(fontObj, "face", fontFace);
-			obs_data_set_int(fontObj, "flags", 0);
+			obs_data_set_int(fontObj, "flags", 1); /* Bold */
 
 			obs_data_t *settings = obs_data_create();
-			obs_data_set_string(settings, "text", labelText.c_str());
+			obs_data_set_string(settings, "text", paddedText.c_str());
+			obs_data_set_obj(settings, "font", fontObj);
+			obs_data_set_int(settings, "color", ls->textColor);
+			obs_data_set_int(settings, "opacity", 100);
+			obs_data_set_bool(settings, "outline", false);
+			obs_data_set_int(settings, "align", 0); /* left */
+
+			obs_source_t *src = obs_source_create_private("text_gdiplus", srcName.c_str(), settings);
+			obs_data_release(settings);
+			obs_data_release(fontObj);
+#else
+			/* Mac/Linux: use text_ft2_source_v2 with CJK-capable font */
+			const char *fontFace = ls->fontFamily.empty()
+#ifdef __APPLE__
+						       ? "Helvetica"
+#else
+						       ? "Monospace"
+#endif
+						       : ls->fontFamily.c_str();
+			obs_data_t *fontObj = obs_data_create();
+			obs_data_set_int(fontObj, "size", renderFontSize);
+			obs_data_set_string(fontObj, "face", fontFace);
+			obs_data_set_int(fontObj, "flags", 1); /* Bold */
+
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_string(settings, "text", paddedText.c_str());
 			obs_data_set_obj(settings, "font", fontObj);
 			obs_data_set_int(settings, "color1", ls->textColor);
 			obs_data_set_int(settings, "color2", ls->textColor);
@@ -791,12 +812,12 @@ void MultiviewWindow::rebuild_label_sources()
 			if (!src) {
 				/* Fallback: try text_ft2_source */
 				fontObj = obs_data_create();
-				obs_data_set_int(fontObj, "size", ls->fontSize);
+				obs_data_set_int(fontObj, "size", renderFontSize);
 				obs_data_set_string(fontObj, "face", fontFace);
-				obs_data_set_int(fontObj, "flags", 0);
+				obs_data_set_int(fontObj, "flags", 1);
 
 				settings = obs_data_create();
-				obs_data_set_string(settings, "text", labelText.c_str());
+				obs_data_set_string(settings, "text", paddedText.c_str());
 				obs_data_set_obj(settings, "font", fontObj);
 				obs_data_set_int(settings, "color1", ls->textColor);
 				obs_data_set_int(settings, "color2", ls->textColor);
@@ -804,6 +825,7 @@ void MultiviewWindow::rebuild_label_sources()
 				obs_data_release(settings);
 				obs_data_release(fontObj);
 			}
+#endif
 
 			label_sources_[i].source = src;
 			label_sources_[i].text = labelText;
@@ -811,29 +833,32 @@ void MultiviewWindow::rebuild_label_sources()
 			obs_source_release(src);
 		} else if (label_sources_[i].text != labelText || label_sources_[i].color != ls->textColor) {
 			/* Update existing source text/color */
-			const char *fontFace = ls->fontFamily.empty()
-#ifdef _WIN32
-						       ? "Microsoft YaHei"
-#elif __APPLE__
-						       ? "PingFang SC"
-#else
-						       ? "Noto Sans CJK SC"
-#endif
-						       : ls->fontFamily.c_str();
+			std::string paddedText = " " + labelText + " ";
 			int renderFontSize = ls->fontSize;
 			if (ls->fontScaleMode == FontScaleMode::ScaleWithCell)
 				renderFontSize = ls->maxFontSize > 0 ? ls->maxFontSize : 72;
 
+#ifdef _WIN32
+			const char *fontFace = ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str();
+#elif __APPLE__
+			const char *fontFace = ls->fontFamily.empty() ? "Helvetica" : ls->fontFamily.c_str();
+#else
+			const char *fontFace = ls->fontFamily.empty() ? "Monospace" : ls->fontFamily.c_str();
+#endif
 			obs_data_t *fontObj = obs_data_create();
 			obs_data_set_int(fontObj, "size", renderFontSize);
 			obs_data_set_string(fontObj, "face", fontFace);
-			obs_data_set_int(fontObj, "flags", 0);
+			obs_data_set_int(fontObj, "flags", 1);
 
 			obs_data_t *settings = obs_source_get_settings(label_sources_[i].source);
-			obs_data_set_string(settings, "text", labelText.c_str());
+			obs_data_set_string(settings, "text", paddedText.c_str());
 			obs_data_set_obj(settings, "font", fontObj);
+#ifdef _WIN32
+			obs_data_set_int(settings, "color", ls->textColor);
+#else
 			obs_data_set_int(settings, "color1", ls->textColor);
 			obs_data_set_int(settings, "color2", ls->textColor);
+#endif
 			obs_source_update(label_sources_[i].source, settings);
 			obs_data_release(settings);
 			obs_data_release(fontObj);
@@ -863,13 +888,12 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 
 	int cellX = cell.x + vpX;
 	int cellY = cell.y + vpY;
-	int margin = ls.margin;
 
 	/* Compute target label height based on scale mode */
 	int targetH;
 	if (ls.fontScaleMode == FontScaleMode::ScaleWithCell) {
-		/* Scale: label is ~15% of cell height, clamped by min/max */
-		targetH = cell.h * 15 / 100;
+		/* Scale: label is ~10% of cell height, clamped by min/max */
+		targetH = cell.h * 10 / 100;
 		int minH = ls.minFontSize;
 		int maxH = ls.maxFontSize;
 		if (targetH < minH)
@@ -883,55 +907,50 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 			targetH = 8;
 	}
 
-	int drawW = (int)labelW;
-	int drawH = (int)labelH;
+	/* Scale factor to fit label into target height */
+	float scaleFactor = (float)targetH / (float)labelH;
+	int drawW = (int)((float)labelW * scaleFactor);
+	int drawH = targetH;
 
-	/* Scale label to targetH */
-	if (drawH != targetH && drawH > 0) {
-		float scale = (float)targetH / (float)drawH;
-		drawH = targetH;
-		drawW = (int)((float)drawW * scale);
+	/* Clamp label width to cell width */
+	if (drawW > cell.w) {
+		float clamp = (float)cell.w / (float)drawW;
+		drawW = cell.w;
+		drawH = (int)((float)drawH * clamp);
+		scaleFactor *= clamp;
 	}
 
-	/* Clamp label width to cell width - 2*margin */
-	int maxW = cell.w - 2 * margin;
-	if (maxW < 1)
-		return;
-	if (drawW > maxW) {
-		float scale = (float)maxW / (float)drawW;
-		drawW = maxW;
-		drawH = (int)((float)drawH * scale);
-	}
+	/* Vertical padding for background (symmetric, like OBS native) */
+	int thickness = (int)(scaleFactor * 4.0f + 0.5f);
+	if (thickness < 2)
+		thickness = 2;
+	int bgH = drawH + thickness * 2;
+	int bgW = drawW;
 
-	/* Calculate label position */
-	int labelX, labelY;
+	/* Calculate position */
+	int bgX, bgY;
 
 	/* Horizontal centering */
-	labelX = cellX + (cell.w - drawW) / 2;
+	bgX = cellX + (cell.w - bgW) / 2;
 
 	if (ls.displayMode == LabelDisplayMode::Below) {
-		/* Below mode: layout is [video] [gutter] [label region]
-		 * The gutter is drawn by the window background (same as inter-cell gutters) */
+		/* Below mode: center in label region */
 		int labelRegionH = cell.h / 6;
 		if (labelRegionH < 16)
 			labelRegionH = 16;
-		labelY = cellY + cell.h - labelRegionH + (labelRegionH - drawH) / 2;
+		bgY = cellY + cell.h - labelRegionH + (labelRegionH - bgH) / 2;
 	} else if (ls.position == LabelPosition::Top) {
-		labelY = cellY + margin;
+		bgY = cellY + thickness;
 	} else {
-		/* Bottom (Overlay) */
-		labelY = cellY + cell.h - drawH - margin;
+		/* Bottom (Overlay) - offset upward from cell edge */
+		bgY = cellY + cell.h - bgH - thickness * 3;
 	}
 
-	/* Draw semi-transparent background behind label */
+	/* Draw semi-transparent background behind label (OBS approach:
+	 * bg = full source width, source height + 2*thickness) */
 	if (ls.backgroundOpacity > 0.01) {
 		gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 		gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
-
-		int bgX = labelX - margin;
-		int bgY = labelY - margin / 2;
-		int bgW = drawW + 2 * margin;
-		int bgH = drawH + margin;
 
 		uint8_t alpha = (uint8_t)(ls.backgroundOpacity * 255.0);
 		uint32_t bgColor = ((uint32_t)alpha << 24) | 0x000000;
@@ -943,8 +962,11 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 		endRegion();
 	}
 
-	/* Render text source */
-	startRegion(labelX, labelY, drawW, drawH, 0.0f, (float)labelW, 0.0f, (float)labelH);
+	/* Render text source centered within background box
+	 * (text at y-offset = thickness, same width as bg since spaces provide h-padding) */
+	int textX = bgX;
+	int textY = bgY + thickness;
+	startRegion(textX, textY, drawW, drawH, 0.0f, (float)labelW, 0.0f, (float)labelH);
 	obs_source_video_render(labelSrc);
 	endRegion();
 }
