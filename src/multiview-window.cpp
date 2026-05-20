@@ -426,10 +426,24 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
 
+	/* Fill viewport with gutter color (same as OBS native outerColor) */
+	startRegion(vpX, vpY, vpW, vpH, 0.0f, (float)vpW, 0.0f, (float)vpH);
+	gs_effect_set_color(colorParam, 0xFF999999);
+	while (gs_effect_loop(solid, "Solid"))
+		gs_draw_sprite(nullptr, 0, vpW, vpH);
+	endRegion();
+
 	for (int i = 0; i < (int)cells.size(); i++) {
 		const CellRect &cell = cells[i];
 		int cellX = cell.x + vpX;
 		int cellY = cell.y + vpY;
+
+		/* Fill cell area with black background (OBS native backgroundColor) */
+		startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
+		gs_effect_set_color(colorParam, 0xFF000000);
+		while (gs_effect_loop(solid, "Solid"))
+			gs_draw_sprite(nullptr, 0, cell.w, cell.h);
+		endRegion();
 
 		/* Get source for this cell */
 		obs_source_t *src = nullptr;
@@ -533,44 +547,13 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			}
 			hasSignalRect = true;
 
-			/* Draw background ONLY in signal rect area (non-signal = gutter/window bg) */
-			uint32_t bgColor = 0xFF000000; /* default black */
-			if (i < (int)effective_visuals_.size() && effective_visuals_[i].background.colorEnabled)
-				bgColor = effective_visuals_[i].background.color;
-
-			if (i < (int)effective_visuals_.size() &&
-			    effective_visuals_[i].label.displayMode == LabelDisplayMode::Below) {
-				/* Below mode: bg behind signal rect + label area
-				 * (gutter strip between them shows window background) */
-				int labelRegionH = cell.h / 6;
-				if (labelRegionH < 16)
-					labelRegionH = 16;
-				int gutterH = gutter_px_;
-				int bgContentH = cell.h - labelRegionH - gutterH;
-				if (bgContentH < 16)
-					bgContentH = 16;
-
-				/* Signal area background only */
-				startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)vrW, 0.0f, (float)vrH);
+			/* Draw custom background color if configured (cell already black from initial fill) */
+			if (i < (int)effective_visuals_.size() && effective_visuals_[i].background.colorEnabled) {
+				uint32_t bgColor = effective_visuals_[i].background.color;
+				startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
 				gs_effect_set_color(colorParam, bgColor);
 				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, vrW, vrH);
-				endRegion();
-
-				/* Label area background */
-				int labelAreaY = cellY + bgContentH + gutterH;
-				startRegion(cellX, labelAreaY, cell.w, labelRegionH, 0.0f, (float)cell.w, 0.0f,
-					    (float)labelRegionH);
-				gs_effect_set_color(colorParam, bgColor);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, cell.w, labelRegionH);
-				endRegion();
-			} else {
-				/* Normal: fill only signal rect area */
-				startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)vrW, 0.0f, (float)vrH);
-				gs_effect_set_color(colorParam, bgColor);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, vrW, vrH);
+					gs_draw_sprite(nullptr, 0, cell.w, cell.h);
 				endRegion();
 			}
 
@@ -809,7 +792,7 @@ void MultiviewWindow::rebuild_label_sources()
 			obs_data_set_string(settings, "text", paddedText.c_str());
 			obs_data_set_obj(settings, "font", fontObj);
 			obs_data_set_int(settings, "color", ls->textColor);
-			obs_data_set_int(settings, "opacity", 100);
+			obs_data_set_int(settings, "opacity", 50); /* OBS native uses 50% */
 			obs_data_set_bool(settings, "outline", false);
 			obs_data_set_int(settings, "align", 0); /* left */
 
@@ -925,8 +908,8 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	/* Compute target label height based on scale mode */
 	int targetH;
 	if (ls.fontScaleMode == FontScaleMode::ScaleWithCell) {
-		/* Scale: label is ~10% of cell height, clamped by min/max */
-		targetH = cell.h * 10 / 100;
+		/* Scale: match OBS native formula (h / 9.81 ≈ 10.2%), clamped */
+		targetH = (int)((double)cell.h / 9.81 + 0.5);
 		int minH = ls.minFontSize;
 		int maxH = ls.maxFontSize;
 		if (targetH < minH)
@@ -953,8 +936,10 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 		scaleFactor *= clamp;
 	}
 
-	/* Vertical padding for background (symmetric, like OBS native) */
-	int thickness = (int)(scaleFactor * 4.0f + 0.5f);
+	/* Vertical padding for background (symmetric, like OBS native).
+	 * OBS uses thickness=6 in canvas coords where cell height ≈ canvas/4.
+	 * We match that proportion: thickness ≈ 2.2% of cell height. */
+	int thickness = (int)((double)cell.h * 6.0 / 270.0 + 0.5);
 	if (thickness < 2)
 		thickness = 2;
 	int bgH = drawH + thickness * 2;
@@ -1076,8 +1061,7 @@ void MultiviewWindow::rebuild_bg_images()
 		gs_image_file_init(&li.imgFile, op.newPath.c_str());
 		li.loaded = li.imgFile.loaded;
 		if (!li.loaded)
-			blog(LOG_WARNING, "[adv-multiview] Failed to load background image: %s",
-			     op.newPath.c_str());
+			blog(LOG_WARNING, "[adv-multiview] Failed to load background image: %s", op.newPath.c_str());
 		loaded.push_back(std::move(li));
 	}
 

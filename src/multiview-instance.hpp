@@ -64,11 +64,11 @@ struct LabelSettings {
 	LabelPosition position = LabelPosition::Bottom;
 	std::string fontFamily; /* empty = system default */
 	int fontSize = 14;
-	FontScaleMode fontScaleMode = FontScaleMode::Fixed;
+	FontScaleMode fontScaleMode = FontScaleMode::ScaleWithCell;
 	int minFontSize = 8;
 	int maxFontSize = 48;
 	uint32_t textColor = 0xFFFFFFFF; /* ARGB white */
-	double backgroundOpacity = 0.6;
+	double backgroundOpacity = 0.2;
 	bool backgroundRounded = false;
 	int margin = 4;
 
