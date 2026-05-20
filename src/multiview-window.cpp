@@ -364,6 +364,11 @@ void MultiviewWindow::release_source_refs()
 			gs_texture_destroy(tex);
 		obs_leave_graphics();
 	}
+
+	/* Release safe area vertex buffers */
+	obs_enter_graphics();
+	release_safe_area_vbs();
+	obs_leave_graphics();
 }
 
 /* ---- Rendering ---- */
@@ -655,6 +660,10 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				}
 			}
 		}
+
+		/* Render safe area guides (anchored to SignalRect, after video, before overlay) */
+		if (hasSignalRect)
+			render_safe_area(i, vrX, vrY, vrW, vrH);
 
 		/* Render foreground overlay image if available */
 		if (i < (int)overlay_images_.size() && overlay_images_[i].texture) {
@@ -1258,6 +1267,129 @@ void MultiviewWindow::release_overlay_images()
 	 * kept for interface compatibility. */
 }
 
+/* ---- Safe Area rendering ---- */
+
+/* EBU R95 / Rec. ITU-R BT.1848-1 margins (same as OBS native) */
+#define ACTION_SAFE_PERCENT 0.035f
+#define GRAPHICS_SAFE_PERCENT 0.05f
+#define FOURBYTHREE_SAFE_PERCENT 0.1625f
+#define CENTER_LINE_LENGTH 0.1f
+
+void MultiviewWindow::init_safe_area_vbs()
+{
+	if (safe_area_vb_init_)
+		return;
+
+	/* Action Safe (3.5% margin) */
+	gs_render_start(true);
+	gs_vertex2f(ACTION_SAFE_PERCENT, ACTION_SAFE_PERCENT);
+	gs_vertex2f(ACTION_SAFE_PERCENT, 1.0f - ACTION_SAFE_PERCENT);
+	gs_vertex2f(1.0f - ACTION_SAFE_PERCENT, 1.0f - ACTION_SAFE_PERCENT);
+	gs_vertex2f(1.0f - ACTION_SAFE_PERCENT, ACTION_SAFE_PERCENT);
+	gs_vertex2f(ACTION_SAFE_PERCENT, ACTION_SAFE_PERCENT);
+	safe_action_vb_ = gs_render_save();
+
+	/* Graphics Safe (5.0% margin) */
+	gs_render_start(true);
+	gs_vertex2f(GRAPHICS_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(GRAPHICS_SAFE_PERCENT, 1.0f - GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(1.0f - GRAPHICS_SAFE_PERCENT, 1.0f - GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(1.0f - GRAPHICS_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(GRAPHICS_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
+	safe_graphics_vb_ = gs_render_save();
+
+	/* 4:3 safe for widescreen (16.25% horizontal margin) */
+	gs_render_start(true);
+	gs_vertex2f(FOURBYTHREE_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(1.0f - FOURBYTHREE_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(1.0f - FOURBYTHREE_SAFE_PERCENT, 1.0f - GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(FOURBYTHREE_SAFE_PERCENT, 1.0f - GRAPHICS_SAFE_PERCENT);
+	gs_vertex2f(FOURBYTHREE_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
+	safe_4x3_vb_ = gs_render_save();
+
+	/* Center horizontal line */
+	gs_render_start(true);
+	gs_vertex2f(0.0f, 0.5f);
+	gs_vertex2f(CENTER_LINE_LENGTH, 0.5f);
+	safe_center_h_vb_ = gs_render_save();
+
+	/* Center vertical line */
+	gs_render_start(true);
+	gs_vertex2f(0.5f, 0.0f);
+	gs_vertex2f(0.5f, CENTER_LINE_LENGTH);
+	safe_center_v_vb_ = gs_render_save();
+
+	safe_area_vb_init_ = true;
+}
+
+void MultiviewWindow::release_safe_area_vbs()
+{
+	if (!safe_area_vb_init_)
+		return;
+
+	gs_vertexbuffer_destroy(safe_action_vb_);
+	gs_vertexbuffer_destroy(safe_graphics_vb_);
+	gs_vertexbuffer_destroy(safe_4x3_vb_);
+	gs_vertexbuffer_destroy(safe_center_h_vb_);
+	gs_vertexbuffer_destroy(safe_center_v_vb_);
+	safe_action_vb_ = nullptr;
+	safe_graphics_vb_ = nullptr;
+	safe_4x3_vb_ = nullptr;
+	safe_center_h_vb_ = nullptr;
+	safe_center_v_vb_ = nullptr;
+	safe_area_vb_init_ = false;
+}
+
+void MultiviewWindow::render_safe_area(int cellIndex, int vrX, int vrY, int vrW, int vrH)
+{
+	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())
+		return;
+
+	const SafeAreaSettings &sa = effective_visuals_[cellIndex].safeArea;
+	if (!sa.enabled)
+		return;
+
+	if (vrW <= 0 || vrH <= 0)
+		return;
+
+	/* Lazily init vertex buffers (we're already in graphics context during render) */
+	if (!safe_area_vb_init_)
+		init_safe_area_vbs();
+
+	/* Compute color with user-specified opacity */
+	uint8_t alpha = (uint8_t)(sa.opacity * 255.0);
+	uint32_t saColor = ((uint32_t)alpha << 24) | (sa.color & 0x00FFFFFF);
+
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	/* Helper lambda: render a vertex buffer scaled to SignalRect */
+	auto renderVB = [&](gs_vertbuffer_t *vb) {
+		if (!vb)
+			return;
+
+		gs_load_vertexbuffer(vb);
+
+		gs_matrix_push();
+		/* Translate to signal rect origin, then scale normalized coords to signal size */
+		gs_matrix_translate3f((float)vrX, (float)vrY, 0.0f);
+		gs_matrix_scale3f((float)vrW, (float)vrH, 1.0f);
+
+		gs_effect_set_color(colorParam, saColor);
+		while (gs_effect_loop(solid, "Solid"))
+			gs_draw(GS_LINESTRIP, 0, 0);
+
+		gs_matrix_pop();
+	};
+
+	/* Draw all safe area guides */
+	renderVB(safe_action_vb_);
+	renderVB(safe_graphics_vb_);
+	renderVB(safe_4x3_vb_);
+	renderVB(safe_center_h_vb_);
+	renderVB(safe_center_v_vb_);
+}
+
 /* ---- Events ---- */
 
 bool MultiviewWindow::event(QEvent *event)
@@ -1353,6 +1485,33 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 	onTopAction->setCheckable(true);
 	onTopAction->setChecked(is_always_on_top_);
 	connect(onTopAction, &QAction::triggered, this, &MultiviewWindow::on_toggle_always_on_top);
+
+	/* Safe Area toggle (instance-level) */
+	{
+		MultiviewInstance *inst = config_->find_instance(uuid_);
+		if (inst) {
+			bool safeEnabled = false;
+			/* Check instance effective safe area state */
+			if (inst->visualSettings.safeAreaMode == InheritanceMode::Override)
+				safeEnabled = inst->visualSettings.safeArea.enabled;
+			else
+				safeEnabled = config_->global_settings().visualSettings.safeArea.enabled;
+
+			QAction *safeAreaAction = menu.addAction(QStringLiteral("Safe Area"));
+			safeAreaAction->setCheckable(true);
+			safeAreaAction->setChecked(safeEnabled);
+			connect(safeAreaAction, &QAction::triggered, this, [this, safeEnabled]() {
+				MultiviewInstance *inst = config_->find_instance(uuid_);
+				if (!inst)
+					return;
+				/* Switch to override mode and toggle */
+				inst->visualSettings.safeAreaMode = InheritanceMode::Override;
+				inst->visualSettings.safeArea.enabled = !safeEnabled;
+				config_->save();
+				refresh_visual_settings();
+			});
+		}
+	}
 
 	menu.addSeparator();
 

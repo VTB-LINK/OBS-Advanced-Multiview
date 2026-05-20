@@ -120,6 +120,7 @@ private:
 	QCheckBox *chk_re_resolve_inherit_;
 	QDoubleSpinBox *spin_re_resolve_fps_;
 	QLabel *lbl_re_resolve_effective_;
+	QCheckBox *chk_safe_area_enabled_;
 
 	void update_re_resolve_effective_label();
 

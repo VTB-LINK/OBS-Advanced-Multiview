@@ -676,6 +676,15 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 	connect(spin_re_resolve_fps_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
 		[this](double) { update_re_resolve_effective_label(); });
 
+	/* Safe Area section */
+	layout->addSpacing(8);
+	auto *safe_area_label = new QLabel(QStringLiteral("Safe Area (Global Default)"), tab);
+	safe_area_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
+	layout->addWidget(safe_area_label);
+	chk_safe_area_enabled_ = new QCheckBox(QStringLiteral("Show safe area guides"), tab);
+	chk_safe_area_enabled_->setChecked(config_->global_settings().visualSettings.safeArea.enabled);
+	layout->addWidget(chk_safe_area_enabled_);
+
 	auto *gs_apply = new QPushButton(QStringLiteral("Apply"), tab);
 	layout->addWidget(gs_apply);
 	layout->addStretch();
@@ -684,12 +693,14 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 		config_->global_settings().defaultGutterPx = spin_default_gutter_->value();
 		config_->global_settings().reResolveInheritObs = chk_re_resolve_inherit_->isChecked();
 		config_->global_settings().reResolveCustomFps = spin_re_resolve_fps_->value();
+		config_->global_settings().visualSettings.safeArea.enabled = chk_safe_area_enabled_->isChecked();
 		config_->save();
-		obs_log(LOG_INFO, "global settings saved (gutter=%d, reResolve=%s %.2f fps)",
+		obs_log(LOG_INFO, "global settings saved (gutter=%d, reResolve=%s %.2f fps, safeArea=%s)",
 			spin_default_gutter_->value(), chk_re_resolve_inherit_->isChecked() ? "inherit" : "custom",
-			spin_re_resolve_fps_->value());
+			spin_re_resolve_fps_->value(), chk_safe_area_enabled_->isChecked() ? "on" : "off");
 		update_re_resolve_effective_label();
 		notify_multiview_layout_changed();
+		notify_multiview_visual_settings_changed();
 	});
 }
 

@@ -153,6 +153,17 @@ private:
 	std::vector<OverlayImage> overlay_images_;
 	void rebuild_overlay_images();
 	void release_overlay_images();
+
+	/* Safe area vertex buffers (normalized 0-1 coords, shared across cells) */
+	gs_vertbuffer_t *safe_action_vb_ = nullptr;   /* Action Safe 3.5% */
+	gs_vertbuffer_t *safe_graphics_vb_ = nullptr; /* Graphics Safe 5.0% */
+	gs_vertbuffer_t *safe_4x3_vb_ = nullptr;      /* 4:3 safe 16.25% */
+	gs_vertbuffer_t *safe_center_h_vb_ = nullptr; /* center horizontal line */
+	gs_vertbuffer_t *safe_center_v_vb_ = nullptr; /* center vertical line */
+	bool safe_area_vb_init_ = false;
+	void init_safe_area_vbs();
+	void release_safe_area_vbs();
+	void render_safe_area(int cellIndex, int vrX, int vrY, int vrW, int vrH);
 };
 
 /* Global functions (defined in plugin-main) */

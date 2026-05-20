@@ -83,8 +83,8 @@ struct LabelSettings {
 struct SafeAreaSettings {
 	bool enabled = false;
 	SafeAreaPreset preset = SafeAreaPreset::EBU_R95;
-	uint32_t color = 0xFFFFFFFF; /* ARGB white */
-	double opacity = 0.5;
+	uint32_t color = 0xFFD0D0D0; /* ARGB light grey - matches OBS native OUTLINE_COLOR */
+	double opacity = 1.0;
 
 	obs_data_t *to_obs_data() const;
 	static SafeAreaSettings from_obs_data(obs_data_t *data);
