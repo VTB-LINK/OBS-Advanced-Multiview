@@ -273,7 +273,7 @@ void ManagerDialog::setup_left_panel(QWidget *panel)
 	btn_move_up_->setFixedSize(btn_sz, btn_sz);
 	btn_move_up_->setIconSize(QSize(ico_sz, ico_sz));
 	btn_move_up_->setAutoRaise(true);
-	btn_move_up_->setToolTip(QStringLiteral("Reorder is not implemented yet"));
+	btn_move_up_->setToolTip(QStringLiteral("Move Up"));
 	btn_move_up_->setEnabled(false);
 	toolbar->addWidget(btn_move_up_);
 
@@ -282,7 +282,7 @@ void ManagerDialog::setup_left_panel(QWidget *panel)
 	btn_move_down_->setFixedSize(btn_sz, btn_sz);
 	btn_move_down_->setIconSize(QSize(ico_sz, ico_sz));
 	btn_move_down_->setAutoRaise(true);
-	btn_move_down_->setToolTip(QStringLiteral("Reorder is not implemented yet"));
+	btn_move_down_->setToolTip(QStringLiteral("Move Down"));
 	btn_move_down_->setEnabled(false);
 	toolbar->addWidget(btn_move_down_);
 
@@ -293,10 +293,33 @@ void ManagerDialog::setup_left_panel(QWidget *panel)
 	connect(btn_delete_, &QToolButton::clicked, this, &ManagerDialog::on_delete_instance);
 	connect(btn_open_, &QToolButton::clicked, this, &ManagerDialog::on_open_instance);
 	connect(btn_move_up_, &QToolButton::clicked, this, [this]() {
-		/* TODO: reorder support */
+		auto selected = instance_tree_->selectedItems();
+		if (selected.size() != 1)
+			return;
+		int row = instance_tree_->indexOfTopLevelItem(selected.first());
+		if (row <= 0)
+			return;
+		auto &vec = config_->instances_mutable();
+		std::swap(vec[row], vec[row - 1]);
+		config_->save();
+		std::string uuid = get_item_uuid(selected.first());
+		refresh_instance_list();
+		select_instance_by_uuid(uuid);
 	});
 	connect(btn_move_down_, &QToolButton::clicked, this, [this]() {
-		/* TODO: reorder support */
+		auto selected = instance_tree_->selectedItems();
+		if (selected.size() != 1)
+			return;
+		int row = instance_tree_->indexOfTopLevelItem(selected.first());
+		int count = instance_tree_->topLevelItemCount();
+		if (row < 0 || row >= count - 1)
+			return;
+		auto &vec = config_->instances_mutable();
+		std::swap(vec[row], vec[row + 1]);
+		config_->save();
+		std::string uuid = get_item_uuid(selected.first());
+		refresh_instance_list();
+		select_instance_by_uuid(uuid);
 	});
 }
 
@@ -357,7 +380,8 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 
 	/* UUID label */
 	detail_uuid_label_ = new QLabel(page_instance_);
-	detail_uuid_label_->setStyleSheet(QStringLiteral("color: gray; font-size: 11px;"));
+	detail_uuid_label_->setStyleSheet(
+		QString("color: %1; font-size: 11px;").arg(palette().color(QPalette::PlaceholderText).name()));
 	p_layout->addWidget(detail_uuid_label_);
 
 	/* --- Separator --- */
@@ -377,7 +401,8 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	detail_gutter_spin_->setMinimumWidth(60);
 	gutter_row->addWidget(detail_gutter_spin_);
 	detail_gutter_effective_ = new QLabel(page_instance_);
-	detail_gutter_effective_->setStyleSheet(QStringLiteral("color: gray;"));
+	detail_gutter_effective_->setStyleSheet(
+		QString("color: %1;").arg(palette().color(QPalette::PlaceholderText).name()));
 	gutter_row->addWidget(detail_gutter_effective_);
 	p_layout->addLayout(gutter_row);
 
@@ -416,7 +441,7 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	/* Span info row: label left, Reset All button right */
 	auto *span_row = new QHBoxLayout();
 	grid_span_info_ = new QLabel(page_instance_);
-	grid_span_info_->setStyleSheet(QStringLiteral("color: gray;"));
+	grid_span_info_->setStyleSheet(QString("color: %1;").arg(palette().color(QPalette::PlaceholderText).name()));
 	span_row->addWidget(grid_span_info_, 1);
 	btn_reset_all_ = new QPushButton(QStringLiteral("Reset All"), page_instance_);
 	btn_reset_all_->setFixedWidth(btn_remove_span_->sizeHint().width());
@@ -624,7 +649,8 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 	resolve_row->addWidget(spin_re_resolve_fps_);
 
 	lbl_re_resolve_effective_ = new QLabel(tab);
-	lbl_re_resolve_effective_->setStyleSheet(QStringLiteral("color: gray;"));
+	lbl_re_resolve_effective_->setStyleSheet(
+		QString("color: %1;").arg(palette().color(QPalette::PlaceholderText).name()));
 	resolve_row->addWidget(lbl_re_resolve_effective_);
 	resolve_row->addStretch();
 	layout->addLayout(resolve_row);
@@ -720,7 +746,17 @@ void ManagerDialog::update_button_states()
 	btn_clone_->setEnabled(single);
 	btn_delete_->setEnabled(has_selection);
 	btn_open_->setEnabled(has_selection);
-	/* Move Up/Down kept disabled until reorder is implemented */
+
+	/* Move Up/Down: enabled when single selection and not at boundary */
+	if (single) {
+		int row = instance_tree_->indexOfTopLevelItem(selected.first());
+		int count = instance_tree_->topLevelItemCount();
+		btn_move_up_->setEnabled(row > 0);
+		btn_move_down_->setEnabled(row >= 0 && row < count - 1);
+	} else {
+		btn_move_up_->setEnabled(false);
+		btn_move_down_->setEnabled(false);
+	}
 }
 
 /* ---- slots ---- */
