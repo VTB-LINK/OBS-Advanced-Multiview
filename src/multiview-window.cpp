@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <graphics/image-file.h>
 #include <graphics/matrix4.h>
 #include <graphics/vec4.h>
+#include <util/platform.h>
 #include <plugin-support.h>
 
 #include <QAction>
@@ -34,6 +35,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QWindow>
 
 #include <algorithm>
+#include <cmath>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -217,6 +219,7 @@ void MultiviewWindow::refresh_sources()
 	release_source_refs();
 	update_source_refs();
 	rebuild_label_sources();
+	rebuild_volmeters();
 }
 
 void MultiviewWindow::refresh_visual_settings()
@@ -364,6 +367,9 @@ void MultiviewWindow::release_source_refs()
 			gs_texture_destroy(tex);
 		obs_leave_graphics();
 	}
+
+	/* Release volmeters (no graphics context needed) */
+	release_volmeters();
 
 	/* Release safe area vertex buffers */
 	obs_enter_graphics();
@@ -767,6 +773,9 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 
 		/* Render label overlay */
 		render_label(i, cell, vpX, vpY);
+
+		/* Render VU meter bars */
+		render_vu_meter(i, cell, vpX, vpY);
 	}
 }
 
@@ -1307,17 +1316,23 @@ void MultiviewWindow::init_safe_area_vbs()
 	gs_vertex2f(FOURBYTHREE_SAFE_PERCENT, GRAPHICS_SAFE_PERCENT);
 	safe_4x3_vb_ = gs_render_save();
 
-	/* Center horizontal line */
+	/* Center horizontal line - LEFT */
 	gs_render_start(true);
 	gs_vertex2f(0.0f, 0.5f);
 	gs_vertex2f(CENTER_LINE_LENGTH, 0.5f);
-	safe_center_h_vb_ = gs_render_save();
+	safe_center_left_vb_ = gs_render_save();
 
-	/* Center vertical line */
+	/* Center vertical line - TOP */
 	gs_render_start(true);
 	gs_vertex2f(0.5f, 0.0f);
 	gs_vertex2f(0.5f, CENTER_LINE_LENGTH);
-	safe_center_v_vb_ = gs_render_save();
+	safe_center_top_vb_ = gs_render_save();
+
+	/* Center horizontal line - RIGHT */
+	gs_render_start(true);
+	gs_vertex2f(1.0f, 0.5f);
+	gs_vertex2f(1.0f - CENTER_LINE_LENGTH, 0.5f);
+	safe_center_right_vb_ = gs_render_save();
 
 	safe_area_vb_init_ = true;
 }
@@ -1330,13 +1345,15 @@ void MultiviewWindow::release_safe_area_vbs()
 	gs_vertexbuffer_destroy(safe_action_vb_);
 	gs_vertexbuffer_destroy(safe_graphics_vb_);
 	gs_vertexbuffer_destroy(safe_4x3_vb_);
-	gs_vertexbuffer_destroy(safe_center_h_vb_);
-	gs_vertexbuffer_destroy(safe_center_v_vb_);
+	gs_vertexbuffer_destroy(safe_center_left_vb_);
+	gs_vertexbuffer_destroy(safe_center_top_vb_);
+	gs_vertexbuffer_destroy(safe_center_right_vb_);
 	safe_action_vb_ = nullptr;
 	safe_graphics_vb_ = nullptr;
 	safe_4x3_vb_ = nullptr;
-	safe_center_h_vb_ = nullptr;
-	safe_center_v_vb_ = nullptr;
+	safe_center_left_vb_ = nullptr;
+	safe_center_top_vb_ = nullptr;
+	safe_center_right_vb_ = nullptr;
 	safe_area_vb_init_ = false;
 }
 
@@ -1386,8 +1403,316 @@ void MultiviewWindow::render_safe_area(int cellIndex, int vrX, int vrY, int vrW,
 	renderVB(safe_action_vb_);
 	renderVB(safe_graphics_vb_);
 	renderVB(safe_4x3_vb_);
-	renderVB(safe_center_h_vb_);
-	renderVB(safe_center_v_vb_);
+	renderVB(safe_center_left_vb_);
+	renderVB(safe_center_top_vb_);
+	renderVB(safe_center_right_vb_);
+}
+
+/* ---- VU Meter ---- */
+
+/* Practical silence level in dB (below minimum display range) */
+#define VU_SILENCE_DB -200.0f
+
+void MultiviewWindow::volmeter_callback(void *data, const float magnitude[MAX_AUDIO_CHANNELS],
+					const float peak[MAX_AUDIO_CHANNELS], const float inputPeak[MAX_AUDIO_CHANNELS])
+{
+	UNUSED_PARAMETER(inputPeak);
+	auto *sv = static_cast<SingleVolmeter *>(data);
+	for (int i = 0; i < MAX_AUDIO_CHANNELS; i++) {
+		sv->magnitude[i] = magnitude[i];
+		sv->peak[i] = peak[i];
+	}
+}
+
+/* Helper: collect all audio sources within a scene into a vector */
+struct AudioCollectCtx {
+	std::vector<obs_source_t *> sources;
+};
+
+static bool collect_audio_sources_cb(obs_scene_t *, obs_sceneitem_t *item, void *param)
+{
+	obs_source_t *itemSrc = obs_sceneitem_get_source(item);
+	if (!itemSrc)
+		return true;
+	if (!obs_sceneitem_visible(item))
+		return true;
+	uint32_t flags = obs_source_get_output_flags(itemSrc);
+	if (flags & OBS_SOURCE_AUDIO) {
+		auto *ctx = static_cast<AudioCollectCtx *>(param);
+		ctx->sources.push_back(obs_source_get_ref(itemSrc));
+	}
+	return true; /* continue enumeration */
+}
+
+static void collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *> &out)
+{
+	if (!src)
+		return;
+
+	uint32_t flags = obs_source_get_output_flags(src);
+	if (flags & OBS_SOURCE_AUDIO) {
+		/* Source itself produces audio */
+		out.push_back(obs_source_get_ref(src));
+		return;
+	}
+
+	/* Try to interpret as scene and collect audio sources inside */
+	obs_scene_t *scene = obs_scene_from_source(src);
+	if (!scene)
+		scene = obs_group_from_source(src);
+	if (!scene)
+		return;
+
+	AudioCollectCtx ctx;
+	obs_scene_enum_items(scene, collect_audio_sources_cb, &ctx);
+	for (auto *s : ctx.sources)
+		out.push_back(s);
+}
+
+void MultiviewWindow::rebuild_volmeters()
+{
+	release_volmeters();
+
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	size_t count = cell_sources_.size();
+	cell_volmeters_.resize(count, nullptr);
+
+	for (size_t i = 0; i < count; i++) {
+		const auto &cs = cell_sources_[i];
+		if (cs.type.empty())
+			continue;
+
+		obs_source_t *cellSrc = nullptr;
+
+		if (cs.type == "pgm") {
+			cellSrc = obs_frontend_get_current_scene();
+		} else if (cs.type == "prvw") {
+			cellSrc = obs_frontend_get_current_preview_scene();
+		} else {
+			OBSSourceAutoRelease strong = OBSGetStrongRef(cs.weak_ref);
+			if (strong) {
+				cellSrc = obs_source_get_ref(strong);
+			}
+		}
+
+		if (!cellSrc)
+			continue;
+
+		/* Collect all audio sources from the cell's source/scene */
+		std::vector<obs_source_t *> audioSources;
+		collect_audio_sources(cellSrc, audioSources);
+		obs_source_release(cellSrc);
+
+		if (audioSources.empty())
+			continue;
+
+		auto *cellVm = new CellVolmeter();
+		cellVm->meters.reserve(audioSources.size());
+
+		/* Single pass with reserve: push_back won't reallocate, so
+		 * &meters.back() remains stable for callback registration */
+		for (auto *audioSrc : audioSources) {
+			SingleVolmeter sv;
+			for (int c = 0; c < MAX_AUDIO_CHANNELS; c++) {
+				sv.magnitude[c] = VU_SILENCE_DB;
+				sv.peak[c] = VU_SILENCE_DB;
+			}
+			sv.volmeter = obs_volmeter_create(OBS_FADER_LOG);
+			if (!sv.volmeter) {
+				obs_source_release(audioSrc);
+				continue;
+			}
+			const char *name = obs_source_get_name(audioSrc);
+			sv.name = name ? name : "";
+			cellVm->meters.push_back(sv);
+
+			SingleVolmeter *svPtr = &cellVm->meters.back();
+			obs_volmeter_add_callback(svPtr->volmeter, volmeter_callback, svPtr);
+			obs_volmeter_attach_source(svPtr->volmeter, audioSrc);
+			svPtr->channels = obs_volmeter_get_nr_channels(svPtr->volmeter);
+
+			blog(LOG_INFO, "[AMV] VU meter cell %d: attached '%s'", (int)i, svPtr->name.c_str());
+			obs_source_release(audioSrc);
+		}
+
+		if (cellVm->meters.empty()) {
+			delete cellVm;
+			continue;
+		}
+		cell_volmeters_[i] = cellVm;
+	}
+}
+
+void MultiviewWindow::release_volmeters()
+{
+	for (auto *cellVm : cell_volmeters_) {
+		if (!cellVm)
+			continue;
+		for (auto &sv : cellVm->meters) {
+			if (sv.volmeter) {
+				obs_volmeter_remove_callback(sv.volmeter, volmeter_callback, &sv);
+				obs_volmeter_detach_source(sv.volmeter);
+				obs_volmeter_destroy(sv.volmeter);
+			}
+		}
+		delete cellVm;
+	}
+	cell_volmeters_.clear();
+}
+
+void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY)
+{
+	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())
+		return;
+
+	const VuMeterSettings &vmSettings = effective_visuals_[cellIndex].vuMeter;
+	if (!vmSettings.enabled || vmSettings.opacity <= 0.0)
+		return;
+
+	if (cellIndex >= (int)cell_volmeters_.size() || !cell_volmeters_[cellIndex])
+		return;
+
+	CellVolmeter *cellVm = cell_volmeters_[cellIndex];
+
+	/* Compute max peak across all audio sources in this cell */
+	float peakMax = VU_SILENCE_DB;
+	for (auto &sv : cellVm->meters) {
+		int ch = sv.channels > 0 ? sv.channels : 2;
+		for (int c = 0; c < ch && c < MAX_AUDIO_CHANNELS; c++) {
+			float p = sv.peak[c];
+			if (std::isfinite(p) && p > peakMax)
+				peakMax = p;
+		}
+	}
+
+	/* Apply ballistics: immediate attack, gradual decay
+	 * Decay rate: ~40 dB / 1.7 sec ≈ 23.5 dB/sec (OBS Fast profile) */
+	const float decayRate = 23.5f; /* dB per second */
+	uint64_t now = os_gettime_ns();
+	if (cellVm->last_render_ns > 0) {
+		double deltaS = (double)(now - cellVm->last_render_ns) * 1e-9;
+		if (deltaS > 0.0 && deltaS < 1.0) {
+			if (peakMax >= cellVm->displayPeak) {
+				cellVm->displayPeak = peakMax;
+			} else {
+				cellVm->displayPeak -= decayRate * (float)deltaS;
+				if (cellVm->displayPeak < peakMax)
+					cellVm->displayPeak = peakMax;
+			}
+		} else {
+			cellVm->displayPeak = peakMax;
+		}
+	} else {
+		cellVm->displayPeak = peakMax;
+	}
+	cellVm->last_render_ns = now;
+
+	float smoothedPeak = cellVm->displayPeak;
+
+	/* Clamp and normalize: -60 dB .. 0 dB -> 0.0 .. 1.0 */
+	const float minDB = -60.0f;
+	const float maxDB = 0.0f;
+	if (smoothedPeak < minDB)
+		smoothedPeak = minDB;
+	if (smoothedPeak > maxDB)
+		smoothedPeak = maxDB;
+	float level = (smoothedPeak - minDB) / (maxDB - minDB);
+
+	if (level <= 0.0f)
+		return;
+
+	/* Determine bar geometry based on position */
+	int barW = vmSettings.width;
+	int cellX = vpX + cell.x;
+	int cellY = vpY + cell.y;
+
+	/* Color zones normalized thresholds:
+	 * -20dB => (-20 - (-60)) / 60 = 40/60 ≈ 0.667
+	 * -9dB  => (-9 - (-60)) / 60 = 51/60 = 0.85 */
+	const float warningNorm = 40.0f / 60.0f;
+	const float errorNorm = 51.0f / 60.0f;
+
+	/* Colors in ARGB format */
+	uint32_t alpha = (uint32_t)(vmSettings.opacity * 255.0 + 0.5);
+	if (alpha > 255)
+		alpha = 255;
+	uint32_t greenColor = (alpha << 24) | 0x0026A826;  /* green */
+	uint32_t yellowColor = (alpha << 24) | 0x00D4D416; /* yellow */
+	uint32_t redColor = (alpha << 24) | 0x00D41616;    /* red */
+
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+
+	/* Draw up to 3 segments: green, yellow, red (as needed based on level) */
+	struct Segment {
+		float start; /* normalized 0..1 */
+		float end;
+		uint32_t color;
+	};
+	Segment segments[3] = {
+		{0.0f, warningNorm, greenColor},
+		{warningNorm, errorNorm, yellowColor},
+		{errorNorm, 1.0f, redColor},
+	};
+
+	bool isHorizontal = (vmSettings.position == VuMeterPosition::Bottom);
+
+	int barFullLen;
+	int barX, barY;
+	if (vmSettings.position == VuMeterPosition::Left) {
+		barX = cellX;
+		barY = cellY;
+		barFullLen = cell.h;
+	} else if (isHorizontal) {
+		barX = cellX;
+		barY = cellY + cell.h - barW;
+		barFullLen = cell.w;
+	} else {
+		/* Right (default) */
+		barX = cellX + cell.w - barW;
+		barY = cellY;
+		barFullLen = cell.h;
+	}
+
+	for (int s = 0; s < 3; s++) {
+		float segStart = segments[s].start;
+		float segEnd = segments[s].end;
+
+		/* Clip segment to actual level */
+		if (level <= segStart)
+			break;
+		float drawEnd = (level < segEnd) ? level : segEnd;
+
+		int pixStart = (int)(segStart * (float)barFullLen + 0.5f);
+		int pixEnd = (int)(drawEnd * (float)barFullLen + 0.5f);
+		int pixLen = pixEnd - pixStart;
+		if (pixLen <= 0)
+			continue;
+
+		gs_effect_set_color(colorParam, segments[s].color);
+
+		if (isHorizontal) {
+			/* Horizontal: draw from left to right */
+			startRegion(barX + pixStart, barY, pixLen, barW, 0.0f, (float)pixLen, 0.0f, (float)barW);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, pixLen, barW);
+			endRegion();
+		} else {
+			/* Vertical: draw from bottom up */
+			int drawY = barY + barFullLen - pixEnd;
+			startRegion(barX, drawY, barW, pixLen, 0.0f, (float)barW, 0.0f, (float)pixLen);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, barW, pixLen);
+			endRegion();
+		}
+	}
+
+	gs_blend_state_pop();
 }
 
 /* ---- Events ---- */
@@ -1507,6 +1832,31 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 				/* Switch to override mode and toggle */
 				inst->visualSettings.safeAreaMode = InheritanceMode::Override;
 				inst->visualSettings.safeArea.enabled = !safeEnabled;
+				config_->save();
+				refresh_visual_settings();
+			});
+		}
+	}
+
+	/* VU Meter toggle (instance-level) */
+	{
+		MultiviewInstance *inst = config_->find_instance(uuid_);
+		if (inst) {
+			bool vuEnabled = false;
+			if (inst->visualSettings.vuMeterMode == InheritanceMode::Override)
+				vuEnabled = inst->visualSettings.vuMeter.enabled;
+			else
+				vuEnabled = config_->global_settings().visualSettings.vuMeter.enabled;
+
+			QAction *vuAction = menu.addAction(QStringLiteral("VU Meter"));
+			vuAction->setCheckable(true);
+			vuAction->setChecked(vuEnabled);
+			connect(vuAction, &QAction::triggered, this, [this, vuEnabled]() {
+				MultiviewInstance *inst = config_->find_instance(uuid_);
+				if (!inst)
+					return;
+				inst->visualSettings.vuMeterMode = InheritanceMode::Override;
+				inst->visualSettings.vuMeter.enabled = !vuEnabled;
 				config_->save();
 				refresh_visual_settings();
 			});

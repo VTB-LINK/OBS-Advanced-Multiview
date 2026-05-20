@@ -784,6 +784,19 @@ Phase 2 明确不包含：
 - Cell Display Settings Dialog。
 - 右键快捷入口。
 
+VU Meter 扩展设置（在 2.6 UI 中暴露）：
+
+- **位置**：四边任意一边（Top / Bottom / Left / Right）。
+- **显示区域**：可选 cell 内显示或 signal（源画面）内显示。
+- **宽度**：VU meter 条的像素宽度。
+- **长度比例**：VU meter 占满 cell/signal 对应边的比例（0.0~1.0），默认 1.0。
+- **绿/黄/红分界 dB 值**：可自定义 warning（默认 -20dB）和 error（默认 -9dB）阈值。
+- **衰减速率**：Fast / Medium / Slow 三档（对应 OBS 的 23.5 / 11.76 / 8.57 dB/s）。
+- **Flip 反转**：翻转 VU meter 的方向。
+  - 垂直模式：正常 = 底部0dB顶部-∞，Flip = 顶部0dB底部-∞。
+  - 水平模式：正常 = 左侧-∞右侧0dB，Flip = 左侧0dB右侧-∞。
+- **透明度**：0.0~1.0。
+
 验收标准：
 
 - Global / Instance / Cell 都有清晰入口。
@@ -791,6 +804,7 @@ Phase 2 明确不包含：
 - 动态生效。
 - auto-save。
 - 不阻塞 OBS。
+- VU Meter 所有扩展设置在 UI 中可配置并实时生效。
 
 ### 7.8 Milestone 2.7：Phase 2 回归与性能验收
 

@@ -155,15 +155,37 @@ private:
 	void release_overlay_images();
 
 	/* Safe area vertex buffers (normalized 0-1 coords, shared across cells) */
-	gs_vertbuffer_t *safe_action_vb_ = nullptr;   /* Action Safe 3.5% */
-	gs_vertbuffer_t *safe_graphics_vb_ = nullptr; /* Graphics Safe 5.0% */
-	gs_vertbuffer_t *safe_4x3_vb_ = nullptr;      /* 4:3 safe 16.25% */
-	gs_vertbuffer_t *safe_center_h_vb_ = nullptr; /* center horizontal line */
-	gs_vertbuffer_t *safe_center_v_vb_ = nullptr; /* center vertical line */
+	gs_vertbuffer_t *safe_action_vb_ = nullptr;       /* Action Safe 3.5% */
+	gs_vertbuffer_t *safe_graphics_vb_ = nullptr;     /* Graphics Safe 5.0% */
+	gs_vertbuffer_t *safe_4x3_vb_ = nullptr;          /* 4:3 safe 16.25% */
+	gs_vertbuffer_t *safe_center_left_vb_ = nullptr;  /* center left horizontal */
+	gs_vertbuffer_t *safe_center_top_vb_ = nullptr;   /* center top vertical */
+	gs_vertbuffer_t *safe_center_right_vb_ = nullptr; /* center right horizontal */
 	bool safe_area_vb_init_ = false;
 	void init_safe_area_vbs();
 	void release_safe_area_vbs();
 	void render_safe_area(int cellIndex, int vrX, int vrY, int vrW, int vrH);
+
+	/* VU Meter per-cell audio metering */
+	struct SingleVolmeter {
+		obs_volmeter_t *volmeter = nullptr;
+		std::string name;
+		float magnitude[MAX_AUDIO_CHANNELS];
+		float peak[MAX_AUDIO_CHANNELS];
+		int channels = 0;
+	};
+	struct CellVolmeter {
+		std::vector<SingleVolmeter> meters;
+		uint64_t last_update_ts = 0;
+		float displayPeak = -200.0f; /* smoothed display value in dB */
+		uint64_t last_render_ns = 0; /* for ballistics time delta */
+	};
+	std::vector<CellVolmeter *> cell_volmeters_;
+	void rebuild_volmeters();
+	void release_volmeters();
+	void render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY);
+	static void volmeter_callback(void *data, const float magnitude[MAX_AUDIO_CHANNELS],
+				      const float peak[MAX_AUDIO_CHANNELS], const float inputPeak[MAX_AUDIO_CHANNELS]);
 };
 
 /* Global functions (defined in plugin-main) */
