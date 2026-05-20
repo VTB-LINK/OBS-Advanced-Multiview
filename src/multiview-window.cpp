@@ -462,12 +462,7 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			}
 
 			if (srcW == 0 || srcH == 0) {
-				/* Source not ready, draw black */
-				startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
-				gs_effect_set_color(colorParam, 0xFF000000);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, cell.w, cell.h);
-				endRegion();
+				/* Source not ready - leave as gutter/window bg */
 				continue;
 			}
 
@@ -479,11 +474,12 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 
 			if (i < (int)effective_visuals_.size() &&
 			    effective_visuals_[i].label.displayMode == LabelDisplayMode::Below) {
-				/* Reserve bottom 1/6 of cell for label */
+				/* Reserve bottom portion for label + gutter separator */
 				int labelRegionH = cell.h / 6;
 				if (labelRegionH < 16)
 					labelRegionH = 16;
-				contentH = cell.h - labelRegionH;
+				int gutterH = gutter_px_;
+				contentH = cell.h - labelRegionH - gutterH;
 				if (contentH < 16)
 					contentH = 16;
 			}
@@ -505,16 +501,46 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			}
 			hasSignalRect = true;
 
-			/* Draw background for the entire cell first */
+			/* Draw background ONLY in signal rect area (non-signal = gutter/window bg) */
 			uint32_t bgColor = 0xFF000000; /* default black */
 			if (i < (int)effective_visuals_.size() && effective_visuals_[i].background.colorEnabled)
 				bgColor = effective_visuals_[i].background.color;
 
-			startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
-			gs_effect_set_color(colorParam, bgColor);
-			while (gs_effect_loop(solid, "Solid"))
-				gs_draw_sprite(nullptr, 0, cell.w, cell.h);
-			endRegion();
+			if (i < (int)effective_visuals_.size() &&
+			    effective_visuals_[i].label.displayMode == LabelDisplayMode::Below) {
+				/* Below mode: bg behind signal rect + label area
+				 * (gutter strip between them shows window background) */
+				int labelRegionH = cell.h / 6;
+				if (labelRegionH < 16)
+					labelRegionH = 16;
+				int gutterH = gutter_px_;
+				int bgContentH = cell.h - labelRegionH - gutterH;
+				if (bgContentH < 16)
+					bgContentH = 16;
+
+				/* Signal area background only */
+				startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)vrW, 0.0f, (float)vrH);
+				gs_effect_set_color(colorParam, bgColor);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, vrW, vrH);
+				endRegion();
+
+				/* Label area background */
+				int labelAreaY = cellY + bgContentH + gutterH;
+				startRegion(cellX, labelAreaY, cell.w, labelRegionH, 0.0f, (float)cell.w, 0.0f,
+					    (float)labelRegionH);
+				gs_effect_set_color(colorParam, bgColor);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, cell.w, labelRegionH);
+				endRegion();
+			} else {
+				/* Normal: fill only signal rect area */
+				startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)vrW, 0.0f, (float)vrH);
+				gs_effect_set_color(colorParam, bgColor);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, vrW, vrH);
+				endRegion();
+			}
 
 			/* Draw background image if available */
 			if (i < (int)bg_images_.size() && bg_images_[i].texture) {
@@ -567,18 +593,8 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				endRegion();
 			}
 		} else {
-			/* Empty cell - draw background */
-			uint32_t bgColor = 0xFF1A1A1A; /* default dark gray */
-			if (i < (int)effective_visuals_.size() && effective_visuals_[i].background.colorEnabled)
-				bgColor = effective_visuals_[i].background.color;
-
-			startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
-			gs_effect_set_color(colorParam, bgColor);
-			while (gs_effect_loop(solid, "Solid"))
-				gs_draw_sprite(nullptr, 0, cell.w, cell.h);
-			endRegion();
-
-			/* Draw background image if available */
+			/* Empty cell / no signal - leave as gutter/window background.
+			 * Only draw background image if one is configured. */
 			if (i < (int)bg_images_.size() && bg_images_[i].texture) {
 				gs_texture_t *tex = bg_images_[i].texture;
 				uint32_t imgW = bg_images_[i].width;
@@ -740,9 +756,24 @@ void MultiviewWindow::rebuild_label_sources()
 			std::string srcName = "adv_mv_label_" + uuid_ + "_" + std::to_string(i);
 
 			/* Font settings are nested in a "font" object for text_ft2_source_v2 */
+			const char *fontFace = ls->fontFamily.empty()
+#ifdef _WIN32
+						       ? "Microsoft YaHei"
+#elif __APPLE__
+						       ? "PingFang SC"
+#else
+						       ? "Noto Sans CJK SC"
+#endif
+						       : ls->fontFamily.c_str();
+			/* Use maxFontSize for ScaleWithCell so we always scale DOWN
+			 * (avoids blurry upscaling of small bitmap textures) */
+			int renderFontSize = ls->fontSize;
+			if (ls->fontScaleMode == FontScaleMode::ScaleWithCell)
+				renderFontSize = ls->maxFontSize > 0 ? ls->maxFontSize : 72;
+
 			obs_data_t *fontObj = obs_data_create();
-			obs_data_set_int(fontObj, "size", ls->fontSize);
-			obs_data_set_string(fontObj, "face", ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str());
+			obs_data_set_int(fontObj, "size", renderFontSize);
+			obs_data_set_string(fontObj, "face", fontFace);
 			obs_data_set_int(fontObj, "flags", 0);
 
 			obs_data_t *settings = obs_data_create();
@@ -751,7 +782,7 @@ void MultiviewWindow::rebuild_label_sources()
 			obs_data_set_int(settings, "color1", ls->textColor);
 			obs_data_set_int(settings, "color2", ls->textColor);
 			obs_data_set_bool(settings, "outline", false);
-			obs_data_set_bool(settings, "drop_shadow", true);
+			obs_data_set_bool(settings, "drop_shadow", false);
 
 			obs_source_t *src = obs_source_create_private("text_ft2_source_v2", srcName.c_str(), settings);
 			obs_data_release(settings);
@@ -761,8 +792,7 @@ void MultiviewWindow::rebuild_label_sources()
 				/* Fallback: try text_ft2_source */
 				fontObj = obs_data_create();
 				obs_data_set_int(fontObj, "size", ls->fontSize);
-				obs_data_set_string(fontObj, "face",
-						    ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str());
+				obs_data_set_string(fontObj, "face", fontFace);
 				obs_data_set_int(fontObj, "flags", 0);
 
 				settings = obs_data_create();
@@ -781,9 +811,22 @@ void MultiviewWindow::rebuild_label_sources()
 			obs_source_release(src);
 		} else if (label_sources_[i].text != labelText || label_sources_[i].color != ls->textColor) {
 			/* Update existing source text/color */
+			const char *fontFace = ls->fontFamily.empty()
+#ifdef _WIN32
+						       ? "Microsoft YaHei"
+#elif __APPLE__
+						       ? "PingFang SC"
+#else
+						       ? "Noto Sans CJK SC"
+#endif
+						       : ls->fontFamily.c_str();
+			int renderFontSize = ls->fontSize;
+			if (ls->fontScaleMode == FontScaleMode::ScaleWithCell)
+				renderFontSize = ls->maxFontSize > 0 ? ls->maxFontSize : 72;
+
 			obs_data_t *fontObj = obs_data_create();
-			obs_data_set_int(fontObj, "size", ls->fontSize);
-			obs_data_set_string(fontObj, "face", ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str());
+			obs_data_set_int(fontObj, "size", renderFontSize);
+			obs_data_set_string(fontObj, "face", fontFace);
 			obs_data_set_int(fontObj, "flags", 0);
 
 			obs_data_t *settings = obs_source_get_settings(label_sources_[i].source);
@@ -844,7 +887,7 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	int drawH = (int)labelH;
 
 	/* Scale label to targetH */
-	if (drawH > targetH) {
+	if (drawH != targetH && drawH > 0) {
 		float scale = (float)targetH / (float)drawH;
 		drawH = targetH;
 		drawW = (int)((float)drawW * scale);
@@ -867,8 +910,8 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	labelX = cellX + (cell.w - drawW) / 2;
 
 	if (ls.displayMode == LabelDisplayMode::Below) {
-		/* Below mode: label is at the very bottom of the cell
-		 * (video was already compressed above) */
+		/* Below mode: layout is [video] [gutter] [label region]
+		 * The gutter is drawn by the window background (same as inter-cell gutters) */
 		int labelRegionH = cell.h / 6;
 		if (labelRegionH < 16)
 			labelRegionH = 16;
@@ -893,35 +936,11 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 		uint8_t alpha = (uint8_t)(ls.backgroundOpacity * 255.0);
 		uint32_t bgColor = ((uint32_t)alpha << 24) | 0x000000;
 
-		if (ls.backgroundRounded && bgW > 8 && bgH > 8) {
-			/* Rounded background: cross-shape approximation
-			 * (horizontal strip + vertical strip overlapping) */
-			int radius = (std::min)(bgH / 4, bgW / 4);
-			if (radius < 2)
-				radius = 2;
-
-			/* Horizontal strip (full width, inset vertically) */
-			startRegion(bgX, bgY + radius, bgW, bgH - 2 * radius, 0.0f, (float)bgW, 0.0f,
-				    (float)(bgH - 2 * radius));
-			gs_effect_set_color(colorParam, bgColor);
-			while (gs_effect_loop(solid, "Solid"))
-				gs_draw_sprite(nullptr, 0, bgW, bgH - 2 * radius);
-			endRegion();
-
-			/* Vertical strip (full height, inset horizontally) */
-			startRegion(bgX + radius, bgY, bgW - 2 * radius, bgH, 0.0f, (float)(bgW - 2 * radius), 0.0f,
-				    (float)bgH);
-			gs_effect_set_color(colorParam, bgColor);
-			while (gs_effect_loop(solid, "Solid"))
-				gs_draw_sprite(nullptr, 0, bgW - 2 * radius, bgH);
-			endRegion();
-		} else {
-			startRegion(bgX, bgY, bgW, bgH, 0.0f, (float)bgW, 0.0f, (float)bgH);
-			gs_effect_set_color(colorParam, bgColor);
-			while (gs_effect_loop(solid, "Solid"))
-				gs_draw_sprite(nullptr, 0, bgW, bgH);
-			endRegion();
-		}
+		startRegion(bgX, bgY, bgW, bgH, 0.0f, (float)bgW, 0.0f, (float)bgH);
+		gs_effect_set_color(colorParam, bgColor);
+		while (gs_effect_loop(solid, "Solid"))
+			gs_draw_sprite(nullptr, 0, bgW, bgH);
+		endRegion();
 	}
 
 	/* Render text source */
