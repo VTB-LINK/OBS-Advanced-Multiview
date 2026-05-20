@@ -48,6 +48,9 @@ public:
 	/* Rebuild cell sources (call after cell assignment changes) */
 	void refresh_sources();
 
+	/* Recompute effective visual settings for all cells */
+	void refresh_visual_settings();
+
 	QPaintEngine *paintEngine() const override { return nullptr; }
 
 signals:
@@ -114,6 +117,9 @@ private:
 
 	/* Frame counter for throttled lazy re-resolution of dead sources */
 	int re_resolve_counter_ = 0;
+
+	/* Cached effective visual settings per cell (same indexing as cell_sources_) */
+	std::vector<EffectiveCellVisualSettings> effective_visuals_;
 };
 
 /* Global functions (defined in plugin-main) */
@@ -122,3 +128,4 @@ void close_multiview_window(const std::string &uuid);
 void open_manager_dialog();
 void notify_multiview_layout_changed(const std::string &uuid = "");
 void notify_multiview_name_changed(const std::string &uuid);
+void notify_multiview_visual_settings_changed(const std::string &uuid = "");

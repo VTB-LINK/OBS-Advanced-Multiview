@@ -18,10 +18,158 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include <obs-data.h>
+
+/* ========== Visual Settings Enums ========== */
+
+enum class InheritanceMode { Inherit, Override };
+
+enum class LabelDisplayMode { None, Overlay, Below };
+
+enum class LabelPosition { Top, Bottom };
+
+enum class FontScaleMode { Fixed, ScaleWithCell };
+
+enum class ImageFitMode { Fit, Stretch };
+
+enum class SafeAreaPreset { EBU_R95 };
+
+enum class VuMeterPosition { Left, Right, Bottom };
+
+enum class VuMeterStyle { Bar };
+
+enum class OverlayFitMode { Fit, Stretch };
+
+enum class OverlayAnchorMode { Cell, Signal };
+
+/* ========== Visual Settings Group Structs ========== */
+
+struct BackgroundSettings {
+	bool colorEnabled = false;
+	uint32_t color = 0xFF000000; /* ARGB black */
+	bool imageEnabled = false;
+	std::string imagePath;
+	ImageFitMode imageFitMode = ImageFitMode::Fit;
+
+	obs_data_t *to_obs_data() const;
+	static BackgroundSettings from_obs_data(obs_data_t *data);
+};
+
+struct LabelSettings {
+	LabelDisplayMode displayMode = LabelDisplayMode::None;
+	LabelPosition position = LabelPosition::Bottom;
+	std::string fontFamily; /* empty = system default */
+	int fontSize = 14;
+	FontScaleMode fontScaleMode = FontScaleMode::Fixed;
+	int minFontSize = 8;
+	int maxFontSize = 48;
+	uint32_t textColor = 0xFFFFFFFF; /* ARGB white */
+	double backgroundOpacity = 0.6;
+	bool backgroundRounded = false;
+	int margin = 4;
+
+	obs_data_t *to_obs_data() const;
+	static LabelSettings from_obs_data(obs_data_t *data);
+};
+
+struct SafeAreaSettings {
+	bool enabled = false;
+	SafeAreaPreset preset = SafeAreaPreset::EBU_R95;
+	uint32_t color = 0xFFFFFFFF; /* ARGB white */
+	double opacity = 0.5;
+
+	obs_data_t *to_obs_data() const;
+	static SafeAreaSettings from_obs_data(obs_data_t *data);
+};
+
+struct VuMeterSettings {
+	bool enabled = false;
+	VuMeterPosition position = VuMeterPosition::Right;
+	double opacity = 0.8;
+	int width = 8;
+	VuMeterStyle style = VuMeterStyle::Bar;
+
+	obs_data_t *to_obs_data() const;
+	static VuMeterSettings from_obs_data(obs_data_t *data);
+};
+
+struct OverlaySettings {
+	bool enabled = false;
+	std::string imagePath;
+	double opacity = 1.0;
+	OverlayFitMode fitMode = OverlayFitMode::Fit;
+	OverlayAnchorMode anchorMode = OverlayAnchorMode::Signal;
+
+	obs_data_t *to_obs_data() const;
+	static OverlaySettings from_obs_data(obs_data_t *data);
+};
+
+/* ========== Visual Settings Containers ========== */
+
+struct GlobalVisualSettings {
+	BackgroundSettings background;
+	LabelSettings label;
+	SafeAreaSettings safeArea;
+	VuMeterSettings vuMeter;
+	OverlaySettings overlay;
+
+	obs_data_t *to_obs_data() const;
+	static GlobalVisualSettings from_obs_data(obs_data_t *data);
+};
+
+struct InstanceVisualSettings {
+	InheritanceMode backgroundMode = InheritanceMode::Inherit;
+	BackgroundSettings background;
+	InheritanceMode labelMode = InheritanceMode::Inherit;
+	LabelSettings label;
+	InheritanceMode safeAreaMode = InheritanceMode::Inherit;
+	SafeAreaSettings safeArea;
+	InheritanceMode vuMeterMode = InheritanceMode::Inherit;
+	VuMeterSettings vuMeter;
+	InheritanceMode overlayMode = InheritanceMode::Inherit;
+	OverlaySettings overlay;
+
+	obs_data_t *to_obs_data() const;
+	static InstanceVisualSettings from_obs_data(obs_data_t *data);
+};
+
+struct CellVisualSettings {
+	int row = -1;
+	int col = -1;
+	InheritanceMode backgroundMode = InheritanceMode::Inherit;
+	BackgroundSettings background;
+	InheritanceMode labelMode = InheritanceMode::Inherit;
+	LabelSettings label;
+	InheritanceMode safeAreaMode = InheritanceMode::Inherit;
+	SafeAreaSettings safeArea;
+	InheritanceMode vuMeterMode = InheritanceMode::Inherit;
+	VuMeterSettings vuMeter;
+	InheritanceMode overlayMode = InheritanceMode::Inherit;
+	OverlaySettings overlay;
+
+	obs_data_t *to_obs_data() const;
+	static CellVisualSettings from_obs_data(obs_data_t *data);
+};
+
+struct EffectiveCellVisualSettings {
+	BackgroundSettings background;
+	LabelSettings label;
+	SafeAreaSettings safeArea;
+	VuMeterSettings vuMeter;
+	OverlaySettings overlay;
+};
+
+/* Resolve effective visual settings via group-level inheritance chain:
+ * cell (if override) -> instance (if override) -> global */
+EffectiveCellVisualSettings resolve_effective_visual_settings(const GlobalVisualSettings &global,
+							      const InstanceVisualSettings &instance,
+							      const CellVisualSettings *cell);
+
+/* ========== Core Data Structs ========== */
 
 struct CellAssignment {
 	int row = -1;     // grid row position (-1 = legacy/unset)
@@ -59,12 +207,17 @@ struct MultiviewInstance {
 	std::string folder; /* UI-only grouping tag, empty = root */
 	LayoutData layout;
 	std::vector<CellAssignment> cellAssignments;
+	InstanceVisualSettings visualSettings;
+	std::vector<CellVisualSettings> cellVisualSettings;
 
 	bool useGlobalGutter = true;
 	bool layoutDirty = false;
 	bool signalDirty = false;
 
 	int effective_gutter(int globalGutter) const;
+
+	/* Find cell visual settings for given coordinate, or nullptr */
+	const CellVisualSettings *find_cell_visual(int row, int col) const;
 
 	obs_data_t *to_obs_data() const;
 	static MultiviewInstance from_obs_data(obs_data_t *data);
@@ -86,6 +239,7 @@ struct GlobalSettings {
 	int defaultGutterPx = 4;
 	bool reResolveInheritObs = true;
 	double reResolveCustomFps = 30.0;
+	GlobalVisualSettings visualSettings;
 
 	obs_data_t *to_obs_data() const;
 	static GlobalSettings from_obs_data(obs_data_t *data);

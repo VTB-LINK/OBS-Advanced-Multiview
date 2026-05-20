@@ -205,12 +205,45 @@ void MultiviewWindow::refresh_layout()
 	/* Re-resolve source refs: grid shape may have changed, affecting
 	 * which cells exist and their indices */
 	refresh_sources();
+
+	/* Recompute effective visual settings for the new cell layout */
+	refresh_visual_settings();
 }
 
 void MultiviewWindow::refresh_sources()
 {
 	release_source_refs();
 	update_source_refs();
+}
+
+void MultiviewWindow::refresh_visual_settings()
+{
+	std::lock_guard<std::mutex> lock(source_mutex_);
+
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst) {
+		effective_visuals_.clear();
+		return;
+	}
+
+	const GlobalVisualSettings &globalVS = config_->global_settings().visualSettings;
+	const InstanceVisualSettings &instVS = inst->visualSettings;
+
+	/* Recompute layout to know cell positions */
+	LayoutEngine tmpEngine;
+	tmpEngine.set_layout(layout_);
+	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+	tmpEngine.compute();
+
+	const auto &cells = tmpEngine.cells();
+	effective_visuals_.resize(cells.size());
+
+	for (size_t i = 0; i < cells.size(); i++) {
+		int r = cells[i].gridRow;
+		int c = cells[i].gridCol;
+		const CellVisualSettings *cellVS = inst->find_cell_visual(r, c);
+		effective_visuals_[i] = resolve_effective_visual_settings(globalVS, instVS, cellVS);
+	}
 }
 
 void MultiviewWindow::update_source_refs()

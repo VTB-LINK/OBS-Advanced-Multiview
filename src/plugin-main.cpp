@@ -121,6 +121,20 @@ void notify_multiview_name_changed(const std::string &uuid)
 		it->second->refresh_title();
 }
 
+void notify_multiview_visual_settings_changed(const std::string &uuid)
+{
+	if (uuid.empty()) {
+		for (auto &[id, window] : open_windows) {
+			if (window)
+				window->refresh_visual_settings();
+		}
+	} else {
+		auto it = open_windows.find(uuid);
+		if (it != open_windows.end() && it->second)
+			it->second->refresh_visual_settings();
+	}
+}
+
 void close_multiview_window(const std::string &uuid)
 {
 	auto it = open_windows.find(uuid);
