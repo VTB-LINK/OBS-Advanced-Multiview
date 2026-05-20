@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <graphics/graphics.h>
+#include <graphics/image-file.h>
 #include <graphics/matrix4.h>
 #include <plugin-support.h>
 
@@ -247,6 +248,7 @@ void MultiviewWindow::refresh_visual_settings()
 	}
 
 	rebuild_label_sources();
+	rebuild_bg_images();
 }
 
 void MultiviewWindow::update_source_refs()
@@ -322,6 +324,9 @@ void MultiviewWindow::release_source_refs()
 
 	/* Release label text sources */
 	label_sources_.clear();
+
+	/* Release background images (needs graphics context, handled inside) */
+	release_bg_images();
 }
 
 /* ---- Rendering ---- */
@@ -491,12 +496,47 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				vrY = contentY;
 			}
 
-			/* Draw black background for the entire cell first */
+			/* Draw background for the entire cell first */
+			uint32_t bgColor = 0xFF000000; /* default black */
+			if (i < (int)effective_visuals_.size() && effective_visuals_[i].background.colorEnabled)
+				bgColor = effective_visuals_[i].background.color;
+
 			startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
-			gs_effect_set_color(colorParam, 0xFF000000);
+			gs_effect_set_color(colorParam, bgColor);
 			while (gs_effect_loop(solid, "Solid"))
 				gs_draw_sprite(nullptr, 0, cell.w, cell.h);
 			endRegion();
+
+			/* Draw background image if available */
+			if (i < (int)bg_images_.size() && bg_images_[i].texture) {
+				gs_texture_t *tex = bg_images_[i].texture;
+				uint32_t imgW = bg_images_[i].width;
+				uint32_t imgH = bg_images_[i].height;
+				if (imgW > 0 && imgH > 0) {
+					/* Fit image into cell */
+					double imgAspect = (double)imgW / (double)imgH;
+					double cAspect = (double)cell.w / (double)cell.h;
+					int drawW, drawH, drawX, drawY;
+					if (imgAspect > cAspect) {
+						drawW = cell.w;
+						drawH = (int)((double)cell.w / imgAspect + 0.5);
+						drawX = cellX;
+						drawY = cellY + (cell.h - drawH) / 2;
+					} else {
+						drawH = cell.h;
+						drawW = (int)((double)cell.h * imgAspect + 0.5);
+						drawX = cellX + (cell.w - drawW) / 2;
+						drawY = cellY;
+					}
+					gs_effect_t *defEffect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+					gs_eparam_t *imgParam = gs_effect_get_param_by_name(defEffect, "image");
+					gs_effect_set_texture(imgParam, tex);
+					startRegion(drawX, drawY, drawW, drawH, 0.0f, (float)imgW, 0.0f, (float)imgH);
+					while (gs_effect_loop(defEffect, "Draw"))
+						gs_draw_sprite(tex, 0, imgW, imgH);
+					endRegion();
+				}
+			}
 
 			/* Render into video rect */
 			startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)srcW, 0.0f, (float)srcH);
@@ -518,12 +558,46 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				endRegion();
 			}
 		} else {
-			/* Empty cell - draw dark background */
+			/* Empty cell - draw background */
+			uint32_t bgColor = 0xFF1A1A1A; /* default dark gray */
+			if (i < (int)effective_visuals_.size() && effective_visuals_[i].background.colorEnabled)
+				bgColor = effective_visuals_[i].background.color;
+
 			startRegion(cellX, cellY, cell.w, cell.h, 0.0f, (float)cell.w, 0.0f, (float)cell.h);
-			gs_effect_set_color(colorParam, 0xFF1A1A1A);
+			gs_effect_set_color(colorParam, bgColor);
 			while (gs_effect_loop(solid, "Solid"))
 				gs_draw_sprite(nullptr, 0, cell.w, cell.h);
 			endRegion();
+
+			/* Draw background image if available */
+			if (i < (int)bg_images_.size() && bg_images_[i].texture) {
+				gs_texture_t *tex = bg_images_[i].texture;
+				uint32_t imgW = bg_images_[i].width;
+				uint32_t imgH = bg_images_[i].height;
+				if (imgW > 0 && imgH > 0) {
+					double imgAspect = (double)imgW / (double)imgH;
+					double cAspect = (double)cell.w / (double)cell.h;
+					int drawW, drawH, drawX, drawY;
+					if (imgAspect > cAspect) {
+						drawW = cell.w;
+						drawH = (int)((double)cell.w / imgAspect + 0.5);
+						drawX = cellX;
+						drawY = cellY + (cell.h - drawH) / 2;
+					} else {
+						drawH = cell.h;
+						drawW = (int)((double)cell.h * imgAspect + 0.5);
+						drawX = cellX + (cell.w - drawW) / 2;
+						drawY = cellY;
+					}
+					gs_effect_t *defEffect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+					gs_eparam_t *imgParam = gs_effect_get_param_by_name(defEffect, "image");
+					gs_effect_set_texture(imgParam, tex);
+					startRegion(drawX, drawY, drawW, drawH, 0.0f, (float)imgW, 0.0f, (float)imgH);
+					while (gs_effect_loop(defEffect, "Draw"))
+						gs_draw_sprite(tex, 0, imgW, imgH);
+					endRegion();
+				}
+			}
 		}
 
 		/* Render label overlay */
@@ -766,6 +840,87 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	startRegion(labelX, labelY, drawW, drawH, 0.0f, (float)labelW, 0.0f, (float)labelH);
 	obs_source_video_render(labelSrc);
 	endRegion();
+}
+
+/* ---- Background image management ---- */
+
+void MultiviewWindow::rebuild_bg_images()
+{
+	LayoutEngine tmpEngine;
+	tmpEngine.set_layout(layout_);
+	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+	tmpEngine.compute();
+
+	size_t cellCount = tmpEngine.cells().size();
+
+	/* Grow vector if needed */
+	while (bg_images_.size() < cellCount)
+		bg_images_.push_back(BgImage{});
+
+	for (size_t i = 0; i < cellCount; i++) {
+		const BackgroundSettings *bg = nullptr;
+		if (i < effective_visuals_.size())
+			bg = &effective_visuals_[i].background;
+
+		std::string wantPath;
+		if (bg && bg->imageEnabled && !bg->imagePath.empty())
+			wantPath = bg->imagePath;
+
+		if (bg_images_[i].path == wantPath)
+			continue; /* no change */
+
+		/* Free old texture */
+		if (bg_images_[i].texture) {
+			obs_enter_graphics();
+			gs_texture_destroy(bg_images_[i].texture);
+			obs_leave_graphics();
+			bg_images_[i].texture = nullptr;
+			bg_images_[i].width = 0;
+			bg_images_[i].height = 0;
+		}
+
+		bg_images_[i].path = wantPath;
+
+		if (wantPath.empty())
+			continue;
+
+		/* Load image via gs_image_file, extract texture */
+		gs_image_file_t imgFile = {};
+		gs_image_file_init(&imgFile, wantPath.c_str());
+
+		if (imgFile.loaded) {
+			obs_enter_graphics();
+			gs_image_file_init_texture(&imgFile);
+			obs_leave_graphics();
+
+			if (imgFile.texture) {
+				/* Steal the texture pointer */
+				bg_images_[i].texture = imgFile.texture;
+				bg_images_[i].width = imgFile.cx;
+				bg_images_[i].height = imgFile.cy;
+				/* Prevent gs_image_file_free from destroying our texture */
+				imgFile.texture = nullptr;
+			}
+		} else {
+			blog(LOG_WARNING, "[adv-multiview] Failed to load background image: %s", wantPath.c_str());
+		}
+
+		gs_image_file_free(&imgFile);
+	}
+}
+
+void MultiviewWindow::release_bg_images()
+{
+	obs_enter_graphics();
+	for (auto &bgi : bg_images_) {
+		if (bgi.texture) {
+			gs_texture_destroy(bgi.texture);
+			bgi.texture = nullptr;
+		}
+		bgi.path.clear();
+	}
+	obs_leave_graphics();
+	bg_images_.clear();
 }
 
 /* ---- Events ---- */

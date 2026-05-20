@@ -131,6 +131,17 @@ private:
 	std::vector<LabelSource> label_sources_;
 	void rebuild_label_sources();
 	void render_label(int cellIndex, const CellRect &cell, int vpX, int vpY);
+
+	/* Background image textures (one per cell) */
+	struct BgImage {
+		gs_texture_t *texture = nullptr;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		std::string path; /* for change detection */
+	};
+	std::vector<BgImage> bg_images_;
+	void rebuild_bg_images();
+	void release_bg_images();
 };
 
 /* Global functions (defined in plugin-main) */
