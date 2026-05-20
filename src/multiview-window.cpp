@@ -945,8 +945,10 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	/* Compute target label height based on scale mode */
 	int targetH;
 	if (ls.fontScaleMode == FontScaleMode::ScaleWithCell) {
-		/* Scale: match OBS native formula (h / 9.81 ≈ 10.2%), clamped */
-		targetH = (int)((double)cell.h / 9.81 + 0.5);
+		/* Scale: match OBS native effective size.
+		 * OBS creates font at (canvas_h/3)/9.81 and renders at ppiScaleY≈0.5,
+		 * giving effective text height ≈ cell_h / 14.7 for scene cells. */
+		targetH = (int)((double)cell.h / 14.7 + 0.5);
 		int minH = ls.minFontSize;
 		int maxH = ls.maxFontSize;
 		if (targetH < minH)
@@ -974,11 +976,11 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	}
 
 	/* Vertical padding for background (symmetric, like OBS native).
-	 * OBS uses thickness=6 in canvas coords where cell height ≈ canvas/4.
-	 * We match that proportion: thickness ≈ 2.2% of cell height. */
-	int thickness = (int)((double)cell.h * 6.0 / 270.0 + 0.5);
-	if (thickness < 2)
-		thickness = 2;
+	 * OBS uses thickness=6 at canvas level, rendered at ppiScaleY≈0.5,
+	 * giving effective ~3px padding per side for 270px cells. */
+	int thickness = (int)((double)cell.h * 3.0 / 270.0 + 0.5);
+	if (thickness < 1)
+		thickness = 1;
 	int bgH = drawH + thickness * 2;
 	int bgW = drawW;
 
