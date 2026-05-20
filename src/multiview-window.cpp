@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <graphics/graphics.h>
 #include <graphics/image-file.h>
 #include <graphics/matrix4.h>
+#include <graphics/vec4.h>
 #include <plugin-support.h>
 
 #include <QAction>
@@ -249,6 +250,7 @@ void MultiviewWindow::refresh_visual_settings()
 
 	rebuild_label_sources();
 	rebuild_bg_images();
+	rebuild_overlay_images();
 }
 
 void MultiviewWindow::update_source_refs()
@@ -327,6 +329,9 @@ void MultiviewWindow::release_source_refs()
 
 	/* Release background images (needs graphics context, handled inside) */
 	release_bg_images();
+
+	/* Release overlay images */
+	release_overlay_images();
 }
 
 /* ---- Rendering ---- */
@@ -438,6 +443,10 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			}
 		}
 
+		/* Signal rect: will be set if source exists, otherwise defaults to cell rect */
+		int vrX = cellX, vrY = cellY, vrW = cell.w, vrH = cell.h;
+		bool hasSignalRect = false;
+
 		if (src) {
 			/* Determine source dimensions for letterbox */
 			uint32_t srcW, srcH;
@@ -483,7 +492,6 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			double srcAspect = (double)srcW / (double)srcH;
 			double contentAspect = (double)contentW / (double)contentH;
 
-			int vrX, vrY, vrW, vrH;
 			if (srcAspect > contentAspect) {
 				vrW = contentW;
 				vrH = (int)((double)contentW / srcAspect + 0.5);
@@ -495,6 +503,7 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				vrX = contentX + (contentW - vrW) / 2;
 				vrY = contentY;
 			}
+			hasSignalRect = true;
 
 			/* Draw background for the entire cell first */
 			uint32_t bgColor = 0xFF000000; /* default black */
@@ -596,6 +605,85 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 					while (gs_effect_loop(defEffect, "Draw"))
 						gs_draw_sprite(tex, 0, imgW, imgH);
 					endRegion();
+				}
+			}
+		}
+
+		/* Render foreground overlay image if available */
+		if (i < (int)overlay_images_.size() && overlay_images_[i].texture) {
+			const OverlaySettings *ovl = nullptr;
+			if (i < (int)effective_visuals_.size())
+				ovl = &effective_visuals_[i].overlay;
+
+			if (ovl && ovl->enabled && ovl->opacity > 0.0) {
+				gs_texture_t *tex = overlay_images_[i].texture;
+				uint32_t imgW = overlay_images_[i].width;
+				uint32_t imgH = overlay_images_[i].height;
+
+				/* Determine anchor rect based on anchorMode */
+				int anchorX, anchorY, anchorW, anchorH;
+				if (ovl->anchorMode == OverlayAnchorMode::Signal && hasSignalRect) {
+					anchorX = vrX;
+					anchorY = vrY;
+					anchorW = vrW;
+					anchorH = vrH;
+				} else {
+					anchorX = cellX;
+					anchorY = cellY;
+					anchorW = cell.w;
+					anchorH = cell.h;
+				}
+
+				if (imgW > 0 && imgH > 0 && anchorW > 0 && anchorH > 0) {
+					int drawX, drawY, drawW, drawH;
+					if (ovl->fitMode == OverlayFitMode::Stretch) {
+						drawX = anchorX;
+						drawY = anchorY;
+						drawW = anchorW;
+						drawH = anchorH;
+					} else {
+						/* Fit: preserve aspect ratio */
+						double imgAspect = (double)imgW / (double)imgH;
+						double aAspect = (double)anchorW / (double)anchorH;
+						if (imgAspect > aAspect) {
+							drawW = anchorW;
+							drawH = (int)((double)anchorW / imgAspect + 0.5);
+							drawX = anchorX;
+							drawY = anchorY + (anchorH - drawH) / 2;
+						} else {
+							drawH = anchorH;
+							drawW = (int)((double)anchorH * imgAspect + 0.5);
+							drawX = anchorX + (anchorW - drawW) / 2;
+							drawY = anchorY;
+						}
+					}
+
+					/* Apply opacity via color multiplier */
+					uint32_t alpha = (uint32_t)(ovl->opacity * 255.0 + 0.5);
+					if (alpha > 255)
+						alpha = 255;
+					uint32_t overlayColor = (alpha << 24) | 0x00FFFFFF;
+
+					gs_effect_t *defEffect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+					gs_eparam_t *imgParam = gs_effect_get_param_by_name(defEffect, "image");
+					gs_effect_set_texture(imgParam, tex);
+					gs_eparam_t *clrParam = gs_effect_get_param_by_name(defEffect, "color");
+					if (clrParam) {
+						struct vec4 clrVec;
+						vec4_from_rgba(&clrVec, overlayColor);
+						gs_effect_set_vec4(clrParam, &clrVec);
+					}
+
+					gs_blend_state_push();
+					gs_enable_blending(true);
+					gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+
+					startRegion(drawX, drawY, drawW, drawH, 0.0f, (float)imgW, 0.0f, (float)imgH);
+					while (gs_effect_loop(defEffect, "Draw"))
+						gs_draw_sprite(tex, 0, imgW, imgH);
+					endRegion();
+
+					gs_blend_state_pop();
 				}
 			}
 		}
@@ -921,6 +1009,84 @@ void MultiviewWindow::release_bg_images()
 	}
 	obs_leave_graphics();
 	bg_images_.clear();
+}
+
+/* ---- Overlay image management ---- */
+
+void MultiviewWindow::rebuild_overlay_images()
+{
+	/* Must be called with source_mutex_ held and effective_visuals_ up to date */
+	LayoutEngine tmpEngine;
+	tmpEngine.set_layout(layout_);
+	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+	tmpEngine.compute();
+
+	size_t cellCount = tmpEngine.cells().size();
+
+	while (overlay_images_.size() < cellCount)
+		overlay_images_.push_back(OverlayImage{});
+
+	for (size_t i = 0; i < cellCount; i++) {
+		const OverlaySettings *ovl = nullptr;
+		if (i < effective_visuals_.size())
+			ovl = &effective_visuals_[i].overlay;
+
+		std::string wantPath;
+		if (ovl && ovl->enabled && !ovl->imagePath.empty())
+			wantPath = ovl->imagePath;
+
+		if (overlay_images_[i].path == wantPath)
+			continue;
+
+		/* Free old texture */
+		if (overlay_images_[i].texture) {
+			obs_enter_graphics();
+			gs_texture_destroy(overlay_images_[i].texture);
+			obs_leave_graphics();
+			overlay_images_[i].texture = nullptr;
+			overlay_images_[i].width = 0;
+			overlay_images_[i].height = 0;
+		}
+
+		overlay_images_[i].path = wantPath;
+
+		if (wantPath.empty())
+			continue;
+
+		gs_image_file_t imgFile = {};
+		gs_image_file_init(&imgFile, wantPath.c_str());
+
+		if (imgFile.loaded) {
+			obs_enter_graphics();
+			gs_image_file_init_texture(&imgFile);
+			obs_leave_graphics();
+
+			if (imgFile.texture) {
+				overlay_images_[i].texture = imgFile.texture;
+				overlay_images_[i].width = imgFile.cx;
+				overlay_images_[i].height = imgFile.cy;
+				imgFile.texture = nullptr;
+			}
+		} else {
+			blog(LOG_WARNING, "[adv-multiview] Failed to load overlay image: %s", wantPath.c_str());
+		}
+
+		gs_image_file_free(&imgFile);
+	}
+}
+
+void MultiviewWindow::release_overlay_images()
+{
+	obs_enter_graphics();
+	for (auto &oi : overlay_images_) {
+		if (oi.texture) {
+			gs_texture_destroy(oi.texture);
+			oi.texture = nullptr;
+		}
+		oi.path.clear();
+	}
+	obs_leave_graphics();
+	overlay_images_.clear();
 }
 
 /* ---- Events ---- */

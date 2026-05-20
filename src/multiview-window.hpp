@@ -142,6 +142,17 @@ private:
 	std::vector<BgImage> bg_images_;
 	void rebuild_bg_images();
 	void release_bg_images();
+
+	/* Foreground overlay textures (one per cell) */
+	struct OverlayImage {
+		gs_texture_t *texture = nullptr;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		std::string path; /* for change detection */
+	};
+	std::vector<OverlayImage> overlay_images_;
+	void rebuild_overlay_images();
+	void release_overlay_images();
 };
 
 /* Global functions (defined in plugin-main) */
