@@ -953,40 +953,49 @@ void MultiviewWindow::rebuild_label_sources()
 			label_sources_[i].source = src;
 			label_sources_[i].text = labelText;
 			label_sources_[i].color = ls->textColor;
+			label_sources_[i].fontSize = renderFontSize;
+			label_sources_[i].fontFamily = ls->fontFamily;
 			obs_source_release(src);
-		} else if (label_sources_[i].text != labelText || label_sources_[i].color != ls->textColor) {
-			/* Update existing source text/color */
-			std::string paddedText = " " + labelText + " ";
+		} else {
 			int renderFontSize = ls->fontSize;
 			if (ls->fontScaleMode == FontScaleMode::ScaleWithCell)
 				renderFontSize = ls->maxFontSize > 0 ? ls->maxFontSize : 72;
 
-#ifdef _WIN32
-			const char *fontFace = ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str();
-#elif __APPLE__
-			const char *fontFace = ls->fontFamily.empty() ? "Helvetica" : ls->fontFamily.c_str();
-#else
-			const char *fontFace = ls->fontFamily.empty() ? "Monospace" : ls->fontFamily.c_str();
-#endif
-			obs_data_t *fontObj = obs_data_create();
-			obs_data_set_int(fontObj, "size", renderFontSize);
-			obs_data_set_string(fontObj, "face", fontFace);
-			obs_data_set_int(fontObj, "flags", 1);
+			if (label_sources_[i].text != labelText || label_sources_[i].color != ls->textColor ||
+			    label_sources_[i].fontSize != renderFontSize ||
+			    label_sources_[i].fontFamily != ls->fontFamily) {
+				/* Update existing source text/color/font */
+				std::string paddedText = " " + labelText + " ";
 
-			obs_data_t *settings = obs_source_get_settings(label_sources_[i].source);
-			obs_data_set_string(settings, "text", paddedText.c_str());
-			obs_data_set_obj(settings, "font", fontObj);
 #ifdef _WIN32
-			obs_data_set_int(settings, "color", ls->textColor);
+				const char *fontFace = ls->fontFamily.empty() ? "Arial" : ls->fontFamily.c_str();
+#elif __APPLE__
+				const char *fontFace = ls->fontFamily.empty() ? "Helvetica" : ls->fontFamily.c_str();
 #else
-			obs_data_set_int(settings, "color1", ls->textColor);
-			obs_data_set_int(settings, "color2", ls->textColor);
+				const char *fontFace = ls->fontFamily.empty() ? "Monospace" : ls->fontFamily.c_str();
 #endif
-			obs_source_update(label_sources_[i].source, settings);
-			obs_data_release(settings);
-			obs_data_release(fontObj);
-			label_sources_[i].text = labelText;
-			label_sources_[i].color = ls->textColor;
+				obs_data_t *fontObj = obs_data_create();
+				obs_data_set_int(fontObj, "size", renderFontSize);
+				obs_data_set_string(fontObj, "face", fontFace);
+				obs_data_set_int(fontObj, "flags", 1);
+
+				obs_data_t *settings = obs_source_get_settings(label_sources_[i].source);
+				obs_data_set_string(settings, "text", paddedText.c_str());
+				obs_data_set_obj(settings, "font", fontObj);
+#ifdef _WIN32
+				obs_data_set_int(settings, "color", ls->textColor);
+#else
+				obs_data_set_int(settings, "color1", ls->textColor);
+				obs_data_set_int(settings, "color2", ls->textColor);
+#endif
+				obs_source_update(label_sources_[i].source, settings);
+				obs_data_release(settings);
+				obs_data_release(fontObj);
+				label_sources_[i].text = labelText;
+				label_sources_[i].color = ls->textColor;
+				label_sources_[i].fontSize = renderFontSize;
+				label_sources_[i].fontFamily = ls->fontFamily;
+			}
 		}
 	}
 }
@@ -1026,8 +1035,8 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 		if (targetH > maxH)
 			targetH = maxH;
 	} else {
-		/* Fixed: use 1/4 cell height as max */
-		targetH = cell.h / 4;
+		/* Fixed: use fontSize directly as display height (1:1 with texture) */
+		targetH = ls.fontSize;
 		if (targetH < 8)
 			targetH = 8;
 	}

@@ -127,6 +127,8 @@ private:
 		OBSSource source; /* text_ft2_source_v2 private source */
 		std::string text; /* current text for change detection */
 		uint32_t color = 0xFFFFFFFF;
+		int fontSize = 0;
+		std::string fontFamily;
 	};
 	std::vector<LabelSource> label_sources_;
 	void rebuild_label_sources();
