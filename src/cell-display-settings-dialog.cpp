@@ -126,10 +126,22 @@ void CellDisplaySettingsDialog::setup_ui()
 	scrollArea->setWidget(scrollWidget);
 	mainLayout->addWidget(scrollArea, 1);
 
-	/* Button box */
+	/* Copy/Paste/Reset + Button box */
+	auto *bottomLayout = new QHBoxLayout;
+	auto *btnCopy = new QPushButton(tr("Copy"), this);
+	auto *btnPaste = new QPushButton(tr("Paste"), this);
+	auto *btnReset = new QPushButton(tr("Reset"), this);
+	bottomLayout->addWidget(btnCopy);
+	bottomLayout->addWidget(btnPaste);
+	bottomLayout->addWidget(btnReset);
+	bottomLayout->addStretch();
 	auto *btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-	mainLayout->addWidget(btnBox);
+	bottomLayout->addWidget(btnBox);
+	mainLayout->addLayout(bottomLayout);
 
+	connect(btnCopy, &QPushButton::clicked, this, &CellDisplaySettingsDialog::on_copy);
+	connect(btnPaste, &QPushButton::clicked, this, &CellDisplaySettingsDialog::on_paste);
+	connect(btnReset, &QPushButton::clicked, this, &CellDisplaySettingsDialog::on_reset);
 	connect(btnBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
 	connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 }
@@ -186,9 +198,6 @@ QGroupBox *CellDisplaySettingsDialog::create_background_group()
 	cmb_bg_fill_mode_->addItem(QStringLiteral("Fill Entire Cell"), (int)BackgroundFillMode::FillEntireCell);
 	form->addRow(QStringLiteral("Fill Mode:"), cmb_bg_fill_mode_);
 
-	chk_bg_label_fill_ = new QCheckBox(grp_background_);
-	form->addRow(QStringLiteral("Label Region Fill:"), chk_bg_label_fill_);
-
 	chk_bg_image_enabled_ = new QCheckBox(grp_background_);
 	form->addRow(QStringLiteral("Image Enabled:"), chk_bg_image_enabled_);
 
@@ -205,7 +214,6 @@ QGroupBox *CellDisplaySettingsDialog::create_background_group()
 	HOOK_CHECK(chk_bg_color_enabled_);
 	HOOK_EDIT(edit_bg_color_);
 	HOOK_COMBO(cmb_bg_fill_mode_);
-	HOOK_CHECK(chk_bg_label_fill_);
 	HOOK_CHECK(chk_bg_image_enabled_);
 	HOOK_EDIT(edit_bg_image_path_);
 	HOOK_COMBO(cmb_bg_image_fit_);
@@ -278,6 +286,9 @@ QGroupBox *CellDisplaySettingsDialog::create_label_group()
 	spin_label_margin_->setRange(0, 32);
 	form->addRow(QStringLiteral("Margin:"), spin_label_margin_);
 
+	chk_bg_label_fill_ = new QCheckBox(grp_label_);
+	form->addRow(QStringLiteral("Label Region Fill:"), chk_bg_label_fill_);
+
 	layout->addLayout(form);
 
 	HOOK_COMBO(cmb_label_display_);
@@ -289,6 +300,7 @@ QGroupBox *CellDisplaySettingsDialog::create_label_group()
 	HOOK_EDIT(edit_label_text_color_);
 	HOOK_DSPIN(spin_label_bg_opacity_);
 	HOOK_SPIN(spin_label_margin_);
+	HOOK_CHECK(chk_bg_label_fill_);
 
 	return grp_label_;
 }
@@ -392,6 +404,11 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	spin_vu_length_ratio_->setDecimals(2);
 	form->addRow(QStringLiteral("Length Ratio:"), spin_vu_length_ratio_);
 
+	cmb_vu_alignment_ = new QComboBox(grp_vu_meter_);
+	cmb_vu_alignment_->addItem(QStringLiteral("Start (-∞ anchor)"), (int)VuMeterAlignment::Start);
+	cmb_vu_alignment_->addItem(QStringLiteral("Center"), (int)VuMeterAlignment::Center);
+	form->addRow(QStringLiteral("Alignment:"), cmb_vu_alignment_);
+
 	spin_vu_warning_db_ = new QDoubleSpinBox(grp_vu_meter_);
 	spin_vu_warning_db_->setRange(-60.0, 0.0);
 	spin_vu_warning_db_->setSingleStep(1.0);
@@ -423,6 +440,7 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	HOOK_SPIN(spin_vu_width_);
 	HOOK_DSPIN(spin_vu_opacity_);
 	HOOK_DSPIN(spin_vu_length_ratio_);
+	HOOK_COMBO(cmb_vu_alignment_);
 	HOOK_DSPIN(spin_vu_warning_db_);
 	HOOK_DSPIN(spin_vu_error_db_);
 	HOOK_COMBO(cmb_vu_decay_);
@@ -562,6 +580,7 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	spin_vu_width_->setValue(gs.vuMeter.width);
 	spin_vu_opacity_->setValue(gs.vuMeter.opacity);
 	spin_vu_length_ratio_->setValue(gs.vuMeter.lengthRatio);
+	cmb_vu_alignment_->setCurrentIndex((int)gs.vuMeter.alignment);
 	spin_vu_warning_db_->setValue(gs.vuMeter.warningDB);
 	spin_vu_error_db_->setValue(gs.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)gs.vuMeter.decayRate);
@@ -614,6 +633,7 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 	gs.vuMeter.width = spin_vu_width_->value();
 	gs.vuMeter.opacity = spin_vu_opacity_->value();
 	gs.vuMeter.lengthRatio = spin_vu_length_ratio_->value();
+	gs.vuMeter.alignment = (VuMeterAlignment)cmb_vu_alignment_->currentIndex();
 	gs.vuMeter.warningDB = spin_vu_warning_db_->value();
 	gs.vuMeter.errorDB = spin_vu_error_db_->value();
 	gs.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
@@ -673,6 +693,7 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	spin_vu_width_->setValue(is.vuMeter.width);
 	spin_vu_opacity_->setValue(is.vuMeter.opacity);
 	spin_vu_length_ratio_->setValue(is.vuMeter.lengthRatio);
+	cmb_vu_alignment_->setCurrentIndex((int)is.vuMeter.alignment);
 	spin_vu_warning_db_->setValue(is.vuMeter.warningDB);
 	spin_vu_error_db_->setValue(is.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)is.vuMeter.decayRate);
@@ -736,6 +757,7 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 	is.vuMeter.width = spin_vu_width_->value();
 	is.vuMeter.opacity = spin_vu_opacity_->value();
 	is.vuMeter.lengthRatio = spin_vu_length_ratio_->value();
+	is.vuMeter.alignment = (VuMeterAlignment)cmb_vu_alignment_->currentIndex();
 	is.vuMeter.warningDB = spin_vu_warning_db_->value();
 	is.vuMeter.errorDB = spin_vu_error_db_->value();
 	is.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
@@ -795,6 +817,7 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 	spin_vu_width_->setValue(cs.vuMeter.width);
 	spin_vu_opacity_->setValue(cs.vuMeter.opacity);
 	spin_vu_length_ratio_->setValue(cs.vuMeter.lengthRatio);
+	cmb_vu_alignment_->setCurrentIndex((int)cs.vuMeter.alignment);
 	spin_vu_warning_db_->setValue(cs.vuMeter.warningDB);
 	spin_vu_error_db_->setValue(cs.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)cs.vuMeter.decayRate);
@@ -860,6 +883,7 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.vuMeter.width = spin_vu_width_->value();
 	cs.vuMeter.opacity = spin_vu_opacity_->value();
 	cs.vuMeter.lengthRatio = spin_vu_length_ratio_->value();
+	cs.vuMeter.alignment = (VuMeterAlignment)cmb_vu_alignment_->currentIndex();
 	cs.vuMeter.warningDB = spin_vu_warning_db_->value();
 	cs.vuMeter.errorDB = spin_vu_error_db_->value();
 	cs.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
@@ -873,4 +897,71 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.overlay.anchorMode = (OverlayAnchorMode)cmb_overlay_anchor_->currentIndex();
 
 	return cs;
+}
+
+/* ================================================================
+ * Copy / Paste / Reset
+ * ================================================================ */
+
+QByteArray CellDisplaySettingsDialog::s_clipboard_;
+
+void CellDisplaySettingsDialog::on_copy()
+{
+	obs_data_t *data = nullptr;
+	switch (mode_) {
+	case Mode::Global:
+		data = get_global_settings().to_obs_data();
+		break;
+	case Mode::Instance:
+		data = get_instance_settings().to_obs_data();
+		break;
+	case Mode::Cell:
+		data = get_cell_settings().to_obs_data();
+		break;
+	}
+	if (data) {
+		const char *json = obs_data_get_json(data);
+		s_clipboard_ = QByteArray(json);
+		obs_data_release(data);
+	}
+}
+
+void CellDisplaySettingsDialog::on_paste()
+{
+	if (s_clipboard_.isEmpty())
+		return;
+	obs_data_t *data = obs_data_create_from_json(s_clipboard_.constData());
+	if (!data)
+		return;
+	switch (mode_) {
+	case Mode::Global:
+		set_global_settings(GlobalVisualSettings::from_obs_data(data));
+		break;
+	case Mode::Instance:
+		set_instance_settings(InstanceVisualSettings::from_obs_data(data));
+		break;
+	case Mode::Cell:
+		set_cell_settings(CellVisualSettings::from_obs_data(data));
+		break;
+	}
+	obs_data_release(data);
+}
+
+void CellDisplaySettingsDialog::on_reset()
+{
+	switch (mode_) {
+	case Mode::Global:
+		set_global_settings(GlobalVisualSettings{});
+		break;
+	case Mode::Instance:
+		set_instance_settings(InstanceVisualSettings{});
+		break;
+	case Mode::Cell: {
+		CellVisualSettings cs{};
+		cs.row = cell_row_;
+		cs.col = cell_col_;
+		set_cell_settings(cs);
+		break;
+	}
+	}
 }

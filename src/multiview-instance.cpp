@@ -215,6 +215,25 @@ static VuMeterDecayRate vu_meter_decay_from_str(const char *s)
 	return VuMeterDecayRate::Fast;
 }
 
+static const char *vu_meter_alignment_to_str(VuMeterAlignment a)
+{
+	switch (a) {
+	case VuMeterAlignment::Start:
+		return "start";
+	default:
+		return "center";
+	}
+}
+
+static VuMeterAlignment vu_meter_alignment_from_str(const char *s)
+{
+	if (!s)
+		return VuMeterAlignment::Center;
+	if (strcmp(s, "start") == 0)
+		return VuMeterAlignment::Start;
+	return VuMeterAlignment::Center;
+}
+
 static const char *vu_meter_style_to_str(VuMeterStyle st)
 {
 	(void)st;
@@ -395,6 +414,7 @@ obs_data_t *VuMeterSettings::to_obs_data() const
 	obs_data_set_double(data, "warningDB", warningDB);
 	obs_data_set_double(data, "errorDB", errorDB);
 	obs_data_set_string(data, "decayRate", vu_meter_decay_to_str(decayRate));
+	obs_data_set_string(data, "alignment", vu_meter_alignment_to_str(alignment));
 	return data;
 }
 
@@ -434,6 +454,7 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 	if (!obs_data_has_user_value(data, "errorDB"))
 		s.errorDB = -9.0;
 	s.decayRate = vu_meter_decay_from_str(obs_data_get_string(data, "decayRate"));
+	s.alignment = vu_meter_alignment_from_str(obs_data_get_string(data, "alignment"));
 	return s;
 }
 

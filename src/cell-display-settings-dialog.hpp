@@ -114,6 +114,7 @@ private:
 	QSpinBox *spin_vu_width_ = nullptr;
 	QDoubleSpinBox *spin_vu_opacity_ = nullptr;
 	QDoubleSpinBox *spin_vu_length_ratio_ = nullptr;
+	QComboBox *cmb_vu_alignment_ = nullptr;
 	QDoubleSpinBox *spin_vu_warning_db_ = nullptr;
 	QDoubleSpinBox *spin_vu_error_db_ = nullptr;
 	QComboBox *cmb_vu_decay_ = nullptr;
@@ -126,4 +127,10 @@ private:
 	QDoubleSpinBox *spin_overlay_opacity_ = nullptr;
 	QComboBox *cmb_overlay_fit_ = nullptr;
 	QComboBox *cmb_overlay_anchor_ = nullptr;
+
+	/* Copy/Paste/Reset */
+	static QByteArray s_clipboard_; /* shared clipboard for copy/paste */
+	void on_copy();
+	void on_paste();
+	void on_reset();
 };

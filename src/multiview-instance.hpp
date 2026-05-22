@@ -46,6 +46,8 @@ enum class VuMeterAnchorMode { Cell, Signal };
 
 enum class VuMeterDecayRate { Fast, Medium, Slow };
 
+enum class VuMeterAlignment { Start, Center };
+
 enum class OverlayFitMode { Fit, Stretch };
 
 enum class OverlayAnchorMode { Cell, Signal };
@@ -106,6 +108,7 @@ struct VuMeterSettings {
 	double warningDB = -20.0; /* green->yellow threshold */
 	double errorDB = -9.0;    /* yellow->red threshold */
 	VuMeterDecayRate decayRate = VuMeterDecayRate::Fast;
+	VuMeterAlignment alignment = VuMeterAlignment::Center;
 
 	obs_data_t *to_obs_data() const;
 	static VuMeterSettings from_obs_data(obs_data_t *data);

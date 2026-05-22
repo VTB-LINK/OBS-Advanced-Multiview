@@ -173,6 +173,7 @@ private:
 		float magnitude[MAX_AUDIO_CHANNELS];
 		float peak[MAX_AUDIO_CHANNELS];
 		int channels = 0;
+		uint64_t last_callback_ns = 0; /* timestamp of last callback */
 	};
 	struct CellVolmeter {
 		std::vector<SingleVolmeter> meters;
@@ -183,9 +184,17 @@ private:
 	std::vector<CellVolmeter *> cell_volmeters_;
 	void rebuild_volmeters();
 	void release_volmeters();
-	void render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY);
+	void render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY, int sigX, int sigY, int sigW,
+			     int sigH);
 	static void volmeter_callback(void *data, const float magnitude[MAX_AUDIO_CHANNELS],
 				      const float peak[MAX_AUDIO_CHANNELS], const float inputPeak[MAX_AUDIO_CHANNELS]);
+
+	/* Scene change detection for PGM/PRVW volmeter rebuild */
+	OBSWeakSource last_pgm_scene_;
+	OBSWeakSource last_prvw_scene_;
+	bool has_pgm_cell_ = false;
+	bool has_prvw_cell_ = false;
+	void check_scene_change_for_volmeters();
 };
 
 /* Global functions (defined in plugin-main) */
