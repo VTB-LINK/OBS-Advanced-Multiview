@@ -1665,10 +1665,15 @@ static bool collect_audio_sources_cb(obs_scene_t *, obs_sceneitem_t *item, void 
 	return true; /* continue enumeration */
 }
 
-static void collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *> &out, uint32_t track_bit)
+/* Collect audio-producing sources reachable from `src` (a scene, group, or
+ * audio-bearing source). Track filtering applied via `track_bit`. Returns
+ * true if recursion hit MAX_DEPTH at any point — the caller is expected to
+ * log a context-rich warning (instance + cell), since logging here would
+ * lose the cell index and would fire repeatedly under 1 Hz polling. */
+static bool collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *> &out, uint32_t track_bit)
 {
 	if (!src)
-		return;
+		return false;
 
 	uint32_t flags = obs_source_get_output_flags(src);
 	if (flags & OBS_SOURCE_AUDIO) {
@@ -1676,9 +1681,9 @@ static void collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *>
 		 * directly to a cell). Apply track filter consistently. */
 		uint32_t am = obs_source_get_audio_mixers(src);
 		if ((am & track_bit) == 0)
-			return;
+			return false;
 		out.push_back(obs_source_get_ref(src));
-		return;
+		return false;
 	}
 
 	/* Interpret as scene or group and collect audio sources inside. */
@@ -1686,23 +1691,14 @@ static void collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *>
 	if (!scene)
 		scene = obs_group_from_source(src);
 	if (!scene)
-		return;
+		return false;
 
 	AudioCollectCtx ctx;
 	ctx.track_bit = track_bit;
 	obs_scene_enum_items(scene, collect_audio_sources_cb, &ctx);
-	if (ctx.depth_exceeded) {
-		/* Log once per top-level call, not per recursion site, to avoid
-		 * spamming when a pathological scene is referenced from many cells.
-		 * MAX_DEPTH guards a runaway recursion that should not occur with
-		 * OBS's normal scene-link cycle prevention; if a user sees this it
-		 * usually means an unusually deep nested-scene chain. */
-		obs_log(LOG_WARNING,
-			"VU meter audio collection hit MAX_DEPTH=%d in source '%s'; some nested sources may be skipped",
-			AudioCollectCtx::MAX_DEPTH, obs_source_get_name(src) ? obs_source_get_name(src) : "(unnamed)");
-	}
 	for (auto *s : ctx.sources)
 		out.push_back(s);
+	return ctx.depth_exceeded;
 }
 
 void MultiviewWindow::rebuild_volmeters()
@@ -1721,11 +1717,24 @@ void MultiviewWindow::rebuild_volmeters()
 	has_pgm_cell_ = false;
 	has_prvw_cell_ = false;
 
-	/* Aggregate counters for a single summary log line at the end —
-	 * per-source LOG_INFO would spam the OBS log under the 1Hz active-source
-	 * polling, especially on dense grids with frequent scene mutations. */
+	/* Aggregate counters and per-cell breakdown for a single summary log
+	 * line at the end. Per-source LOG_INFO would spam the OBS log under
+	 * the 1Hz active-source polling, especially on dense grids with
+	 * frequent scene mutations. */
 	int cells_with_meters = 0;
 	int total_attached = 0;
+	std::string cells_breakdown; /* "c0:pgm=2 c2:scene=1 ..." */
+	cells_breakdown.reserve(64);
+
+	/* Cells whose recursive scene walk hit MAX_DEPTH, aggregated so we
+	 * emit a single warning per rebuild rather than one per cell. */
+	std::string depth_warn_cells;
+
+	/* Resolve instance once for log prefix. Falls back gracefully when
+	 * the instance has been deleted but the window is mid-teardown. */
+	MultiviewInstance *log_inst = config_ ? config_->find_instance(uuid_) : nullptr;
+	const std::string &inst_name = log_inst ? log_inst->name : std::string();
+	std::string short_uuid = uuid_.size() > 8 ? uuid_.substr(0, 8) : uuid_;
 
 	for (size_t i = 0; i < count; i++) {
 		const auto &cs = cell_sources_[i];
@@ -1766,7 +1775,12 @@ void MultiviewWindow::rebuild_volmeters()
 		 * by the active mixer track bit (per-cell semantics are identical
 		 * in v1: instance-level setting drives all cells uniformly). */
 		std::vector<obs_source_t *> audioSources;
-		collect_audio_sources(cellSrc, audioSources, current_track_bit_);
+		bool depth_exceeded = collect_audio_sources(cellSrc, audioSources, current_track_bit_);
+		if (depth_exceeded) {
+			char cellTag[32];
+			snprintf(cellTag, sizeof(cellTag), "%sc%zu", depth_warn_cells.empty() ? "" : ",", i);
+			depth_warn_cells += cellTag;
+		}
 		obs_source_release(cellSrc);
 
 		/* For PGM cells, also include global audio devices (Desktop Audio, Mic/Aux)
@@ -1851,6 +1865,13 @@ void MultiviewWindow::rebuild_volmeters()
 		}
 		cell_volmeters_[i] = cellVm;
 		cells_with_meters++;
+
+		/* Append compact per-cell entry to the rebuild summary. cs.type
+		 * is one of "pgm" / "prvw" / "scene" / "source". */
+		char cellEntry[48];
+		snprintf(cellEntry, sizeof(cellEntry), "%sc%zu:%s=%zu", cells_breakdown.empty() ? "" : " ", i,
+			 cs.type.c_str(), cellVm->meters.size());
+		cells_breakdown += cellEntry;
 	}
 
 	/* Drain any rebuild flag set during construction (e.g. by audio_mixers
@@ -1880,9 +1901,23 @@ void MultiviewWindow::rebuild_volmeters()
 	/* Single summary line — replaces the per-source LOG_INFO that used to
 	 * fire inside the attach loop. With 1Hz active-source polling triggering
 	 * rebuilds on any scene-tree mutation, per-source logs flooded the OBS
-	 * log; one line per rebuild is sufficient for diagnostics. */
-	obs_log(LOG_INFO, "VU meters rebuilt: cells=%d sources=%d track_bit=0x%x", cells_with_meters, total_attached,
-		current_track_bit_);
+	 * log; one line per rebuild is sufficient for diagnostics. The instance
+	 * prefix `[name(uuid8)]` lets logs stay readable when several Multiview
+	 * windows are open simultaneously. */
+	obs_log(LOG_INFO, "[%s(%s)] VU meters rebuilt: cells=%d sources=%d track_bit=0x%x%s%s",
+		inst_name.empty() ? "?" : inst_name.c_str(), short_uuid.empty() ? "?" : short_uuid.c_str(),
+		cells_with_meters, total_attached, current_track_bit_, cells_breakdown.empty() ? "" : " | ",
+		cells_breakdown.c_str());
+
+	/* Aggregated MAX_DEPTH warning (one line per rebuild listing every
+	 * affected cell) — keeps signal-to-noise high when a deeply nested
+	 * scene appears in many cells of the same window. */
+	if (!depth_warn_cells.empty()) {
+		obs_log(LOG_WARNING,
+			"[%s(%s)] VU meter scene walk hit MAX_DEPTH=%d in cells [%s]; some nested sources may be skipped",
+			inst_name.empty() ? "?" : inst_name.c_str(), short_uuid.empty() ? "?" : short_uuid.c_str(),
+			AudioCollectCtx::MAX_DEPTH, depth_warn_cells.c_str());
+	}
 }
 
 void MultiviewWindow::check_scene_change_for_volmeters()

@@ -160,3 +160,17 @@ Track Source / Manual Track UI 控件。
 | `src/multiview-window.cpp` | compute_active_track_bit 直接读 instance 设置，去掉 effective 解析 | LOW（性能） |
 | `src/multiview-window.cpp` | release_volmeters disconnect 安全不变式补注释 | LOW（可维护性） |
 
+### MultiviewWindow（追加已修复 · 日志可读性补丁）
+
+- **VU 日志缺少 instance / cell 标识**：[multiview-window.cpp](../src/multiview-window.cpp)
+  - 原 summary 仅打印 `cells=N sources=M track_bit=0xN`，多 instance / 几十 cell 场景下完全不可定位；
+  - 修复（同次硬化的回归补丁）：
+    - rebuild summary 加 `[name(uuid8)]` 前缀 + per-cell 简表 `c0:pgm=2 c2:scene=1 ...`；
+    - `collect_audio_sources` 不再自带 `LOG_WARNING`，改为返回 `bool depth_exceeded`；rebuild 端聚合所有命中 cell 写一条 `[name(uuid8)] VU meter scene walk hit MAX_DEPTH=8 in cells [c2,c5] ...`；
+    - 1Hz 轮询路径 `collect_active_source_pointers` 故意不打这条 warning（避免随轮询频率刷屏），由真正的 rebuild 路径承担。
+  - 命名遵循 `[实例名(短UUID前8位)]` 约定，与未来其它子系统日志保持一致。
+
+| 文件 | 修复 | 风险等级 |
+|---|---|---|
+| `src/multiview-window.cpp` | VU 日志加 instance + per-cell 标识；MAX_DEPTH 警告聚合 | LOW（可观测性） |
+
