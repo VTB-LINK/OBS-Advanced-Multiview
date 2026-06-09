@@ -248,3 +248,79 @@ OBS 原生风格的 PGM/PRVW 高亮边框，并扩展为 4 种状态（直接 / 
 | `src/multiview-window.{hpp,cpp}` | tree set 每帧重算 + compute_cell_highlight + render_cell_highlight + 渲染管线接入 | MED（绘制管线插入） |
 | `src/cell-display-settings-dialog.{hpp,cpp}` | create_highlight_group + Cell scope 强制 disable + label 文案 | LOW（纯 UI） |
 
+### Highlight Borders 视觉打磨硬化（追加）
+
+第二轮 polish。覆盖 PGM/PRVW 主屏 cell 误染、4 边只染 1 边、相邻 cell 红绿压盖、
+dashed 拐角错位、gutter==0 inset 太细等问题，以及随之引入的几何与渲染管线硬化点。
+
+#### MultiviewWindow（追加已修复）
+
+- **PGM / PRVW 主屏 cell 被冗余高亮**：`compute_cell_highlight` 对 `cs.type == "pgm"` /
+  `"prvw"` 早退返回 `None`。这两类 cell 本身就是 PGM/PRVW 监视器，外加红/绿框只是视觉噪声。
+- **`render_cell_highlight` 只染上边**：`gs_effect_set_color` 被错误地 hoist 到 4 个
+  `startRegion` + `gs_effect_loop` 块之上，导致 SOLID effect 的 color uniform 仅对第一次
+  draw 生效，剩余 3 边以 stale 白色渲染。修复：将 set_color 移入 `draw_rect` lambda，
+  与已有的 gutter 填充 / VU 段 / label bg / safe-area 渲染模式对齐。**这是 GS effect
+  uniform 生命周期的关键约束**：必须在每个 `gs_effect_loop` 块内 set，跨多 startRegion
+  共享不可靠。
+- **相邻 cell 的 PGM 被 PRVW 后画压盖**：高亮原本在 cell 循环内部画，后到 cell 的边框
+  会覆盖前到 cell 在共享 gutter 上的边框。修复：拆为两遍 post-loop pass，先画 PRVW
+  再画 PGM；PGM 永远在视觉最顶。副作用：高亮现在也在 label / VU 之上，使 gutter==0
+  inset 模式描边可见性提升。
+- **dashed 边框拐角错位**：原实现 4 边各自走 `for (off=0; off<sideLen; off+=period)`，
+  相邻边的首/尾 dash 没有相位约束，拐角处时常出现"缺一段"或"探出去"。修复：先在 4 个
+  外拐角无条件画 t×t 实心方块，再在拐角之间走 dash。拐角永远是闭合 90° L，dash 相位无关。
+- **`HighlightSettings.minThicknessPx` 默认 2 → 8、范围 [1,8] → [2,16]**：gutter==0
+  inset 模式下 2 px 边框在 1080p 几乎不可见。注意 `from_obs_data` 仅 clamp 越界值、不
+  覆盖已落盘的旧默认值——新 instance 拿到 8、老 instance 仍是落盘值（属正确行为，避免
+  擅改用户设置）。
+
+#### MultiviewWindow（追加硬化 · 几何与性能）
+
+- **死代码 `bool insideMode`**：早期重构遗留的标志位，两个分支都写入但无任何分支读取，
+  靠 `(void)insideMode` 抑制 warning。删除，结构更清晰。
+- **小 cell 几何安全 guard**：`render_cell_highlight` 入口处 `if (outerW < 2*t ||
+  outerH < 2*t) return;`。原因：
+  - 实心模式下左/右 strip 宽度 `outerH - 2*t` 变负，4 边只有 top/bottom 能画；
+  - dashed 模式下 4 个拐角方块互相重叠；
+  - 关键风险 — **gutter==0 inset 模式下 cellW < t 时**，左/右 strip 会越出 cell 边界
+    向右侵入邻居或窗口背景（startRegion 不会自动 clip 到 cell rect）。
+  - 实际 OBS multiview cell 通常 ≥ 80 px、t ≤ 16，触发概率低；但极端窄网格 / 极厚边框
+    组合下成立。早退一刀切。
+- **两遍 pass 重复调用 `compute_cell_highlight`**：每 cell 在 PRVW pass + PGM pass
+  各调用一次，含 tree set lookup + cs.type 比较。修复：在两遍 pass 之前一次性算出
+  `std::vector<HighlightKind> cellKinds(cells.size())`，两遍 pass 仅从 vector 读取并
+  按 isPgm 过滤。N 个 cell 由 2N 次 compute 减到 N 次。代码也更扁平。
+
+#### 已确认的非问题
+
+- **gutter==0 inset 模式遮挡 cell 画面最外 t px**：当 highlight 边框画在 cell 内侧时，
+  最外 t 像素的视频内容确实被覆盖。深入评估过四个方案（外画 / layout 虚拟 gutter /
+  仅高亮 cell 缩内容区 / 接受现状）后保留现状：
+  - 外画：gutter==0 没有外部空间，必侵邻居；
+  - 虚拟 gutter（尝试过，已 revert）：layout 不在每帧重算时拿到新 gutter 值，
+    LayoutEngine 缓存路径让虚拟 gutter 生效需要额外的 cache invalidation 链路，
+    复杂度超出收益（详细原因见 git 历史 round 4 撤回）；
+  - 缩内容区：需要修改 video / label / VU / safe-area / overlay / label-bg 共 6 处
+    渲染路径，回归风险大；高亮帧间画面尺寸跳变，刺眼。
+  - 结论：8 px ≈ 1080p 全屏 multiview 的 0.7%，可接受；关心边缘内容的用户应当用
+    `gutter ≥ 2` 的常规模式。**Cell Display Settings 对话框未来可加 inline hint
+    说明这一行为**（暂未做）。
+- **持久化值不随默认值变化更新**：用户已有配置中的 `minThicknessPx=2` 不会自动改成 8。
+  这是 `from_obs_data` 的有意行为（只 clamp 越界、不擅改用户设置），不视为 bug。
+  用户可在 Cell Display Settings 手动 reset。
+
+#### 修复 / 引入清单（本轮 polish + 硬化）
+
+| 文件 | 改动 | 风险等级 |
+|---|---|---|
+| `src/multiview-window.cpp` | compute_cell_highlight 跳过 pgm/prvw 主屏 cell | LOW（视觉降噪） |
+| `src/multiview-window.cpp` | draw_rect 内 set_color，修 4 边只染 1 边 bug | HIGH（渲染正确性） |
+| `src/multiview-window.cpp` | 两遍 post-loop pass：PRVW 先 PGM 后 + cellKinds 缓存 | MED（渲染顺序 + 性能） |
+| `src/multiview-window.cpp` | dashed 拐角 t×t 实心方块 + 拐角间走 dash | LOW（视觉一致性） |
+| `src/multiview-window.cpp` | render_cell_highlight 入口加 `outerW < 2*t \|\| outerH < 2*t` 早退 | MED（防越界绘制） |
+| `src/multiview-window.cpp` | 删 dead code `bool insideMode` + `(void)insideMode` | LOW（清洁度） |
+| `src/multiview-instance.{hpp,cpp}` | minThicknessPx 默认 2→8、clamp 范围 [1,8]→[2,16] | LOW（默认值调优） |
+| `src/cell-display-settings-dialog.cpp` | minThickness spin range [1,8]→[2,16]（与 clamp 同步） | LOW（UI 一致性） |
+
+

@@ -592,10 +592,10 @@ HighlightSettings HighlightSettings::from_obs_data(obs_data_t *data)
 		s.dashGapPx = 2;
 	if (s.dashGapPx > 16)
 		s.dashGapPx = 16;
-	if (s.minThicknessPx < 1)
-		s.minThicknessPx = 1;
-	if (s.minThicknessPx > 8)
-		s.minThicknessPx = 8;
+	if (s.minThicknessPx < 2)
+		s.minThicknessPx = 2;
+	if (s.minThicknessPx > 16)
+		s.minThicknessPx = 16;
 	return s;
 }
 

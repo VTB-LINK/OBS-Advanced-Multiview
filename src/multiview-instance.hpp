@@ -155,7 +155,7 @@ struct HighlightSettings {
 	bool nestedDashed = true;        /* nested matches use dashed border */
 	int dashLengthPx = 12;           /* [4, 32] */
 	int dashGapPx = 6;               /* [2, 16] */
-	int minThicknessPx = 2;          /* fallback when gutter == 0; [1, 8] */
+	int minThicknessPx = 8;          /* fallback when gutter == 0; [2, 16] */
 
 	obs_data_t *to_obs_data() const;
 	static HighlightSettings from_obs_data(obs_data_t *data);

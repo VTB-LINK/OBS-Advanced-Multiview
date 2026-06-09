@@ -763,16 +763,11 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		if (hasSignalRect)
 			render_safe_area(i, vrX, vrY, vrW, vrH);
 
-		/* Render PGM/PRVW cell highlight border. Drawn on top of video/bg
-		 * content but underneath label / VU meter so those overlays stay
-		 * readable when a cell is highlighted. Returns immediately if the
-		 * cell has no PGM/PRVW relationship or highlight is disabled. */
-		{
-			HighlightKind hk = compute_cell_highlight(i);
-			if (hk != HighlightKind::None && i < (int)effective_visuals_.size()) {
-				render_cell_highlight(cell, vpX, vpY, hk, effective_visuals_[i].highlight);
-			}
-		}
+		/* (PGM/PRVW highlight borders are rendered in two post-loop passes
+		 * below so PGM (red) always paints on top of PRVW (green) even when
+		 * the two cells are adjacent / share a gutter edge, and so the
+		 * border sits on top of label & VU overlays — which is important in
+		 * gutter == 0 layouts where the border is drawn INSIDE the cell.) */
 
 		/* Render foreground overlay image if available */
 		if (i < (int)overlay_images_.size() && overlay_images_[i].texture) {
@@ -881,6 +876,44 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		/* Render VU meter bars */
 		render_vu_meter(i, cell, vpX, vpY, vrX, vrY, vrW, vrH);
 	}
+
+	/* ---- PGM / PRVW highlight pass (post-cell, two layers) ----
+	 *
+	 * Done outside the per-cell loop so we can control layering precisely:
+	 *
+	 *   Pass 1 — draw all PRVW (green) borders
+	 *   Pass 2 — draw all PGM  (red)   borders   ← always on top
+	 *
+	 * This guarantees PGM > PRVW visually even when two highlighted cells
+	 * are adjacent (or diagonally touching), where the second cell's border
+	 * would otherwise paint over the first's in the shared gutter zone.
+	 *
+	 * It also means highlight is the LAST thing drawn into each cell rect,
+	 * which makes the gutter == 0 inset-border mode visible on top of any
+	 * label / VU meter that happens to sit at the cell edge.
+	 *
+	 * compute_cell_highlight() walks the PGM/PRVW tree sets and is cheap
+	 * but non-trivial; cache the per-cell kind once instead of recomputing
+	 * in both passes. */
+	std::vector<HighlightKind> cellKinds(cells.size(), HighlightKind::None);
+	for (int i = 0; i < (int)cells.size(); i++) {
+		if (i >= (int)effective_visuals_.size())
+			continue;
+		cellKinds[i] = compute_cell_highlight(i);
+	}
+	auto render_highlight_pass = [&](bool pgmPass) {
+		for (int i = 0; i < (int)cells.size(); i++) {
+			HighlightKind hk = cellKinds[i];
+			if (hk == HighlightKind::None)
+				continue;
+			bool isPgm = (hk == HighlightKind::PgmDirect || hk == HighlightKind::PgmNested);
+			if (pgmPass != isPgm)
+				continue;
+			render_cell_highlight(cells[i], vpX, vpY, hk, effective_visuals_[i].highlight);
+		}
+	};
+	render_highlight_pass(false); /* PRVW first */
+	render_highlight_pass(true);  /* PGM on top */
 }
 
 /* ---- Label rendering ---- */
@@ -2430,19 +2463,12 @@ MultiviewWindow::HighlightKind MultiviewWindow::compute_cell_highlight(int cellI
 
 	const auto &cs = cell_sources_[cellIndex];
 
-	/* PGM cell: always direct PGM. */
-	if (cs.type == "pgm")
-		return HighlightKind::PgmDirect;
-
-	/* PRVW cell: direct PRVW when studio mode is on; otherwise the cell
-	 * visually shows PGM content (fallback path in render loop), so the
-	 * highlight should match — direct PGM. */
-	if (cs.type == "prvw") {
-		OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
-		if (prvw)
-			return HighlightKind::PrvwDirect;
-		return HighlightKind::PgmDirect;
-	}
+	/* Dedicated PGM / PRVW viewer cells already serve as the visual primary
+	 * monitor of their respective bus, so an additional colored border on
+	 * top of them is just noise. The OBS-native multiview behaves the same
+	 * way — only scene/source cells get the red/green outline. */
+	if (cs.type == "pgm" || cs.type == "prvw")
+		return HighlightKind::None;
 
 	/* Scene/source cell: resolve to a raw pointer for set comparison.
 	 * We pull a strong ref to ensure the pointer is valid while compared,
@@ -2492,15 +2518,21 @@ void MultiviewWindow::render_cell_highlight(const CellRect &cell, int vpX, int v
 
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
-	gs_effect_set_color(colorParam, color);
 
 	/* draw_rect: emit a single filled rectangle in absolute viewport coords.
 	 * Mirrors the pattern used by the gutter fill, label background, and
-	 * PRVW fallback yellow bar above. */
+	 * PRVW fallback yellow bar above.
+	 *
+	 * NOTE: gs_effect_set_color must be called BEFORE each effect_loop —
+	 * the SOLID effect's color uniform does not survive across separate
+	 * loop invocations in a reliable way. Hoisting the color set above the
+	 * 4-rect / dash sequence produced "only the first rect colored" bug
+	 * (top edge red, the other three edges white). */
 	auto draw_rect = [&](int x, int y, int w, int h) {
 		if (w <= 0 || h <= 0)
 			return;
 		startRegion(x, y, w, h, 0.0f, (float)w, 0.0f, (float)h);
+		gs_effect_set_color(colorParam, color);
 		while (gs_effect_loop(solid, "Solid"))
 			gs_draw_sprite(nullptr, 0, w, h);
 		endRegion();
@@ -2519,23 +2551,29 @@ void MultiviewWindow::render_cell_highlight(const CellRect &cell, int vpX, int v
 	 * of small rectangles separated by `dashGapPx`. */
 	int t;
 	int outerX, outerY, outerW, outerH; /* full outer bounding box */
-	bool insideMode;
 	if (gutter_px_ > 0) {
 		t = gutter_px_;
 		outerX = cellX - t;
 		outerY = cellY - t;
 		outerW = cellW + 2 * t;
 		outerH = cellH + 2 * t;
-		insideMode = false;
 	} else {
 		t = hs.minThicknessPx > 0 ? hs.minThicknessPx : 1;
 		outerX = cellX;
 		outerY = cellY;
 		outerW = cellW;
 		outerH = cellH;
-		insideMode = true;
-		(void)insideMode; /* unused but documents intent */
 	}
+
+	/* Tiny-cell safety: when the outer box is smaller than 2*t in either
+	 * dimension, the 4 "side strip" rects (solid mode) and 4 corner
+	 * squares (dashed mode) start to overlap/invert. In the gutter==0
+	 * inset case this also means the left/right strips would paint
+	 * outside the cell (overflowing into the neighbour or window
+	 * background). Skip the border entirely — a cell that small is
+	 * unreadable anyway. */
+	if (outerW < 2 * t || outerH < 2 * t)
+		return;
 
 	if (!dashed) {
 		/* Solid 4-rect border. Side strips overlap at corners but
@@ -2547,44 +2585,56 @@ void MultiviewWindow::render_cell_highlight(const CellRect &cell, int vpX, int v
 		return;
 	}
 
-	/* Dashed border: walk each side and emit short rects of length
-	 * dashLengthPx separated by dashGapPx. The last dash on a side is
-	 * truncated if it would overshoot the side length \u2014 keeps the corner
-	 * geometry tight and avoids drawing past the outer box. */
+	/* Dashed border with miter-clean corners.
+	 *
+	 * Step 1: paint 4 solid t×t corner squares. This guarantees every
+	 * corner is a closed 90° L regardless of dash phase — fixes the
+	 * "gap at the corner" / "misaligned tip" artefact that occurs when
+	 * the first/last dash on adjacent sides don't line up.
+	 *
+	 * Step 2: walk each side BETWEEN the corner squares and emit short
+	 * dashes. Horizontal sides span [outerX+t, outerX+outerW-t],
+	 * vertical sides span [outerY+t, outerY+outerH-t]. The last dash is
+	 * truncated if it would overshoot the available span. */
+	draw_rect(outerX, outerY, t, t);                           /* TL */
+	draw_rect(outerX + outerW - t, outerY, t, t);              /* TR */
+	draw_rect(outerX, outerY + outerH - t, t, t);              /* BL */
+	draw_rect(outerX + outerW - t, outerY + outerH - t, t, t); /* BR */
+
 	int dash = hs.dashLengthPx > 0 ? hs.dashLengthPx : 1;
 	int gap = hs.dashGapPx > 0 ? hs.dashGapPx : 1;
 	int period = dash + gap;
 
-	/* Top side: along x from outerX to outerX+outerW */
-	for (int off = 0; off < outerW; off += period) {
+	int hSpan = outerW - 2 * t; /* horizontal run between L/R corner squares */
+	int vSpan = outerH - 2 * t; /* vertical run between T/B corner squares */
+
+	/* Top side */
+	for (int off = 0; off < hSpan; off += period) {
 		int segLen = dash;
-		if (off + segLen > outerW)
-			segLen = outerW - off;
-		draw_rect(outerX + off, outerY, segLen, t);
+		if (off + segLen > hSpan)
+			segLen = hSpan - off;
+		draw_rect(outerX + t + off, outerY, segLen, t);
 	}
 	/* Bottom side */
-	for (int off = 0; off < outerW; off += period) {
+	for (int off = 0; off < hSpan; off += period) {
 		int segLen = dash;
-		if (off + segLen > outerW)
-			segLen = outerW - off;
-		draw_rect(outerX + off, outerY + outerH - t, segLen, t);
+		if (off + segLen > hSpan)
+			segLen = hSpan - off;
+		draw_rect(outerX + t + off, outerY + outerH - t, segLen, t);
 	}
-	/* Left side: along y in the inner strip (skip corners already covered
-	 * by top/bottom) */
-	int innerY = outerY + t;
-	int innerH = outerH - 2 * t;
-	for (int off = 0; off < innerH; off += period) {
+	/* Left side */
+	for (int off = 0; off < vSpan; off += period) {
 		int segLen = dash;
-		if (off + segLen > innerH)
-			segLen = innerH - off;
-		draw_rect(outerX, innerY + off, t, segLen);
+		if (off + segLen > vSpan)
+			segLen = vSpan - off;
+		draw_rect(outerX, outerY + t + off, t, segLen);
 	}
 	/* Right side */
-	for (int off = 0; off < innerH; off += period) {
+	for (int off = 0; off < vSpan; off += period) {
 		int segLen = dash;
-		if (off + segLen > innerH)
-			segLen = innerH - off;
-		draw_rect(outerX + outerW - t, innerY + off, t, segLen);
+		if (off + segLen > vSpan)
+			segLen = vSpan - off;
+		draw_rect(outerX + outerW - t, outerY + t + off, t, segLen);
 	}
 }
 

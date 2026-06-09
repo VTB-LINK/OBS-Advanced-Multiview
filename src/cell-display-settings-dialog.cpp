@@ -758,7 +758,7 @@ QGroupBox *CellDisplaySettingsDialog::create_highlight_group()
 	form->addRow(QStringLiteral("Dash Gap:"), spin_highlight_dash_gap_);
 
 	spin_highlight_min_thickness_ = new QSpinBox(grp_highlight_);
-	spin_highlight_min_thickness_->setRange(1, 8);
+	spin_highlight_min_thickness_->setRange(2, 16);
 	spin_highlight_min_thickness_->setSuffix(QStringLiteral(" px"));
 	spin_highlight_min_thickness_->setToolTip(QStringLiteral("Inner border thickness used when gutter width is 0"));
 	form->addRow(QStringLiteral("Min Thickness:"), spin_highlight_min_thickness_);
