@@ -51,6 +51,7 @@ target_sources(
           src/cell-display-settings-dialog.cpp
           src/multiview-window.hpp
           src/multiview-window.cpp
+          src/multiview-window-vu.cpp
           src/source-picker.hpp
           src/source-picker.cpp)
 

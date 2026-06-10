@@ -1,0 +1,1216 @@
+/*
+OBS Advanced Multiview - VU Meter rendering and audio metering
+Split from multiview-window.cpp for maintainability.
+All functions remain members of MultiviewWindow.
+
+Copyright (C) 2025 VTB-LINK
+License: GPL-2.0-or-later
+*/
+
+#include "multiview-window.hpp"
+
+#include <obs-module.h>
+#include <obs-frontend-api.h>
+#include <graphics/graphics.h>
+#include <graphics/matrix4.h>
+#include <util/platform.h>
+#include <plugin-support.h>
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+#include <vector>
+
+/* Practical silence level in dB (below minimum display range) */
+#define VU_SILENCE_DB -200.0f
+
+/* ---- helpers (same as OBS internal, duplicated for compilation unit) ---- */
+
+static inline void startRegion(int vX, int vY, int vCX, int vCY, float oL, float oR, float oT, float oB)
+{
+	gs_projection_push();
+	gs_viewport_push();
+	gs_set_viewport(vX, vY, vCX, vCY);
+	gs_ortho(oL, oR, oT, oB, -100.0f, 100.0f);
+}
+
+static inline void endRegion()
+{
+	gs_viewport_pop();
+	gs_projection_pop();
+}
+/* ---- dB Scale Label Sources ---- */
+
+void MultiviewWindow::release_scale_label_sources()
+{
+	scale_label_cache_.clear();
+}
+
+void MultiviewWindow::rebuild_scale_label_sources()
+{
+	release_scale_label_sources();
+
+	/* Collect all unique dB tick values needed across cells */
+	std::vector<float> allTicks;
+	for (size_t i = 0; i < effective_visuals_.size(); i++) {
+		const VuMeterSettings &vm = effective_visuals_[i].vuMeter;
+		if (!vm.enabled || !vm.scaleEnabled || !vm.scaleShowLabels)
+			continue;
+
+		std::string tickStr = vm.scaleTicks;
+		if (tickStr.empty())
+			tickStr = "-60,-40,-20,-9,0";
+
+		size_t pos = 0;
+		while (pos < tickStr.size()) {
+			size_t comma = tickStr.find(',', pos);
+			if (comma == std::string::npos)
+				comma = tickStr.size();
+			std::string token = tickStr.substr(pos, comma - pos);
+			pos = comma + 1;
+			try {
+				float val = std::stof(token);
+				if (val >= -96.0f && val <= 0.0f)
+					allTicks.push_back(val);
+			} catch (...) {
+			}
+		}
+	}
+
+	/* Deduplicate and cap at 20 unique entries */
+	std::sort(allTicks.begin(), allTicks.end());
+	allTicks.erase(std::unique(allTicks.begin(), allTicks.end()), allTicks.end());
+	if (allTicks.size() > 20)
+		allTicks.resize(20);
+
+	if (allTicks.empty())
+		return;
+
+	/* Create one text source per unique dB value */
+	for (float db : allTicks) {
+		int dbTenths = (int)(db * 10.0f + (db < 0 ? -0.5f : 0.5f));
+
+		/* Format label text: integer if whole, one decimal otherwise */
+		char buf[16];
+		if (db == (int)db)
+			snprintf(buf, sizeof(buf), "%d", (int)db);
+		else
+			snprintf(buf, sizeof(buf), "%.1f", db);
+
+		std::string srcName = "adv_mv_scale_" + uuid_ + "_" + std::to_string(dbTenths);
+
+#ifdef _WIN32
+		obs_data_t *fontObj = obs_data_create();
+		obs_data_set_int(fontObj, "size", 24);
+		obs_data_set_string(fontObj, "face", "Arial");
+		obs_data_set_int(fontObj, "flags", 0);
+
+		obs_data_t *settings = obs_data_create();
+		obs_data_set_string(settings, "text", buf);
+		obs_data_set_obj(settings, "font", fontObj);
+		obs_data_set_int(settings, "color", 0xFFFFFFFF);
+		obs_data_set_int(settings, "opacity", 100);
+		obs_data_set_bool(settings, "outline", false);
+
+		obs_source_t *src = obs_source_create_private("text_gdiplus", srcName.c_str(), settings);
+		obs_data_release(settings);
+		obs_data_release(fontObj);
+#else
+		obs_data_t *fontObj = obs_data_create();
+		obs_data_set_int(fontObj, "size", 24);
+#ifdef __APPLE__
+		obs_data_set_string(fontObj, "face", "Helvetica");
+#else
+		obs_data_set_string(fontObj, "face", "Monospace");
+#endif
+		obs_data_set_int(fontObj, "flags", 0);
+
+		obs_data_t *settings = obs_data_create();
+		obs_data_set_string(settings, "text", buf);
+		obs_data_set_obj(settings, "font", fontObj);
+		obs_data_set_int(settings, "color1", 0xFFFFFFFF);
+		obs_data_set_int(settings, "color2", 0xFFFFFFFF);
+		obs_data_set_bool(settings, "outline", false);
+		obs_data_set_bool(settings, "drop_shadow", false);
+
+		obs_source_t *src = obs_source_create_private("text_ft2_source_v2", srcName.c_str(), settings);
+		obs_data_release(settings);
+		obs_data_release(fontObj);
+#endif
+
+		if (src) {
+			ScaleLabelEntry entry;
+			entry.dbTenths = dbTenths;
+			entry.source = src;
+			entry.width = obs_source_get_width(src);
+			entry.height = obs_source_get_height(src);
+			scale_label_cache_.push_back(std::move(entry));
+			obs_source_release(src);
+		}
+	}
+}
+
+/* ---- VU Meter ---- */
+
+void MultiviewWindow::volmeter_callback(void *data, const float magnitude[MAX_AUDIO_CHANNELS],
+					const float peak[MAX_AUDIO_CHANNELS], const float inputPeak[MAX_AUDIO_CHANNELS])
+{
+	UNUSED_PARAMETER(inputPeak);
+	auto *sv = static_cast<SingleVolmeter *>(data);
+	for (int i = 0; i < MAX_AUDIO_CHANNELS; i++) {
+		sv->magnitude[i] = magnitude[i];
+		sv->peak[i] = peak[i];
+	}
+	sv->last_callback_ns = os_gettime_ns();
+}
+
+/* "mute" signal handler. Fires on Mixer mute toggle (user_muted, set via
+ * obs_source_set_muted). Note: this does NOT include PTT/PTM transient mute
+ * (push_to_mute_enabled), which OBS handles by zeroing volmeter audio buffers
+ * before the volmeter callback. UI mute on the other hand leaves the volmeter
+ * data unchanged, so we must zero the display ourselves to keep WYSIWYG with
+ * what audience hears. */
+void MultiviewWindow::source_mute_callback(void *data, calldata_t *cd)
+{
+	auto *sv = static_cast<SingleVolmeter *>(data);
+	bool muted = calldata_bool(cd, "muted");
+	sv->user_muted.store(muted, std::memory_order_relaxed);
+}
+
+/* "audio_mixers" signal handler. Fires when a source's enabled mixer track
+ * bitmask changes. Since this affects which sources are visible (sources with
+ * audio_mixers & active_track_bit == 0 are excluded), request a deferred
+ * rebuild — actual rebuild happens on the next render frame via
+ * check_active_track_change() to coalesce bursts and stay on the render thread. */
+void MultiviewWindow::source_audio_mixers_callback(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(cd);
+	auto *self = static_cast<MultiviewWindow *>(data);
+	self->volmeters_rebuild_requested_.store(true, std::memory_order_release);
+}
+
+/* Compute the active mixer track bit based on VuMeterSettings.
+ *
+ * For VuMeterTrackMode::Manual: bit = 1 << (manualTrackIndex - 1).
+ * For VuMeterTrackMode::AutoFollowStreaming: read OBS streaming output's
+ *   mixer mask and pick the first set bit (single-track semantics per design).
+ *
+ * Reads the instance-level VuMeterSettings from the config. Note: cell-level
+ * override of trackMode is deferred to M2.6; v1 uses one bit for the whole
+ * window so all cells share the same "what audience hears" semantics.
+ *
+ * Fallback chain when AutoFollow can't resolve a mask:
+ *   streaming output missing OR mixers == 0 → Track 1 (bit 0).
+ * Per OBS UI invariant, Settings → Output → Streaming Audio Track requires
+ * at least 1 of 6 selected, so mixers == 0 should be unreachable in practice. */
+uint32_t MultiviewWindow::compute_active_track_bit()
+{
+	MultiviewInstance *inst = config_ ? config_->find_instance(uuid_) : nullptr;
+
+	/* Read instance-level VuMeterSettings directly. Track selection is a
+	 * window-wide knob in v1 (per-cell trackMode override is deferred);
+	 * resolving the full effective settings would only end up reading these
+	 * same two fields from the instance layer. */
+	VuMeterSettings vm;
+	if (inst)
+		vm = inst->visualSettings.vuMeter;
+
+	if (vm.trackMode == VuMeterTrackMode::Manual) {
+		int idx = vm.manualTrackIndex;
+		if (idx < 1)
+			idx = 1;
+		if (idx > 6)
+			idx = 6;
+		return 1u << (idx - 1);
+	}
+
+	/* AutoFollow: query streaming output mixer mask.
+	 * obs_frontend_get_streaming_output() returns +1 ref; release after use. */
+	obs_output_t *so = obs_frontend_get_streaming_output();
+	uint32_t mask = 0;
+	if (so) {
+		mask = (uint32_t)obs_output_get_mixers(so);
+		obs_output_release(so);
+	}
+	if (mask == 0)
+		return 0x1; /* Track 1 fallback */
+	/* Lowest set bit only (single track semantics) */
+	return mask & (~mask + 1);
+}
+
+/* Helper: collect all audio sources within a scene into a vector.
+ *
+ * Recursively descends into:
+ *   - Groups (via obs_sceneitem_group_enum_items)
+ *   - Nested scenes (Scene sources whose underlying source IS a scene)
+ *
+ * Skips invisible sceneitems (OBS mutes audio when sceneitem is hidden).
+ * Dedupes by source pointer so that the same source referenced from multiple
+ * places in the tree is only attached once per cell.
+ *
+ * Filters out sources whose audio_mixers bitmask does not intersect
+ * track_bit. This implements "what audience hears" semantics — sources that
+ * don't route to the active streaming track contribute 0 to PGM, so they're
+ * excluded from the multiview VU meter.
+ *
+ * MAX_DEPTH guards against pathological nesting (OBS prevents true cycles
+ * at scene-link time, but defense in depth is cheap).
+ */
+struct AudioCollectCtx {
+	std::vector<obs_source_t *> sources;
+	uint32_t track_bit = 0xFFFFFFFF; /* default: no filtering */
+	int depth = 0;
+	bool depth_exceeded = false; /* set when MAX_DEPTH was reached at least once */
+	static constexpr int MAX_DEPTH = 8;
+};
+
+static bool collect_audio_sources_cb(obs_scene_t *, obs_sceneitem_t *item, void *param)
+{
+	if (!obs_sceneitem_visible(item))
+		return true;
+	obs_source_t *itemSrc = obs_sceneitem_get_source(item);
+	if (!itemSrc)
+		return true;
+
+	auto *ctx = static_cast<AudioCollectCtx *>(param);
+	if (ctx->depth >= AudioCollectCtx::MAX_DEPTH) {
+		ctx->depth_exceeded = true;
+		return true;
+	}
+
+	/* Recurse into groups: groups themselves do not produce audio,
+	 * their child items do. */
+	if (obs_sceneitem_is_group(item)) {
+		ctx->depth++;
+		obs_sceneitem_group_enum_items(item, collect_audio_sources_cb, ctx);
+		ctx->depth--;
+		return true;
+	}
+
+	/* Recurse into nested scene sources: scene sources do not directly
+	 * produce audio (OBS_SOURCE_AUDIO flag is on their inner items). */
+	obs_scene_t *nested = obs_scene_from_source(itemSrc);
+	if (nested) {
+		ctx->depth++;
+		obs_scene_enum_items(nested, collect_audio_sources_cb, ctx);
+		ctx->depth--;
+		return true;
+	}
+
+	uint32_t flags = obs_source_get_output_flags(itemSrc);
+	if (flags & OBS_SOURCE_AUDIO) {
+		/* Track filter: skip sources that don't route to the active streaming
+		 * mixer track. obs_source_get_audio_mixers returns a 6-bit mask;
+		 * bit i = Track (i+1). Result 0 means "not in any track" which OBS
+		 * uses for sources fed exclusively into spectrum-analyzer style filters. */
+		uint32_t am = obs_source_get_audio_mixers(itemSrc);
+		if ((am & ctx->track_bit) == 0)
+			return true;
+		/* Dedup: same source can legitimately appear multiple times
+		 * across nested scenes; we only want one volmeter per source. */
+		for (auto *existing : ctx->sources) {
+			if (existing == itemSrc)
+				return true;
+		}
+		ctx->sources.push_back(obs_source_get_ref(itemSrc));
+	}
+	return true; /* continue enumeration */
+}
+
+/* Collect audio-producing sources reachable from `src` (a scene, group, or
+ * audio-bearing source). Track filtering applied via `track_bit`. Returns
+ * true if recursion hit MAX_DEPTH at any point — the caller is expected to
+ * log a context-rich warning (instance + cell), since logging here would
+ * lose the cell index and would fire repeatedly under 1 Hz polling. */
+static bool collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *> &out, uint32_t track_bit)
+{
+	if (!src)
+		return false;
+
+	uint32_t flags = obs_source_get_output_flags(src);
+	if (flags & OBS_SOURCE_AUDIO) {
+		/* Source itself produces audio (e.g. media source assigned
+		 * directly to a cell). Apply track filter consistently. */
+		uint32_t am = obs_source_get_audio_mixers(src);
+		if ((am & track_bit) == 0)
+			return false;
+		out.push_back(obs_source_get_ref(src));
+		return false;
+	}
+
+	/* Interpret as scene or group and collect audio sources inside. */
+	obs_scene_t *scene = obs_scene_from_source(src);
+	if (!scene)
+		scene = obs_group_from_source(src);
+	if (!scene)
+		return false;
+
+	AudioCollectCtx ctx;
+	ctx.track_bit = track_bit;
+	obs_scene_enum_items(scene, collect_audio_sources_cb, &ctx);
+	for (auto *s : ctx.sources)
+		out.push_back(s);
+	return ctx.depth_exceeded;
+}
+
+void MultiviewWindow::rebuild_volmeters()
+{
+	release_volmeters();
+
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	/* Refresh the active track bit before collecting sources so that
+	 * track-filtered enumeration uses the up-to-date mask. */
+	current_track_bit_ = compute_active_track_bit();
+
+	size_t count = cell_sources_.size();
+	cell_volmeters_.resize(count, nullptr);
+
+	has_pgm_cell_ = false;
+	has_prvw_cell_ = false;
+
+	/* Aggregate counters and per-cell breakdown for a single summary log
+	 * line at the end. Per-source LOG_INFO would spam the OBS log under
+	 * the 1Hz active-source polling, especially on dense grids with
+	 * frequent scene mutations. */
+	int cells_with_meters = 0;
+	int total_attached = 0;
+	std::string cells_breakdown; /* "c0:pgm=2 c2:scene=1 ..." */
+	cells_breakdown.reserve(64);
+
+	/* Cells whose recursive scene walk hit MAX_DEPTH, aggregated so we
+	 * emit a single warning per rebuild rather than one per cell. */
+	std::string depth_warn_cells;
+
+	/* Resolve instance once for log prefix. Falls back gracefully when
+	 * the instance has been deleted but the window is mid-teardown. */
+	MultiviewInstance *log_inst = config_ ? config_->find_instance(uuid_) : nullptr;
+	const std::string &inst_name = log_inst ? log_inst->name : std::string();
+	std::string short_uuid = uuid_.size() > 8 ? uuid_.substr(0, 8) : uuid_;
+
+	for (size_t i = 0; i < count; i++) {
+		const auto &cs = cell_sources_[i];
+		if (cs.type.empty())
+			continue;
+
+		obs_source_t *cellSrc = nullptr;
+		bool isPgm = false;
+
+		if (cs.type == "pgm") {
+			cellSrc = obs_frontend_get_current_scene();
+			isPgm = true;
+			has_pgm_cell_ = true;
+		} else if (cs.type == "prvw") {
+			cellSrc = obs_frontend_get_current_preview_scene();
+			if (!cellSrc) {
+				/* Studio Mode disabled: PRVW has no separate scene, so it
+				 * 100% mirrors PGM (matches render() fallback). Treat the
+				 * cell as PGM for VU purposes — also enables the global
+				 * channel 1..5 sweep below. */
+				cellSrc = obs_frontend_get_current_scene();
+				isPgm = (cellSrc != nullptr);
+				if (isPgm)
+					has_pgm_cell_ = true;
+			}
+			has_prvw_cell_ = true;
+		} else {
+			OBSSourceAutoRelease strong = OBSGetStrongRef(cs.weak_ref);
+			if (strong) {
+				cellSrc = obs_source_get_ref(strong);
+			}
+		}
+
+		if (!cellSrc)
+			continue;
+
+		/* Collect all audio sources from the cell's source/scene, filtered
+		 * by the active mixer track bit (per-cell semantics are identical
+		 * in v1: instance-level setting drives all cells uniformly). */
+		std::vector<obs_source_t *> audioSources;
+		bool depth_exceeded = collect_audio_sources(cellSrc, audioSources, current_track_bit_);
+		if (depth_exceeded) {
+			char cellTag[32];
+			snprintf(cellTag, sizeof(cellTag), "%sc%zu", depth_warn_cells.empty() ? "" : ",", i);
+			depth_warn_cells += cellTag;
+		}
+		obs_source_release(cellSrc);
+
+		/* For PGM cells, also include global audio devices (Desktop Audio, Mic/Aux)
+		 * which are always mixed into the program output but not part of any scene.
+		 * OBS exposes audio devices on output channels 1..5 (channel 0 is the
+		 * current scene). Channels 6+ are unused by stock OBS. Apply the same
+		 * track filter so sources with audio_mixers & active_bit == 0 are hidden. */
+		if (isPgm) {
+			for (int ch = 1; ch <= 5; ch++) {
+				obs_source_t *globalSrc = obs_get_output_source(ch);
+				if (!globalSrc)
+					continue;
+				uint32_t am = obs_source_get_audio_mixers(globalSrc);
+				if ((am & current_track_bit_) == 0) {
+					obs_source_release(globalSrc);
+					continue;
+				}
+				/* Avoid duplicates: check if already collected */
+				bool dup = false;
+				for (auto *existing : audioSources) {
+					if (existing == globalSrc) {
+						dup = true;
+						break;
+					}
+				}
+				if (!dup) {
+					audioSources.push_back(globalSrc); /* already has +1 ref */
+				} else {
+					obs_source_release(globalSrc);
+				}
+			}
+		}
+
+		if (audioSources.empty())
+			continue;
+
+		auto *cellVm = new CellVolmeter();
+		cellVm->meters.reserve(audioSources.size());
+
+		for (auto *audioSrc : audioSources) {
+			auto sv = std::make_unique<SingleVolmeter>();
+			for (int c = 0; c < MAX_AUDIO_CHANNELS; c++) {
+				sv->magnitude[c] = VU_SILENCE_DB;
+				sv->peak[c] = VU_SILENCE_DB;
+			}
+			sv->volmeter = obs_volmeter_create(OBS_FADER_LOG);
+			if (!sv->volmeter) {
+				obs_source_release(audioSrc);
+				continue;
+			}
+			const char *name = obs_source_get_name(audioSrc);
+			sv->name = name ? name : "";
+
+			/* Seed initial mute state from current source value; the "mute"
+			 * signal will keep it in sync after connection. */
+			sv->user_muted.store(obs_source_muted(audioSrc), std::memory_order_relaxed);
+			sv->source_weak = OBSGetWeakRef(audioSrc);
+
+			SingleVolmeter *svPtr = sv.get();
+			obs_volmeter_add_callback(svPtr->volmeter, volmeter_callback, svPtr);
+			obs_volmeter_attach_source(svPtr->volmeter, audioSrc);
+			svPtr->channels = obs_volmeter_get_nr_channels(svPtr->volmeter);
+
+			/* Subscribe to per-source signals so we react to:
+			 *   - mute/unmute (UI Mixer toggle)              → zero VU
+			 *   - audio_mixers change (Source > Advanced > Tracks)
+			 *     → schedule rebuild so source enters/leaves visibility */
+			signal_handler_t *sh = obs_source_get_signal_handler(audioSrc);
+			if (sh) {
+				signal_handler_connect(sh, "mute", source_mute_callback, svPtr);
+				signal_handler_connect(sh, "audio_mixers", source_audio_mixers_callback, this);
+			}
+
+			cellVm->meters.push_back(std::move(sv));
+			total_attached++;
+			obs_source_release(audioSrc);
+		}
+
+		if (cellVm->meters.empty()) {
+			delete cellVm;
+			continue;
+		}
+		cell_volmeters_[i] = cellVm;
+		cells_with_meters++;
+
+		/* Append compact per-cell entry to the rebuild summary. cs.type
+		 * is one of "pgm" / "prvw" / "scene" / "source". */
+		char cellEntry[48];
+		snprintf(cellEntry, sizeof(cellEntry), "%sc%zu:%s=%zu", cells_breakdown.empty() ? "" : " ", i,
+			 cs.type.c_str(), cellVm->meters.size());
+		cells_breakdown += cellEntry;
+	}
+
+	/* Drain any rebuild flag set during construction (e.g. by audio_mixers
+	 * signal firing while we were attaching) — we just rebuilt, so it's
+	 * already absorbed. */
+	volmeters_rebuild_requested_.store(false, std::memory_order_relaxed);
+
+	/* Refresh the active-source snapshot used by the polling pathway in
+	 * check_active_track_change(). Recompute (instead of populating from
+	 * the loop above) to ensure it reflects the same dedup+filter logic
+	 * the poll uses, so subsequent equality compares are stable. */
+	collect_active_source_pointers(last_active_sources_, current_track_bit_);
+	/* Reset poll timestamp so the first poll after a rebuild waits the
+	 * full interval (no immediate redundant rebuild). */
+	last_track_poll_ns_ = os_gettime_ns();
+
+	/* Track current PGM/PRVW scenes for change detection */
+	if (has_pgm_cell_) {
+		OBSSourceAutoRelease pgm = obs_frontend_get_current_scene();
+		last_pgm_scene_ = pgm ? OBSGetWeakRef(pgm) : nullptr;
+	}
+	if (has_prvw_cell_) {
+		OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
+		last_prvw_scene_ = prvw ? OBSGetWeakRef(prvw) : nullptr;
+	}
+
+	/* Single summary line — replaces the per-source LOG_INFO that used to
+	 * fire inside the attach loop. With 1Hz active-source polling triggering
+	 * rebuilds on any scene-tree mutation, per-source logs flooded the OBS
+	 * log; one line per rebuild is sufficient for diagnostics. The instance
+	 * prefix `[name(uuid8)]` lets logs stay readable when several Multiview
+	 * windows are open simultaneously. */
+	obs_log(LOG_INFO, "[%s(%s)] VU meters rebuilt: cells=%d sources=%d track_bit=0x%x%s%s",
+		inst_name.empty() ? "?" : inst_name.c_str(), short_uuid.empty() ? "?" : short_uuid.c_str(),
+		cells_with_meters, total_attached, current_track_bit_, cells_breakdown.empty() ? "" : " | ",
+		cells_breakdown.c_str());
+
+	/* Aggregated MAX_DEPTH warning (one line per rebuild listing every
+	 * affected cell) — keeps signal-to-noise high when a deeply nested
+	 * scene appears in many cells of the same window. */
+	if (!depth_warn_cells.empty()) {
+		obs_log(LOG_WARNING,
+			"[%s(%s)] VU meter scene walk hit MAX_DEPTH=%d in cells [%s]; some nested sources may be skipped",
+			inst_name.empty() ? "?" : inst_name.c_str(), short_uuid.empty() ? "?" : short_uuid.c_str(),
+			AudioCollectCtx::MAX_DEPTH, depth_warn_cells.c_str());
+	}
+}
+
+void MultiviewWindow::check_scene_change_for_volmeters()
+{
+	bool needRebuild = false;
+
+	if (has_pgm_cell_) {
+		OBSSourceAutoRelease pgm = obs_frontend_get_current_scene();
+		OBSWeakSource currentWeak = pgm ? OBSGetWeakRef(pgm) : nullptr;
+		if (currentWeak != last_pgm_scene_)
+			needRebuild = true;
+	}
+	if (!needRebuild && has_prvw_cell_) {
+		OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
+		OBSWeakSource currentWeak = prvw ? OBSGetWeakRef(prvw) : nullptr;
+		if (currentWeak != last_prvw_scene_)
+			needRebuild = true;
+	}
+
+	if (needRebuild)
+		rebuild_volmeters();
+}
+
+/* Combined poll + deferred-rebuild handler called once per render frame.
+ *
+ * Triggers (in priority order):
+ *   1. volmeters_rebuild_requested_ flag set by source_audio_mixers_callback
+ *      from any thread (signal fires when a source's Track 1..6 checkboxes
+ *      change). We absorb the flag and rebuild on the render thread.
+ *      NOTE: this signal only fires for sources we already attached. Sources
+ *      that were filtered out (audio_mixers & active_bit == 0) have no
+ *      subscriber, so the polling pathway below is required for them.
+ *   2. ~1Hz polling of the active source pointer set. Catches:
+ *        - newly-visible sources (Mic just got Track 1 ticked)
+ *        - newly-added sceneitems (added a nested scene with audio)
+ *        - newly-removed sceneitems
+ *        - scene tree edits anywhere in the recursion path
+ *      Cheap: O(N_audio_sources) tree walk, no allocations beyond the
+ *      candidate vector, no signal subscriptions to manage.
+ *   3. AutoFollow streaming-track mask change (Settings → Output → Streaming
+ *      Audio Track has no event), checked alongside the source set poll. */
+void MultiviewWindow::check_active_track_change()
+{
+	if (volmeters_rebuild_requested_.exchange(false, std::memory_order_acquire)) {
+		rebuild_volmeters();
+		return; /* rebuild already refreshed current_track_bit_ + last_active_sources_ */
+	}
+
+	uint64_t now = os_gettime_ns();
+	const uint64_t POLL_INTERVAL_NS = 1000000000ULL; /* 1 second */
+	if (last_track_poll_ns_ != 0 && (now - last_track_poll_ns_) < POLL_INTERVAL_NS)
+		return;
+	last_track_poll_ns_ = now;
+
+	uint32_t newBit = compute_active_track_bit();
+	if (newBit != current_track_bit_) {
+		rebuild_volmeters();
+		return;
+	}
+
+	/* Compare the currently-eligible source set against the snapshot from
+	 * the last rebuild. Any difference (gained/lost source) means a rebuild
+	 * is needed. This is the catch-all for cases where signal-based
+	 * notification is missing (Mic gaining Track 1 from outside, scene
+	 * tree edits, etc.). */
+	std::vector<void *> currentActive;
+	collect_active_source_pointers(currentActive, newBit);
+	if (currentActive != last_active_sources_)
+		rebuild_volmeters();
+}
+
+/* Enumerate the set of audio source pointers that *would* be attached if we
+ * rebuilt right now, given the active track bit. Identity-only — does not
+ * retain references; we acquire/release internally to keep parity with
+ * collect_audio_sources(). Result vector is sorted+deduped for set compare.
+ *
+ * Called from:
+ *   - rebuild_volmeters() to record the snapshot used by polling
+ *   - check_active_track_change() to compare against that snapshot
+ */
+void MultiviewWindow::collect_active_source_pointers(std::vector<void *> &out, uint32_t track_bit)
+{
+	out.clear();
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	for (size_t i = 0; i < cell_sources_.size(); i++) {
+		const auto &cs = cell_sources_[i];
+		if (cs.type.empty())
+			continue;
+
+		obs_source_t *cellSrc = nullptr;
+		bool isPgm = false;
+		if (cs.type == "pgm") {
+			cellSrc = obs_frontend_get_current_scene();
+			isPgm = true;
+		} else if (cs.type == "prvw") {
+			cellSrc = obs_frontend_get_current_preview_scene();
+			if (!cellSrc) {
+				/* Studio Mode off: PRVW mirrors PGM. Match rebuild path so
+				 * the polling-based set comparison stays consistent across
+				 * studio-mode toggles. */
+				cellSrc = obs_frontend_get_current_scene();
+				isPgm = (cellSrc != nullptr);
+			}
+		} else {
+			OBSSourceAutoRelease strong = OBSGetStrongRef(cs.weak_ref);
+			if (strong)
+				cellSrc = obs_source_get_ref(strong);
+		}
+		if (!cellSrc)
+			continue;
+
+		std::vector<obs_source_t *> srcs;
+		collect_audio_sources(cellSrc, srcs, track_bit);
+		obs_source_release(cellSrc);
+
+		/* PGM-only global devices (channel 1..5), filtered by track. */
+		if (isPgm) {
+			for (int ch = 1; ch <= 5; ch++) {
+				obs_source_t *g = obs_get_output_source(ch);
+				if (!g)
+					continue;
+				uint32_t am = obs_source_get_audio_mixers(g);
+				if ((am & track_bit) != 0) {
+					/* Dedup against scene-collected sources by pointer. */
+					bool dup = false;
+					for (auto *existing : srcs) {
+						if (existing == g) {
+							dup = true;
+							break;
+						}
+					}
+					if (!dup)
+						out.push_back(g);
+				}
+				obs_source_release(g);
+			}
+		}
+
+		for (auto *s : srcs) {
+			out.push_back(s);
+			obs_source_release(s); /* identity-only, drop the +1 ref */
+		}
+	}
+
+	std::sort(out.begin(), out.end());
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+void MultiviewWindow::release_volmeters()
+{
+	/* Protect cell_volmeters_ vector against concurrent read from
+	 * the render thread (render_vu_meter()). source_mutex_ is recursive
+	 * so callers that already hold it (e.g. rebuild_volmeters() from
+	 * within render()) are unaffected. */
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+	for (auto *cellVm : cell_volmeters_) {
+		if (!cellVm)
+			continue;
+		for (auto &sv : cellVm->meters) {
+			if (!sv)
+				continue;
+			/* Disconnect per-source signal handlers BEFORE destroying
+			 * the volmeter so the callbacks can no longer fire on the
+			 * about-to-be-freed SingleVolmeter / window pointer.
+			 *
+			 * If OBSGetStrongRef returns null the source has already
+			 * been destroyed, in which case its signal_handler_t was
+			 * destroyed with it — handlers cannot fire, so skipping
+			 * disconnect is safe by construction. */
+			OBSSourceAutoRelease src = OBSGetStrongRef(sv->source_weak);
+			if (src) {
+				signal_handler_t *sh = obs_source_get_signal_handler(src);
+				if (sh) {
+					signal_handler_disconnect(sh, "mute", source_mute_callback, sv.get());
+					signal_handler_disconnect(sh, "audio_mixers", source_audio_mixers_callback,
+								  this);
+				}
+			}
+			if (sv->volmeter) {
+				obs_volmeter_remove_callback(sv->volmeter, volmeter_callback, sv.get());
+				obs_volmeter_detach_source(sv->volmeter);
+				obs_volmeter_destroy(sv->volmeter);
+			}
+		}
+		delete cellVm;
+	}
+	cell_volmeters_.clear();
+}
+
+void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY, int sigX, int sigY,
+				      int sigW, int sigH)
+{
+	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())
+		return;
+
+	const VuMeterSettings &vmSettings = effective_visuals_[cellIndex].vuMeter;
+	if (!vmSettings.enabled || vmSettings.opacity <= 0.0)
+		return;
+
+	if (cellIndex >= (int)cell_volmeters_.size() || !cell_volmeters_[cellIndex])
+		return;
+
+	CellVolmeter *cellVm = cell_volmeters_[cellIndex];
+
+	/* Compute max peak across all audio sources in this cell.
+	 * If a source's callback hasn't fired in 200ms, treat it as silent
+	 * (source may have become inactive after a scene switch). */
+	uint64_t now = os_gettime_ns();
+	const uint64_t STALE_THRESHOLD_NS = 200000000ULL; /* 200ms */
+
+	float peakMax = VU_SILENCE_DB;
+	for (auto &sv : cellVm->meters) {
+		if (!sv)
+			continue;
+		/* User muted via Mixer: contribute zero to PGM → zero to VU.
+		 * volmeter callback keeps streaming raw post-fader peak even when
+		 * UI-muted (only PTT/PTM auto-mute zeroes it inside OBS), so we
+		 * enforce WYSIWYG here. */
+		if (sv->user_muted.load(std::memory_order_relaxed))
+			continue;
+		/* Check if this meter's data is stale */
+		if (sv->last_callback_ns == 0 || (now - sv->last_callback_ns) > STALE_THRESHOLD_NS)
+			continue;
+
+		int ch = sv->channels > 0 ? sv->channels : 2;
+		for (int c = 0; c < ch && c < MAX_AUDIO_CHANNELS; c++) {
+			float p = sv->peak[c];
+			if (std::isfinite(p) && p > peakMax)
+				peakMax = p;
+		}
+	}
+
+	/* Apply ballistics: immediate attack, gradual decay
+	 * Decay rates (matching OBS): Fast=23.5, Medium=11.76, Slow=8.57 dB/s */
+	float decayRate;
+	switch (vmSettings.decayRate) {
+	case VuMeterDecayRate::Medium:
+		decayRate = 11.76f;
+		break;
+	case VuMeterDecayRate::Slow:
+		decayRate = 8.57f;
+		break;
+	default:
+		decayRate = 23.5f;
+		break;
+	}
+
+	if (cellVm->last_render_ns > 0) {
+		double deltaS = (double)(now - cellVm->last_render_ns) * 1e-9;
+		if (deltaS > 0.0 && deltaS < 1.0) {
+			if (peakMax >= cellVm->displayPeak) {
+				cellVm->displayPeak = peakMax;
+			} else {
+				cellVm->displayPeak -= decayRate * (float)deltaS;
+				if (cellVm->displayPeak < peakMax)
+					cellVm->displayPeak = peakMax;
+			}
+		} else {
+			cellVm->displayPeak = peakMax;
+		}
+	} else {
+		cellVm->displayPeak = peakMax;
+	}
+	cellVm->last_render_ns = now;
+
+	/* Clamp and normalize: -60 dB .. 0 dB -> 0.0 .. 1.0 */
+	const float minDB = -60.0f;
+	const float maxDB = 0.0f;
+
+	/* ---- Peak Hold ballistic ---- */
+	float holdLevel = 0.0f;
+	if (vmSettings.peakHoldEnabled) {
+		if (peakMax > cellVm->holdPeak) {
+			cellVm->holdPeak = peakMax;
+			cellVm->holdSetAtNs = now;
+		} else if (cellVm->holdSetAtNs > 0) {
+			uint64_t holdNs = (uint64_t)vmSettings.peakHoldMs * 1000000ULL;
+			if (now - cellVm->holdSetAtNs > holdNs) {
+				double elapsedSinceHold = (double)(now - cellVm->holdSetAtNs - holdNs) * 1e-9;
+				cellVm->holdPeak -= (float)(vmSettings.peakHoldDecayDbPerSec * elapsedSinceHold);
+				if (cellVm->holdPeak < VU_SILENCE_DB)
+					cellVm->holdPeak = VU_SILENCE_DB;
+				if (cellVm->holdPeak < peakMax) {
+					cellVm->holdPeak = peakMax;
+					cellVm->holdSetAtNs = now;
+				}
+			}
+		}
+		float hp = cellVm->holdPeak;
+		if (hp < minDB)
+			hp = minDB;
+		if (hp > maxDB)
+			hp = maxDB;
+		holdLevel = (hp - minDB) / (maxDB - minDB);
+	}
+
+	float smoothedPeak = cellVm->displayPeak;
+	if (smoothedPeak < minDB)
+		smoothedPeak = minDB;
+	if (smoothedPeak > maxDB)
+		smoothedPeak = maxDB;
+	float level = (smoothedPeak - minDB) / (maxDB - minDB);
+
+	/* Determine bar geometry based on position and anchor mode.
+	 * Computed before the early-return so that scale ticks can always render. */
+	int barW = vmSettings.width;
+	int anchorX, anchorY, anchorW, anchorH;
+
+	if (vmSettings.anchor == VuMeterAnchorMode::Signal) {
+		/* Signal mode: render within the signal/video rect */
+		anchorX = sigX;
+		anchorY = sigY;
+		anchorW = sigW;
+		anchorH = sigH;
+	} else {
+		/* Cell mode: render within the full cell rect */
+		anchorX = vpX + cell.x;
+		anchorY = vpY + cell.y;
+		anchorW = cell.w;
+		anchorH = cell.h;
+	}
+
+	/* Color zones using custom dB thresholds:
+	 * warningDB and errorDB normalized to 0..1 range on the -60..0 dB scale */
+	float warningNorm = (float)(vmSettings.warningDB - minDB) / (maxDB - minDB);
+	float errorNorm = (float)(vmSettings.errorDB - minDB) / (maxDB - minDB);
+	if (warningNorm < 0.0f)
+		warningNorm = 0.0f;
+	if (warningNorm > 1.0f)
+		warningNorm = 1.0f;
+	if (errorNorm < warningNorm)
+		errorNorm = warningNorm;
+	if (errorNorm > 1.0f)
+		errorNorm = 1.0f;
+
+	/* Colors in ARGB format */
+	uint32_t alpha = (uint32_t)(vmSettings.opacity * 255.0 + 0.5);
+	if (alpha > 255)
+		alpha = 255;
+	uint32_t greenColor = (alpha << 24) | 0x0026A826;  /* green */
+	uint32_t yellowColor = (alpha << 24) | 0x00D4D416; /* yellow */
+	uint32_t redColor = (alpha << 24) | 0x00D41616;    /* red */
+
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+
+	/* Draw up to 3 segments: green, yellow, red (as needed based on level) */
+	struct Segment {
+		float start; /* normalized 0..1 */
+		float end;
+		uint32_t color;
+	};
+	Segment segments[3] = {
+		{0.0f, warningNorm, greenColor},
+		{warningNorm, errorNorm, yellowColor},
+		{errorNorm, 1.0f, redColor},
+	};
+
+	bool isHorizontal =
+		(vmSettings.position == VuMeterPosition::Bottom || vmSettings.position == VuMeterPosition::Top);
+
+	/* Apply length ratio and alignment */
+	int barFullLen;
+	int barX, barY;
+	if (isHorizontal) {
+		barFullLen = (int)(anchorW * vmSettings.lengthRatio + 0.5);
+		int offset;
+		if (vmSettings.alignment == VuMeterAlignment::Start) {
+			offset = 0; /* anchor at -∞ end (left for horizontal) */
+		} else {
+			offset = (anchorW - barFullLen) / 2; /* center */
+		}
+		barX = anchorX + offset;
+		barY = (vmSettings.position == VuMeterPosition::Top) ? anchorY : anchorY + anchorH - barW;
+	} else {
+		barFullLen = (int)(anchorH * vmSettings.lengthRatio + 0.5);
+		int offset;
+		if (vmSettings.alignment == VuMeterAlignment::Start) {
+			offset = anchorH - barFullLen; /* anchor at -∞ end (bottom for vertical) */
+		} else {
+			offset = (anchorH - barFullLen) / 2; /* center */
+		}
+		barY = anchorY + offset;
+		barX = (vmSettings.position == VuMeterPosition::Left) ? anchorX : anchorX + anchorW - barW;
+	}
+
+	if (barFullLen <= 0) {
+		gs_blend_state_pop();
+		return;
+	}
+
+	/* Only draw bar segments and peak hold when there is actual signal.
+	 * Scale ticks/labels always render (below this block). */
+	if (level > 0.0f || holdLevel > 0.0f) {
+
+		for (int s = 0; s < 3; s++) {
+			float segStart = segments[s].start;
+			float segEnd = segments[s].end;
+
+			/* Clip segment to actual level */
+			if (level <= segStart)
+				break;
+			float drawEnd = (level < segEnd) ? level : segEnd;
+
+			int pixStart = (int)(segStart * (float)barFullLen + 0.5f);
+			int pixEnd = (int)(drawEnd * (float)barFullLen + 0.5f);
+			int pixLen = pixEnd - pixStart;
+			if (pixLen <= 0)
+				continue;
+
+			gs_effect_set_color(colorParam, segments[s].color);
+
+			if (isHorizontal) {
+				int drawX;
+				if (vmSettings.flip) {
+					/* Flip: 0dB on left, -∞ on right */
+					drawX = barX + barFullLen - pixEnd;
+				} else {
+					/* Normal: -∞ on left, 0dB on right */
+					drawX = barX + pixStart;
+				}
+				startRegion(drawX, barY, pixLen, barW, 0.0f, (float)pixLen, 0.0f, (float)barW);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, pixLen, barW);
+				endRegion();
+			} else {
+				int drawY;
+				if (vmSettings.flip) {
+					/* Flip: 0dB on top, -∞ on bottom */
+					drawY = barY + pixStart;
+				} else {
+					/* Normal: -∞ on top (bottom-up), 0dB at bottom */
+					drawY = barY + barFullLen - pixEnd;
+				}
+				startRegion(barX, drawY, barW, pixLen, 0.0f, (float)barW, 0.0f, (float)pixLen);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, barW, pixLen);
+				endRegion();
+			}
+		}
+
+		/* ---- Peak Hold marker ---- */
+		if (vmSettings.peakHoldEnabled && holdLevel > 0.0f) {
+			int holdWidthPx = vmSettings.peakHoldWidthPx;
+			int holdPos = (int)(holdLevel * (float)barFullLen + 0.5f);
+			if (holdPos > barFullLen)
+				holdPos = barFullLen;
+
+			/* Determine color from dB zone */
+			uint32_t holdColor;
+			if (holdLevel >= errorNorm)
+				holdColor = redColor;
+			else if (holdLevel >= warningNorm)
+				holdColor = yellowColor;
+			else
+				holdColor = greenColor;
+
+			gs_effect_set_color(colorParam, holdColor);
+
+			if (isHorizontal) {
+				int hx;
+				if (vmSettings.flip)
+					hx = barX + barFullLen - holdPos;
+				else
+					hx = barX + holdPos - holdWidthPx;
+				if (hx < barX)
+					hx = barX;
+				startRegion(hx, barY, holdWidthPx, barW, 0.0f, (float)holdWidthPx, 0.0f, (float)barW);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, holdWidthPx, barW);
+				endRegion();
+			} else {
+				int hy;
+				if (vmSettings.flip)
+					hy = barY + holdPos - holdWidthPx;
+				else
+					hy = barY + barFullLen - holdPos;
+				if (hy < barY)
+					hy = barY;
+				startRegion(barX, hy, barW, holdWidthPx, 0.0f, (float)barW, 0.0f, (float)holdWidthPx);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, barW, holdWidthPx);
+				endRegion();
+			}
+		}
+
+	} /* end if (level > 0 || holdLevel > 0) — bar + peak hold only */
+
+	/* ---- dB Scale ticks ---- */
+	if (vmSettings.scaleEnabled) {
+		/* Parse scale ticks from CSV string, fallback to default set */
+		std::vector<float> ticks;
+		std::string tickStr = vmSettings.scaleTicks;
+		if (tickStr.empty())
+			tickStr = "-60,-40,-20,-9,0";
+
+		/* Simple CSV parse (cap at 20 ticks to prevent pathological configs) */
+		{
+			size_t pos = 0;
+			while (pos < tickStr.size() && ticks.size() < 20) {
+				size_t comma = tickStr.find(',', pos);
+				if (comma == std::string::npos)
+					comma = tickStr.size();
+				std::string token = tickStr.substr(pos, comma - pos);
+				pos = comma + 1;
+				try {
+					float val = std::stof(token);
+					if (val >= -96.0f && val <= 0.0f)
+						ticks.push_back(val);
+				} catch (...) {
+					/* skip invalid tokens */
+				}
+			}
+			if (ticks.empty()) {
+				ticks = {-60.0f, -40.0f, -20.0f, -9.0f, 0.0f};
+			}
+		}
+
+		/* Scale tick geometry: tick length matches full bar width */
+		int tickLen = barW;
+		if (tickLen < 2)
+			tickLen = 2;
+
+		/* Determine which side to draw ticks on.
+		 * Auto: opposite side of the bar (away from cell edge).
+		 * Same: overlapping the bar itself.
+		 * Opposite: explicitly on the non-bar side. */
+		bool tickOnBarSide = (vmSettings.scaleSide == VuMeterScaleSide::Same);
+		/* For Auto / Opposite: tick on the opposite side of the bar's edge */
+
+		/* Scale ticks and labels always render at full alpha so they remain
+		 * visible when drawn on top of the VU bar (Same side mode). */
+		uint32_t tickColor = (vmSettings.scaleColor & 0x00FFFFFF) | 0xFF000000;
+
+		gs_effect_set_color(colorParam, tickColor);
+
+		for (float tickDB : ticks) {
+			float tickNorm = (tickDB - minDB) / (maxDB - minDB);
+			if (tickNorm < 0.0f || tickNorm > 1.0f)
+				continue;
+			int tickPos = (int)(tickNorm * (float)barFullLen + 0.5f);
+
+			int tickDrawX = 0, tickDrawY = 0;
+
+			if (isHorizontal) {
+				int tx;
+				if (vmSettings.flip)
+					tx = barX + barFullLen - tickPos;
+				else
+					tx = barX + tickPos;
+				int ty;
+				if (vmSettings.position == VuMeterPosition::Top) {
+					ty = tickOnBarSide ? barY : barY + barW;
+				} else {
+					ty = tickOnBarSide ? barY + barW - tickLen : barY - tickLen;
+				}
+				if (ty < 0)
+					ty = 0;
+				tickDrawX = tx;
+				tickDrawY = ty;
+				startRegion(tx, ty, 1, tickLen, 0.0f, 1.0f, 0.0f, (float)tickLen);
+				gs_effect_set_color(colorParam, tickColor);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, 1, tickLen);
+				endRegion();
+			} else {
+				int ty;
+				if (vmSettings.flip)
+					ty = barY + tickPos;
+				else
+					ty = barY + barFullLen - tickPos;
+				int tx;
+				if (vmSettings.position == VuMeterPosition::Left) {
+					tx = tickOnBarSide ? barX : barX + barW;
+				} else {
+					tx = tickOnBarSide ? barX + barW - tickLen : barX - tickLen;
+				}
+				if (tx < 0)
+					tx = 0;
+				tickDrawX = tx;
+				tickDrawY = ty;
+				startRegion(tx, ty, tickLen, 1, 0.0f, (float)tickLen, 0.0f, 1.0f);
+				gs_effect_set_color(colorParam, tickColor);
+				while (gs_effect_loop(solid, "Solid"))
+					gs_draw_sprite(nullptr, 0, tickLen, 1);
+				endRegion();
+			}
+
+			/* ---- Render dB label text ---- */
+			if (vmSettings.scaleShowLabels) {
+				int dbTenths = (int)(tickDB * 10.0f + (tickDB < 0 ? -0.5f : 0.5f));
+				for (auto &entry : scale_label_cache_) {
+					if (entry.dbTenths != dbTenths)
+						continue;
+					if (!entry.source)
+						break;
+					uint32_t tw = obs_source_get_width(entry.source);
+					uint32_t th = obs_source_get_height(entry.source);
+					if (tw == 0 || th == 0)
+						break;
+
+					/* Clamp render size to barW so label never exceeds meter width */
+					int renderW = (int)tw;
+					int renderH = (int)th;
+					if (renderW > barW) {
+						renderH = renderH * barW / renderW;
+						renderW = barW;
+					}
+					if (renderW <= 0 || renderH <= 0)
+						break;
+
+					/* Label always below the tick line (vertical bar: below tick,
+					 * horizontal bar: below tick). Centered on tick position. */
+					int lx, ly;
+					if (isHorizontal) {
+						lx = tickDrawX - renderW / 2;
+						ly = tickDrawY + tickLen + 1;
+					} else {
+						/* For vertical bar: label below the tick line,
+						 * centered horizontally on the tick */
+						lx = tickDrawX + (tickLen - renderW) / 2;
+						ly = tickDrawY + 2;
+					}
+					if (lx < 0)
+						lx = 0;
+					if (ly < 0)
+						ly = 0;
+
+					startRegion(lx, ly, renderW, renderH, 0.0f, (float)tw, 0.0f, (float)th);
+					obs_source_video_render(entry.source);
+					endRegion();
+					break;
+				}
+			}
+		}
+	}
+
+	gs_blend_state_pop();
+}
