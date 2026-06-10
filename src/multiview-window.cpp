@@ -1127,9 +1127,11 @@ void MultiviewWindow::rebuild_scale_label_sources()
 		}
 	}
 
-	/* Deduplicate */
+	/* Deduplicate and cap at 20 unique entries */
 	std::sort(allTicks.begin(), allTicks.end());
 	allTicks.erase(std::unique(allTicks.begin(), allTicks.end()), allTicks.end());
+	if (allTicks.size() > 20)
+		allTicks.resize(20);
 
 	if (allTicks.empty())
 		return;
@@ -2387,11 +2389,13 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		if (peakMax > cellVm->holdPeak) {
 			cellVm->holdPeak = peakMax;
 			cellVm->holdSetAtNs = now;
-		} else {
+		} else if (cellVm->holdSetAtNs > 0) {
 			uint64_t holdNs = (uint64_t)vmSettings.peakHoldMs * 1000000ULL;
 			if (now - cellVm->holdSetAtNs > holdNs) {
 				double elapsedSinceHold = (double)(now - cellVm->holdSetAtNs - holdNs) * 1e-9;
 				cellVm->holdPeak -= (float)(vmSettings.peakHoldDecayDbPerSec * elapsedSinceHold);
+				if (cellVm->holdPeak < VU_SILENCE_DB)
+					cellVm->holdPeak = VU_SILENCE_DB;
 				if (cellVm->holdPeak < peakMax) {
 					cellVm->holdPeak = peakMax;
 					cellVm->holdSetAtNs = now;
@@ -2610,10 +2614,10 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		if (tickStr.empty())
 			tickStr = "-60,-40,-20,-9,0";
 
-		/* Simple CSV parse */
+		/* Simple CSV parse (cap at 20 ticks to prevent pathological configs) */
 		{
 			size_t pos = 0;
-			while (pos < tickStr.size()) {
+			while (pos < tickStr.size() && ticks.size() < 20) {
 				size_t comma = tickStr.find(',', pos);
 				if (comma == std::string::npos)
 					comma = tickStr.size();
@@ -2722,6 +2726,8 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 						renderH = renderH * barW / renderW;
 						renderW = barW;
 					}
+					if (renderW <= 0 || renderH <= 0)
+						break;
 
 					/* Label always below the tick line (vertical bar: below tick,
 					 * horizontal bar: below tick). Centered on tick position. */
