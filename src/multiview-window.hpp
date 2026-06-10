@@ -197,6 +197,8 @@ private:
 		uint64_t last_update_ts = 0;
 		float displayPeak = -200.0f; /* smoothed display value in dB */
 		uint64_t last_render_ns = 0; /* for ballistics time delta */
+		float holdPeak = -200.0f;    /* peak hold value in dB */
+		uint64_t holdSetAtNs = 0;    /* timestamp when holdPeak was last set */
 	};
 	std::vector<CellVolmeter *> cell_volmeters_;
 	/* Active mixer track bit (1 << (track_index - 1)). Recomputed in

@@ -53,6 +53,8 @@ enum class VuMeterAlignment { Start, Center };
  * Manual: user picks a fixed track (1..6) via manualTrackIndex. */
 enum class VuMeterTrackMode { AutoFollowStreaming, Manual };
 
+enum class VuMeterScaleSide { Auto, Same, Opposite };
+
 enum class OverlayFitMode { Fit, Stretch };
 
 enum class OverlayAnchorMode { Cell, Signal };
@@ -124,6 +126,19 @@ struct VuMeterSettings {
 	 * are auto-excluded from the VU meter (they contribute zero audio to PGM). */
 	VuMeterTrackMode trackMode = VuMeterTrackMode::AutoFollowStreaming;
 	int manualTrackIndex = 1; /* 1..6, only used when trackMode == Manual */
+
+	/* Peak Hold — Phase 2.5 polish */
+	bool peakHoldEnabled = true;
+	int peakHoldMs = 1500;                /* 100 ~ 5000 */
+	double peakHoldDecayDbPerSec = 11.76; /* 1.0 ~ 60.0, matches Medium decay */
+	int peakHoldWidthPx = 2;              /* 1 ~ 4 */
+
+	/* dB Scale / Ticks — Phase 2.5 polish */
+	bool scaleEnabled = false;
+	std::string scaleTicks; /* CSV dB values; empty = default "-60,-40,-20,-9,0" */
+	bool scaleShowLabels = true;
+	uint32_t scaleColor = 0x80FFFFFF; /* ARGB half-transparent white */
+	VuMeterScaleSide scaleSide = VuMeterScaleSide::Auto;
 
 	obs_data_t *to_obs_data() const;
 	static VuMeterSettings from_obs_data(obs_data_t *data);

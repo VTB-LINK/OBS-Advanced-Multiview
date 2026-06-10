@@ -253,6 +253,29 @@ static VuMeterTrackMode vu_meter_track_mode_from_str(const char *s)
 	return VuMeterTrackMode::AutoFollowStreaming;
 }
 
+static const char *vu_meter_scale_side_to_str(VuMeterScaleSide side)
+{
+	switch (side) {
+	case VuMeterScaleSide::Same:
+		return "same";
+	case VuMeterScaleSide::Opposite:
+		return "opposite";
+	default:
+		return "auto";
+	}
+}
+
+static VuMeterScaleSide vu_meter_scale_side_from_str(const char *s)
+{
+	if (!s)
+		return VuMeterScaleSide::Auto;
+	if (strcmp(s, "same") == 0)
+		return VuMeterScaleSide::Same;
+	if (strcmp(s, "opposite") == 0)
+		return VuMeterScaleSide::Opposite;
+	return VuMeterScaleSide::Auto;
+}
+
 static const char *vu_meter_style_to_str(VuMeterStyle st)
 {
 	(void)st;
@@ -450,6 +473,17 @@ obs_data_t *VuMeterSettings::to_obs_data() const
 	obs_data_set_string(data, "alignment", vu_meter_alignment_to_str(alignment));
 	obs_data_set_string(data, "trackMode", vu_meter_track_mode_to_str(trackMode));
 	obs_data_set_int(data, "manualTrackIndex", manualTrackIndex);
+	/* Peak Hold */
+	obs_data_set_bool(data, "peakHoldEnabled", peakHoldEnabled);
+	obs_data_set_int(data, "peakHoldMs", peakHoldMs);
+	obs_data_set_double(data, "peakHoldDecayDbPerSec", peakHoldDecayDbPerSec);
+	obs_data_set_int(data, "peakHoldWidthPx", peakHoldWidthPx);
+	/* dB Scale */
+	obs_data_set_bool(data, "scaleEnabled", scaleEnabled);
+	obs_data_set_string(data, "scaleTicks", scaleTicks.c_str());
+	obs_data_set_bool(data, "scaleShowLabels", scaleShowLabels);
+	obs_data_set_int(data, "scaleColor", (long long)scaleColor);
+	obs_data_set_string(data, "scaleSide", vu_meter_scale_side_to_str(scaleSide));
 	return data;
 }
 
@@ -511,6 +545,37 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 		s.manualTrackIndex = 1;
 	if (s.manualTrackIndex > 6)
 		s.manualTrackIndex = 6;
+	/* Peak Hold (optional, safe defaults for old configs) */
+	if (obs_data_has_user_value(data, "peakHoldEnabled"))
+		s.peakHoldEnabled = obs_data_get_bool(data, "peakHoldEnabled");
+	if (obs_data_has_user_value(data, "peakHoldMs"))
+		s.peakHoldMs = (int)obs_data_get_int(data, "peakHoldMs");
+	if (s.peakHoldMs < 100)
+		s.peakHoldMs = 100;
+	if (s.peakHoldMs > 5000)
+		s.peakHoldMs = 5000;
+	if (obs_data_has_user_value(data, "peakHoldDecayDbPerSec"))
+		s.peakHoldDecayDbPerSec = obs_data_get_double(data, "peakHoldDecayDbPerSec");
+	if (s.peakHoldDecayDbPerSec < 1.0)
+		s.peakHoldDecayDbPerSec = 1.0;
+	if (s.peakHoldDecayDbPerSec > 60.0)
+		s.peakHoldDecayDbPerSec = 60.0;
+	if (obs_data_has_user_value(data, "peakHoldWidthPx"))
+		s.peakHoldWidthPx = (int)obs_data_get_int(data, "peakHoldWidthPx");
+	if (s.peakHoldWidthPx < 1)
+		s.peakHoldWidthPx = 1;
+	if (s.peakHoldWidthPx > 4)
+		s.peakHoldWidthPx = 4;
+	/* dB Scale (optional, safe defaults for old configs) */
+	if (obs_data_has_user_value(data, "scaleEnabled"))
+		s.scaleEnabled = obs_data_get_bool(data, "scaleEnabled");
+	if (obs_data_has_user_value(data, "scaleTicks"))
+		s.scaleTicks = obs_data_get_string(data, "scaleTicks");
+	if (obs_data_has_user_value(data, "scaleShowLabels"))
+		s.scaleShowLabels = obs_data_get_bool(data, "scaleShowLabels");
+	if (obs_data_has_user_value(data, "scaleColor"))
+		s.scaleColor = (uint32_t)obs_data_get_int(data, "scaleColor");
+	s.scaleSide = vu_meter_scale_side_from_str(obs_data_get_string(data, "scaleSide"));
 	return s;
 }
 

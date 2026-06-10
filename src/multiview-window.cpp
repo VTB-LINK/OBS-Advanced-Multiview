@@ -2264,18 +2264,43 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	}
 	cellVm->last_render_ns = now;
 
-	float smoothedPeak = cellVm->displayPeak;
-
 	/* Clamp and normalize: -60 dB .. 0 dB -> 0.0 .. 1.0 */
 	const float minDB = -60.0f;
 	const float maxDB = 0.0f;
+
+	/* ---- Peak Hold ballistic ---- */
+	float holdLevel = 0.0f;
+	if (vmSettings.peakHoldEnabled) {
+		if (peakMax > cellVm->holdPeak) {
+			cellVm->holdPeak = peakMax;
+			cellVm->holdSetAtNs = now;
+		} else {
+			uint64_t holdNs = (uint64_t)vmSettings.peakHoldMs * 1000000ULL;
+			if (now - cellVm->holdSetAtNs > holdNs) {
+				double elapsedSinceHold = (double)(now - cellVm->holdSetAtNs - holdNs) * 1e-9;
+				cellVm->holdPeak -= (float)(vmSettings.peakHoldDecayDbPerSec * elapsedSinceHold);
+				if (cellVm->holdPeak < peakMax) {
+					cellVm->holdPeak = peakMax;
+					cellVm->holdSetAtNs = now;
+				}
+			}
+		}
+		float hp = cellVm->holdPeak;
+		if (hp < minDB)
+			hp = minDB;
+		if (hp > maxDB)
+			hp = maxDB;
+		holdLevel = (hp - minDB) / (maxDB - minDB);
+	}
+
+	float smoothedPeak = cellVm->displayPeak;
 	if (smoothedPeak < minDB)
 		smoothedPeak = minDB;
 	if (smoothedPeak > maxDB)
 		smoothedPeak = maxDB;
 	float level = (smoothedPeak - minDB) / (maxDB - minDB);
 
-	if (level <= 0.0f)
+	if (level <= 0.0f && holdLevel <= 0.0f)
 		return;
 
 	/* Determine bar geometry based on position and anchor mode */
@@ -2411,6 +2436,51 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 			startRegion(barX, drawY, barW, pixLen, 0.0f, (float)barW, 0.0f, (float)pixLen);
 			while (gs_effect_loop(solid, "Solid"))
 				gs_draw_sprite(nullptr, 0, barW, pixLen);
+			endRegion();
+		}
+	}
+
+	/* ---- Peak Hold marker ---- */
+	if (vmSettings.peakHoldEnabled && holdLevel > 0.0f) {
+		int holdWidthPx = vmSettings.peakHoldWidthPx;
+		int holdPos = (int)(holdLevel * (float)barFullLen + 0.5f);
+		if (holdPos > barFullLen)
+			holdPos = barFullLen;
+
+		/* Determine color from dB zone */
+		uint32_t holdColor;
+		if (holdLevel >= errorNorm)
+			holdColor = redColor;
+		else if (holdLevel >= warningNorm)
+			holdColor = yellowColor;
+		else
+			holdColor = greenColor;
+
+		gs_effect_set_color(colorParam, holdColor);
+
+		if (isHorizontal) {
+			int hx;
+			if (vmSettings.flip)
+				hx = barX + barFullLen - holdPos;
+			else
+				hx = barX + holdPos - holdWidthPx;
+			if (hx < barX)
+				hx = barX;
+			startRegion(hx, barY, holdWidthPx, barW, 0.0f, (float)holdWidthPx, 0.0f, (float)barW);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, holdWidthPx, barW);
+			endRegion();
+		} else {
+			int hy;
+			if (vmSettings.flip)
+				hy = barY + holdPos - holdWidthPx;
+			else
+				hy = barY + barFullLen - holdPos;
+			if (hy < barY)
+				hy = barY;
+			startRegion(barX, hy, barW, holdWidthPx, 0.0f, (float)barW, 0.0f, (float)holdWidthPx);
+			while (gs_effect_loop(solid, "Solid"))
+				gs_draw_sprite(nullptr, 0, barW, holdWidthPx);
 			endRegion();
 		}
 	}

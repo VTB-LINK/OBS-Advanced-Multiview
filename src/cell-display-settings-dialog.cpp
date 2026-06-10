@@ -620,6 +620,44 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	chk_vu_flip_ = new QCheckBox(grp_vu_meter_);
 	form->addRow(QStringLiteral("Flip:"), chk_vu_flip_);
 
+	/* ---- Peak Hold ---- */
+	chk_vu_peak_hold_ = new QCheckBox(grp_vu_meter_);
+	form->addRow(QStringLiteral("Peak Hold:"), chk_vu_peak_hold_);
+
+	spin_vu_peak_hold_ms_ = new QSpinBox(grp_vu_meter_);
+	spin_vu_peak_hold_ms_->setRange(100, 5000);
+	spin_vu_peak_hold_ms_->setSingleStep(100);
+	spin_vu_peak_hold_ms_->setSuffix(QStringLiteral(" ms"));
+	form->addRow(QStringLiteral("Hold Time:"), spin_vu_peak_hold_ms_);
+
+	spin_vu_peak_hold_decay_ = new QDoubleSpinBox(grp_vu_meter_);
+	spin_vu_peak_hold_decay_->setRange(1.0, 60.0);
+	spin_vu_peak_hold_decay_->setSingleStep(1.0);
+	spin_vu_peak_hold_decay_->setDecimals(2);
+	spin_vu_peak_hold_decay_->setSuffix(QStringLiteral(" dB/s"));
+	form->addRow(QStringLiteral("Hold Decay:"), spin_vu_peak_hold_decay_);
+
+	spin_vu_peak_hold_width_ = new QSpinBox(grp_vu_meter_);
+	spin_vu_peak_hold_width_->setRange(1, 4);
+	form->addRow(QStringLiteral("Hold Width (px):"), spin_vu_peak_hold_width_);
+
+	/* ---- dB Scale ---- */
+	chk_vu_scale_ = new QCheckBox(grp_vu_meter_);
+	form->addRow(QStringLiteral("Show Scale:"), chk_vu_scale_);
+
+	edit_vu_scale_ticks_ = new QLineEdit(grp_vu_meter_);
+	edit_vu_scale_ticks_->setPlaceholderText(QStringLiteral("-60,-40,-20,-9,0"));
+	form->addRow(QStringLiteral("Scale Ticks (dB):"), edit_vu_scale_ticks_);
+
+	chk_vu_scale_labels_ = new QCheckBox(grp_vu_meter_);
+	form->addRow(QStringLiteral("Show Labels:"), chk_vu_scale_labels_);
+
+	cmb_vu_scale_side_ = new QComboBox(grp_vu_meter_);
+	cmb_vu_scale_side_->addItem(QStringLiteral("Auto"), (int)VuMeterScaleSide::Auto);
+	cmb_vu_scale_side_->addItem(QStringLiteral("Same side"), (int)VuMeterScaleSide::Same);
+	cmb_vu_scale_side_->addItem(QStringLiteral("Opposite side"), (int)VuMeterScaleSide::Opposite);
+	form->addRow(QStringLiteral("Scale Side:"), cmb_vu_scale_side_);
+
 	layout->addLayout(form);
 
 	HOOK_CHECK(chk_vu_enabled_);
@@ -635,6 +673,14 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	HOOK_DSPIN(spin_vu_error_db_);
 	HOOK_COMBO(cmb_vu_decay_);
 	HOOK_CHECK(chk_vu_flip_);
+	HOOK_CHECK(chk_vu_peak_hold_);
+	HOOK_SPIN(spin_vu_peak_hold_ms_);
+	HOOK_DSPIN(spin_vu_peak_hold_decay_);
+	HOOK_SPIN(spin_vu_peak_hold_width_);
+	HOOK_CHECK(chk_vu_scale_);
+	HOOK_EDIT(edit_vu_scale_ticks_);
+	HOOK_CHECK(chk_vu_scale_labels_);
+	HOOK_COMBO(cmb_vu_scale_side_);
 
 	return grp_vu_meter_;
 }
@@ -880,6 +926,14 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	spin_vu_error_db_->setValue(gs.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)gs.vuMeter.decayRate);
 	chk_vu_flip_->setChecked(gs.vuMeter.flip);
+	chk_vu_peak_hold_->setChecked(gs.vuMeter.peakHoldEnabled);
+	spin_vu_peak_hold_ms_->setValue(gs.vuMeter.peakHoldMs);
+	spin_vu_peak_hold_decay_->setValue(gs.vuMeter.peakHoldDecayDbPerSec);
+	spin_vu_peak_hold_width_->setValue(gs.vuMeter.peakHoldWidthPx);
+	chk_vu_scale_->setChecked(gs.vuMeter.scaleEnabled);
+	edit_vu_scale_ticks_->setText(QString::fromStdString(gs.vuMeter.scaleTicks));
+	chk_vu_scale_labels_->setChecked(gs.vuMeter.scaleShowLabels);
+	cmb_vu_scale_side_->setCurrentIndex((int)gs.vuMeter.scaleSide);
 
 	/* Overlay */
 	chk_overlay_enabled_->setChecked(gs.overlay.enabled);
@@ -946,6 +1000,14 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 	gs.vuMeter.errorDB = spin_vu_error_db_->value();
 	gs.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
 	gs.vuMeter.flip = chk_vu_flip_->isChecked();
+	gs.vuMeter.peakHoldEnabled = chk_vu_peak_hold_->isChecked();
+	gs.vuMeter.peakHoldMs = spin_vu_peak_hold_ms_->value();
+	gs.vuMeter.peakHoldDecayDbPerSec = spin_vu_peak_hold_decay_->value();
+	gs.vuMeter.peakHoldWidthPx = spin_vu_peak_hold_width_->value();
+	gs.vuMeter.scaleEnabled = chk_vu_scale_->isChecked();
+	gs.vuMeter.scaleTicks = edit_vu_scale_ticks_->text().toStdString();
+	gs.vuMeter.scaleShowLabels = chk_vu_scale_labels_->isChecked();
+	gs.vuMeter.scaleSide = (VuMeterScaleSide)cmb_vu_scale_side_->currentIndex();
 
 	/* Overlay */
 	gs.overlay.enabled = chk_overlay_enabled_->isChecked();
@@ -1020,6 +1082,14 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	spin_vu_error_db_->setValue(is.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)is.vuMeter.decayRate);
 	chk_vu_flip_->setChecked(is.vuMeter.flip);
+	chk_vu_peak_hold_->setChecked(is.vuMeter.peakHoldEnabled);
+	spin_vu_peak_hold_ms_->setValue(is.vuMeter.peakHoldMs);
+	spin_vu_peak_hold_decay_->setValue(is.vuMeter.peakHoldDecayDbPerSec);
+	spin_vu_peak_hold_width_->setValue(is.vuMeter.peakHoldWidthPx);
+	chk_vu_scale_->setChecked(is.vuMeter.scaleEnabled);
+	edit_vu_scale_ticks_->setText(QString::fromStdString(is.vuMeter.scaleTicks));
+	chk_vu_scale_labels_->setChecked(is.vuMeter.scaleShowLabels);
+	cmb_vu_scale_side_->setCurrentIndex((int)is.vuMeter.scaleSide);
 
 	chk_overlay_enabled_->setChecked(is.overlay.enabled);
 	edit_overlay_path_->setText(QString::fromStdString(is.overlay.imagePath));
@@ -1099,6 +1169,14 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 	is.vuMeter.errorDB = spin_vu_error_db_->value();
 	is.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
 	is.vuMeter.flip = chk_vu_flip_->isChecked();
+	is.vuMeter.peakHoldEnabled = chk_vu_peak_hold_->isChecked();
+	is.vuMeter.peakHoldMs = spin_vu_peak_hold_ms_->value();
+	is.vuMeter.peakHoldDecayDbPerSec = spin_vu_peak_hold_decay_->value();
+	is.vuMeter.peakHoldWidthPx = spin_vu_peak_hold_width_->value();
+	is.vuMeter.scaleEnabled = chk_vu_scale_->isChecked();
+	is.vuMeter.scaleTicks = edit_vu_scale_ticks_->text().toStdString();
+	is.vuMeter.scaleShowLabels = chk_vu_scale_labels_->isChecked();
+	is.vuMeter.scaleSide = (VuMeterScaleSide)cmb_vu_scale_side_->currentIndex();
 
 	/* Overlay */
 	is.overlay.enabled = chk_overlay_enabled_->isChecked();
@@ -1175,6 +1253,14 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 	spin_vu_error_db_->setValue(cs.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)cs.vuMeter.decayRate);
 	chk_vu_flip_->setChecked(cs.vuMeter.flip);
+	chk_vu_peak_hold_->setChecked(cs.vuMeter.peakHoldEnabled);
+	spin_vu_peak_hold_ms_->setValue(cs.vuMeter.peakHoldMs);
+	spin_vu_peak_hold_decay_->setValue(cs.vuMeter.peakHoldDecayDbPerSec);
+	spin_vu_peak_hold_width_->setValue(cs.vuMeter.peakHoldWidthPx);
+	chk_vu_scale_->setChecked(cs.vuMeter.scaleEnabled);
+	edit_vu_scale_ticks_->setText(QString::fromStdString(cs.vuMeter.scaleTicks));
+	chk_vu_scale_labels_->setChecked(cs.vuMeter.scaleShowLabels);
+	cmb_vu_scale_side_->setCurrentIndex((int)cs.vuMeter.scaleSide);
 
 	chk_overlay_enabled_->setChecked(cs.overlay.enabled);
 	edit_overlay_path_->setText(QString::fromStdString(cs.overlay.imagePath));
@@ -1259,6 +1345,14 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.vuMeter.errorDB = spin_vu_error_db_->value();
 	cs.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
 	cs.vuMeter.flip = chk_vu_flip_->isChecked();
+	cs.vuMeter.peakHoldEnabled = chk_vu_peak_hold_->isChecked();
+	cs.vuMeter.peakHoldMs = spin_vu_peak_hold_ms_->value();
+	cs.vuMeter.peakHoldDecayDbPerSec = spin_vu_peak_hold_decay_->value();
+	cs.vuMeter.peakHoldWidthPx = spin_vu_peak_hold_width_->value();
+	cs.vuMeter.scaleEnabled = chk_vu_scale_->isChecked();
+	cs.vuMeter.scaleTicks = edit_vu_scale_ticks_->text().toStdString();
+	cs.vuMeter.scaleShowLabels = chk_vu_scale_labels_->isChecked();
+	cs.vuMeter.scaleSide = (VuMeterScaleSide)cmb_vu_scale_side_->currentIndex();
 
 	/* Overlay */
 	cs.overlay.enabled = chk_overlay_enabled_->isChecked();

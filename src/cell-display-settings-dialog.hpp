@@ -126,6 +126,16 @@ private:
 	QCheckBox *chk_vu_flip_ = nullptr;
 	QComboBox *cmb_vu_track_mode_ = nullptr;
 	QSpinBox *spin_vu_manual_track_ = nullptr;
+	/* Peak Hold */
+	QCheckBox *chk_vu_peak_hold_ = nullptr;
+	QSpinBox *spin_vu_peak_hold_ms_ = nullptr;
+	QDoubleSpinBox *spin_vu_peak_hold_decay_ = nullptr;
+	QSpinBox *spin_vu_peak_hold_width_ = nullptr;
+	/* dB Scale */
+	QCheckBox *chk_vu_scale_ = nullptr;
+	QLineEdit *edit_vu_scale_ticks_ = nullptr;
+	QCheckBox *chk_vu_scale_labels_ = nullptr;
+	QComboBox *cmb_vu_scale_side_ = nullptr;
 
 	/* Overlay group */
 	QGroupBox *grp_overlay_ = nullptr;
