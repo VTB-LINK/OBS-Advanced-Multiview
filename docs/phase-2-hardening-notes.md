@@ -1,8 +1,16 @@
 # Phase 2 Hardening Notes
 
-> 本文档记录 Phase 2（视觉参数系统：背景 / 标签 / 安全区 / VU meter / overlay）完成后做的代码硬化观察项与修复。
+> 本文档记录 Phase 2（M4 视觉参数系统：背景 / 标签 / 安全区 / VU meter / overlay / highlight）完成后做的代码硬化观察项与修复。
+> 术语口径以 [TERMINOLOGY.md](TERMINOLOGY.md) 为准。
 > 延续 [phase-1-hardening-notes.md](phase-1-hardening-notes.md) 的"已修复 / 观察项"结构。
 > 修复范围：multiview-instance.cpp、multiview-window.cpp、config-manager.cpp、cell-display-settings-dialog.cpp。
+>
+> 相关文档：
+>
+> - 设计基准：[phase-2-visual-settings-design.md](phase-2-visual-settings-design.md)
+> - 验收清单：[phase-2-acceptance-checklist.md](phase-2-acceptance-checklist.md)（本文中“观察项”需要在验收清单或后续 issue 中归档跟进）
+> - Phase 2.5 VU meter polish 设计：[phase-2.5-vu-meter-polish-design.md](phase-2.5-vu-meter-polish-design.md)
+> - 已知限制：[known-limitations.md](known-limitations.md)
 
 ---
 
