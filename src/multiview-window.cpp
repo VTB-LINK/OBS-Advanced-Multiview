@@ -909,9 +909,33 @@ void MultiviewWindow::update_source_refs()
 
 			OBSSource priv = provider->create_private_source(it.desired_name, it.cfg_copy);
 
+			/* Phase 3 / M6 step 9: async OBS sources (ffmpeg_source,
+			 * ndi_source, spout_capture, vlc_source) only start producing
+			 * media when their `active` count goes above 0. Private sources
+			 * are never added to a scene, so OBS never bumps active on our
+			 * behalf — the source would just sit dormant and our cell would
+			 * paint black forever. inc_showing keeps the show ref count in
+			 * sync with the strong ref so frontend tools that watch showing
+			 * (audio meter UIs, properties dialogs) behave correctly when
+			 * we later attach a volmeter. Both must be paired by matching
+			 * dec_* calls in release_source_refs(). */
+			if (priv) {
+				obs_source_inc_active(priv);
+				obs_source_inc_showing(priv);
+			}
+
 			std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-			if (it.cell_idx >= cell_sources_.size())
+			if (it.cell_idx >= cell_sources_.size()) {
+				/* Layout shrank between intent collection and install.
+				 * Unwind the inc_active / inc_showing pair before the
+				 * OBSSource RAII drops the strong ref so the source
+				 * tears down cleanly. */
+				if (priv) {
+					obs_source_dec_showing(priv);
+					obs_source_dec_active(priv);
+				}
 				continue;
+			}
 			auto &cs = cell_sources_[it.cell_idx];
 			cs.private_source = priv;
 			if (priv) {
@@ -979,13 +1003,13 @@ void MultiviewWindow::release_source_refs()
 			 * provider runtime may have created. Internal cells leave
 			 * `private_source` empty so this is a no-op for them.
 			 *
-			 * We deliberately do NOT call dec_showing on private sources
-			 * because we never inc_showing'd them at the multiview level
-			 * — they are private to this window and their show ref is
-			 * implicit in the strong ref's lifetime. Provider
-			 * implementations are free to manage inc_showing /
-			 * dec_showing on their own private source if a specific
-			 * provider's host plugin needs the hint. */
+			 * The matching dec_active / dec_showing for the inc pair we
+			 * did on create runs OUTSIDE source_mutex_ a few lines
+			 * below (deactivate triggers ffmpeg_source's worker-thread
+			 * stop / mp_media_set_active(false), which we must not run
+			 * while holding our mutex). Move the OBSSource into the
+			 * unlock-side vector so the RAII destructor and the dec_*
+			 * calls happen in the same scope. */
 			if (cs.private_source) {
 				externals_to_release.push_back(std::move(cs.private_source));
 				cs.private_source = nullptr;
@@ -1046,7 +1070,18 @@ void MultiviewWindow::release_source_refs()
 	 * source destroy chain on this thread; running it without holding
 	 * source_mutex_ keeps the render thread free to keep working and
 	 * avoids re-entering the mutex through any signal callbacks the
-	 * host plugin fires during source destroy. */
+	 * host plugin fires during source destroy.
+	 *
+	 * Pair-undo the inc_active / inc_showing we did on create. dec_active
+	 * triggers ffmpeg_source_deactivate (stops mp_media worker thread)
+	 * and the equivalent for ndi/spout/vlc; this is the heavy step that
+	 * must not run inside source_mutex_. */
+	for (auto &priv : externals_to_release) {
+		if (priv) {
+			obs_source_dec_showing(priv);
+			obs_source_dec_active(priv);
+		}
+	}
 	externals_to_release.clear();
 
 	/* Release volmeters (no graphics context needed) */
