@@ -765,85 +765,66 @@ Phase 2.5 明确不做：
 
 ## 8. Milestone 5：断开 / 删除 / Signal Lost 行为
 
-状态：未开始，详细设计已建立，详见 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md)。
+状态：**功能完成**。详细设计基准见 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md)，验收记录见 [docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md)。
 
-当前仅保留已讨论和 PRD 中已列明方向。
+已落地能力（与 PRD 对齐）：
 
-OBS 内部源删除时，未来需支持的方向：
+- 三层 Lost Signal 设置（Global + per-Cell Override；设计上明确不引入 Instance 层）。
+- Internal source 删除：`Black + MISSING SOURCE/MISSING SCENE` overlay、`PlaceholderImage`、`ClearCell`（assignment 异步释放，无闪烁）。
+- Fallback：OBS 内部 PGM / PRVW / Scene / Source 实时渲染 + 静态图片；FALLBACK 状态横幅。
+- Reconnect Now：右键菜单触发，按 `manualReconnectCooldownMs` 冷却，覆盖 internal scene/source 与 PGM/PRVW。
+- 动态生效：`notify_multiview_signal_settings_changed(uuid)` 全链接通；不重建整个 display。
+- 鲁棒性硬化：source-list 信号桥 lazy 化（消除闪烁）、精准 source_create / source_remove 处理、第三方插件崩溃保护、render 路径双重 `obs_source_removed` guard、VU rebuild 节流、锁顺序纪律、配置 v2 → v3 兼容。
+- 文案：`MISSING SOURCE` / `MISSING SCENE` / `FALLBACK` 已上线；`SIGNAL LOST` / `RECONNECTING` 留给 M6。
 
-- 显示占位图。
-- 保持黑场。
-- 清空并释放该网格。
-- 如果用户 ctrl+z 恢复，尝试名称匹配。
+设计明确不做（M5 范围内）：
 
-外部流断开时，未来需支持的方向：
+- Fallback 失败递归 fallback；fallback chain（多级链）。
+- Status overlay 文案多语言（保留为常量；Phase 4 再考虑）。
 
-- 仅重试。
-- 重试 + 备播。
-- Signal Lost 图。
-- 黑场或重试状态。
-- 重连成功后切回主画面。
+留给 M6 / 后续阶段：
 
-已确认的技术原则：
-
-- 不使用 while true 空转重试。
-- 使用 backoff。
-- 必须提供“立即重连”。
-- 防止用户连续点击导致疯狂重连。
-- 插件关闭时后台任务必须可取消。
-
-进入对应后续阶段时需要明确：
-
-- 第一版 lost signal UI。
-- 状态机字段。
-- fallback 类型。
-- 内部源恢复匹配策略。
-- 是否按 cell 配置策略。
-- 断流策略修改后如何对当前 MultiviewWindow 动态生效。
+- 外部源 SignalLost / RetryWithFallback / Reconnecting 状态实际渲染。
+- Phase 3 综合硬化 pass（统一审计 internal + external 生命周期）。
 
 ---
 
 ## 9. Milestone 6：外部流接入
 
-状态：未开始，详细设计已建立，详见 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md)；部分内容也依赖 Milestone 5。
+状态：**未开始**。详细设计基准见 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md) §8，执行级拆分写入 [docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md) 的 M6 章节。
 
-当前仅保留已讨论和 PRD 中已列明方向。
+PRD 与已确认策略方向：
 
-未来目标方向：
+- NDI / Spout：不集成 SDK，动态使用宿主环境的 DistroAV / obs-spout2 source type；只创建 / 更新 / 销毁 OBS private source。
+- Media (RTMP / HLS / FLV / SRT)：复用 OBS 内置 `ffmpeg_source`；VLC 复用 `vlc_source`，作为可选 provider，不阻塞 M6.1~M6.3 闭环。
+- WebRTC：保留 `WebRtcReserved` 占位，不在 M6 实现 runtime。
+- Private source 不进入 OBS 场景列表。
+- 不使用 while true 空转重试；只在监督层做低频 health check 与 backoff 重建。
+- 必须提供 “Reconnect Now”；插件关闭 / 窗口关闭 / OBS 退出时所有 runtime 必须可释放。
 
-- NDI。
-- Spout。
-- RTMP。
-- HLS / M3U8。
-- FLV。
-- SRT。
-- WebRTC。
+M6 子任务编号（与 design doc §14 对齐）：
 
-已确认策略方向：
+- M6.0：Provider registry + source type availability detection（含 VU `Auto` / `ExternalSource` 三层语义升级）。
+- M6.1：FFmpeg media provider（`ffmpeg_source`，第一个外部 vertical slice）。
+- M6.2：DistroAV NDI provider（`ndi_source`），**列表发现必做**：SourcePicker 打开自动扫一次 + 手动 Refresh；不做后台轮询；手动输入是 fallback。
+- M6.3：Spout provider（`spout_capture`），**列表发现必做**：策略与 NDI 一致；Spout 无音频按 silence 处理（不进 Lost / 不刷日志）。
+- M6.4：VLC provider（`vlc_source`），可选。
+- M6.5：WebRTC reserved placeholder（disabled UI + enum/config 占位）。
+- M6.6：Phase 3 综合硬化 + 验收 + 跨版本回归（31.1.1 smoke / 32.0 smoke / 32.1.2 full）。
 
-- NDI 与 Spout 不直接集成 SDK。
-- NDI / Spout 应尽量动态调用宿主环境中已安装的第三方插件能力。
-- 目标是避免 SDK 版本不一致导致 OBS 内和 Multiview 内行为不一致。
-- RTMP / HLS / FLV / SRT 可考虑复用 OBS 内置媒体源或 VLC 源。
-- WebRTC 通过定制扩展接入，需后续详细规划。
-- 外部流不需要事先添加到 OBS 场景列表中。
-- 外部流应作为 Multiview 层面的信号来源。
+VU meter 三层设置在 M6.0 升级（已确认）：
 
-不可见 / 最小化时的原则：
+- 新增 `Auto` 模式：内部 OBS cell 走原有 streaming-track 逻辑；外部 cell 直接对 external private source 计量。
+- 新增 `ExternalSource` 手动模式：与 Stream / Track 1..6 区分；强制按外部源自身音频计量。
+- `Manual Track 1..6` 保留旧语义。
+- 重新启用 cell 级 trackMode override（Phase 2.5 曾推迟）。
 
-- 不简单等同于停止拉流。
-- 需要区分 render、transport、decode、buffer、health check。
-- 每类 SignalProvider 自行决定不可见时行为。
+风险与原则（继承 PRD / general instructions）：
 
-进入对应后续阶段时需要明确：
-
-- 如何检测 obs-ndi / DistroAV 插件。
-- 如何检测 obs-spout2 插件。
-- 如何创建 private source。
-- 如何处理不同插件版本 settings schema。
-- 外部流 source picker UI。
-- 外部流状态机。
-- 重试、立即重连、fallback 的完整行为。
+- DistroAV / obs-spout2 自身已有内部 receiver / reconnect / discovery 逻辑（DistroAV `NDIFinder` 5 秒缓存 + `isRefreshing`；obs-spout2 同步 `GetSenderCount/GetSender`）。我们的监督层不重复造轮子。
+- 不能盲目假设 `obs_get_source_properties("ndi_source")` / `obs_get_source_properties("spout_capture")` 在 null data 下安全；需要走真实 / 休眠 private source 实例或受控 helper。
+- Render thread 保持 provider-agnostic：不创建、不释放、不重连外部 source。
+- 所有外部 source create / update / release 必须在 `source_mutex_` 之外执行，沿用 Phase 2 / M5 的锁顺序纪律。
 
 ---
 

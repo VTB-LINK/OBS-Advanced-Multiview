@@ -144,3 +144,114 @@
 - 综合硬化 pass：M6 完成后统一审计内部 + 外部 source 生命周期、锁顺序、退出释放路径、跨平台
 - macOS / Linux 运行时验证：M5 全部用例需在 macOS / Linux 上至少跑一次
 - OBS 32.0 验证：当前已在 31.1.1 + 32.1.2 验证；未在 32.0 上跑
+
+---
+
+# Phase 3 / M6 验收清单（进行中）
+
+> M6（外部流接入）实现期间逐项更新；M6 完成后整体合入主文档结构。
+> 与 [docs/phase-3-signal-lost-and-external-sources-design.md](phase-3-signal-lost-and-external-sources-design.md) §8 / §14 / §15 对齐。
+> 每个子项的状态使用与 M5 章节相同的图例：`[x] / [o] / [ ] / ~~[ ]~~`。
+
+## M6.0 Provider Registry + 配置 / 运行时基础
+
+### 配置层
+
+- [ ] `SignalProviderType` 枚举与字符串持久化映射：`internal_pgm` / `internal_prvw` / `internal_scene` / `internal_source` / `ffmpeg` / `ndi` / `spout` / `vlc` / `webrtc_reserved`
+- [ ] `SignalConfig` struct：`provider` + `displayName` + `providerSettings`（OBSData object）
+- [ ] `CellAssignment` 扩展：保留 `type` / `name` 兼容字段；新增 optional `signalConfig`
+- [ ] M5 v3 配置加载兼容（不丢字段、不破坏 internal cell 行为）
+- [ ] 新版本号 / 升级日志（必要时）
+
+### 运行时层
+
+- [ ] `CellSource` 演进：新增 private source strong ref、provider type、settings fingerprint、last health timestamp、last dimensions、last error reason、next retry timestamp
+- [ ] 统一 release helper：layout 缩容、ClearCell、源切换、provider recreate、窗口关闭、OBS 退出走同一路径
+- [ ] Render 线程 provider-agnostic：不创建 / 释放 / 重连外部 source
+
+### Provider Registry
+
+- [ ] `src/signal-provider.hpp` / `.cpp` 接口骨架：`id` / `display_name` / `is_available` / `unavailable_reason` / `defaults` / `build_settings` / `create_or_update` / `release` / `reconnect` / `health`
+- [ ] `obs_source_get_display_name(source_id) != nullptr` 作为可用性首选检测路径
+- [ ] Provider 不可用时 UI disabled + reason，不隐藏 tab 不崩溃
+- [ ] 内部 OBS provider adapter：包装现有 PGM / PRVW / Scene / Source 行为，不立即重写 M5 路径
+
+### VU Meter 三层语义升级（M6.0 必做）
+
+- [ ] `VuMeterTrackMode` 扩展：`Auto`、`ExternalSource`、`Manual` 同时存在；旧值持久化兼容
+- [ ] `Auto`：内部 cell 走原 streaming-track 逻辑；外部 cell 直接对 external private source 计量
+- [ ] `ExternalSource`：与 Stream / Track 1..6 区分；内部 cell 安全降级 / UI 禁用
+- [ ] `Manual Track 1..6`：保留旧语义
+- [ ] cell 级 trackMode override 重新启用（Phase 2.5 推迟项）
+- [ ] Spout audio 按 silence（极低 / 负无穷 dB）处理；不进 Lost / 不刷日志
+
+### 锁顺序与稳定性
+
+- [ ] Provider create / update / release 不持有 `source_mutex_`
+- [ ] 不在 render 回调内创建 / 重连 / 释放外部 source
+- [ ] 不在 source-list 信号 handler 内创建外部 source
+
+## M6.1 FFmpeg Media Provider
+
+- [ ] Source id：`ffmpeg_source`
+- [ ] Settings 默认：`input` / `is_local_file=false` / `reconnect_delay_sec=10` / `buffering_mb=2` / `restart_on_activate=true` / `close_when_inactive=false` / `clear_on_media_end=true` / `linear_alpha=false`
+- [ ] Private source 命名：`OBS Advanced Multiview/<instance>/<row>,<col>/ffmpeg`，不进入 OBS 场景列表
+- [ ] Health 映射：playing + valid dimensions → `Active`；opening / buffering → `Connecting`；error / ended / 持续零分辨率 → `Lost` / `Error`
+- [ ] Reconnect Now：先 `obs_source_media_restart`，必要时 recreate
+- [ ] 状态 overlay：`Connecting` / `RetryScheduled` → `RECONNECTING`；`Lost` / `Error` → `SIGNAL LOST`
+- [ ] `ExternalLostBehavior` 全部联通：`SignalLostOverlay` / `RetryOnly` / `RetryWithFallback` / `SignalLostImage`
+- [ ] 主信号恢复后自动切回，释放 fallback ref
+- [ ] 验证：HLS/M3U8、invalid URL、网络中断、Reconnect Now、fallback、recovery、clear cell、layout 缩容、close window
+- [ ] Private source 隔离验证（不出现在 OBS 场景 / source 列表）
+
+## M6.2 DistroAV NDI Provider
+
+- [ ] Source id：`ndi_source`
+- [ ] Settings 支持 / 保留：`ndi_source_name` / `ndi_behavior` / `ndi_behavior_timeout` / `ndi_bw_mode` / `ndi_sync` / `ndi_framesync` / `ndi_recv_hw_accel` / `ndi_fix_alpha_blending` / `yuv_range` / `yuv_colorspace` / `latency` / `ndi_audio`
+- [ ] **列表发现必做**：SourcePicker NDI tab 打开时扫一次；Refresh 按钮触发再扫一次；不后台轮询
+- [ ] 安全发现路径：不直接 `obs_get_source_properties` null data；通过真实 / 休眠 private source 实例或受控 helper
+- [ ] 手动输入作为 fallback / advanced（非主路径）
+- [ ] DistroAV 缺失 → tab disabled + reason
+- [ ] Private source 命名 `OBS Advanced Multiview/<instance>/<row>,<col>/ndi`
+- [ ] Health：width/height > 0 + recent video → Active；空分辨率 → Connecting / Lost
+- [ ] Reconnect 首选 recreate；fallback `obs_source_update`
+- [ ] 不链接 NDI SDK，不 include DistroAV 头文件，不调 DistroAV 内部函数
+- [ ] 验证：valid name / invalid name / DistroAV missing / source appears later / recover / 释放路径
+
+## M6.3 Spout Provider
+
+- [ ] Source id：`spout_capture`
+- [ ] Settings：`spoutsenders` / `usefirstavailablesender` / `tickspeedlimit` / `compositemode`
+- [ ] **列表发现必做**：SourcePicker Spout tab 打开时扫一次；Refresh 按钮触发再扫一次；不后台轮询
+- [ ] 安全发现路径：同 NDI；通过真实 / 休眠 private source 实例或受控 helper
+- [ ] 手动输入 + first available 作为 fallback（非主路径）
+- [ ] obs-spout2 缺失 → tab disabled + reason
+- [ ] Private source 命名 `OBS Advanced Multiview/<instance>/<row>,<col>/spout`
+- [ ] Health：dimensions > 0 → Active；sender 缺失 → Lost / Error 不刷屏
+- [ ] Reconnect 首选 `obs_source_update`，fallback recreate
+- [ ] 不链接 Spout SDK，不调 obs-spout2 内部函数
+- [ ] Spout VU = silence（不进 Lost / 不刷日志）
+- [ ] 验证：first-available / named sender missing / appears / disappears / composite / alpha / 释放路径
+
+## M6.4 VLC Provider（可选）
+
+- [ ] Source id：`vlc_source`
+- [ ] 最小 settings：URL / playlist / restart on activate
+- [ ] 不阻塞 M6.1 / M6.2 / M6.3 闭环；可后置
+- [ ] Provider 不可用时 UI disabled + reason
+
+## M6.5 WebRTC Reserved
+
+- [ ] `WebRtcReserved` 枚举 / config 占位
+- [ ] SourcePicker 显示 disabled placeholder + 原因
+- [ ] 文档记录后续待确认项（transport / signaling / auth / codec / threading）
+
+## M6.6 Phase 3 综合硬化与验收
+
+- [ ] M5 回归矩阵全绿：MISSING SCENE / SOURCE、ClearCell 无闪、fallback PGM / static image、Reconnect Now、undo / restore、Duplicate Scene / Sources 边界
+- [ ] M6 回归矩阵：provider create / invalid config / lost / reconnect / fallback / recover / clear cell / layout 缩容 / close window / OBS exit
+- [ ] 资源释放：清空 cell / 切换 provider / 缩容 10x10→1x1 / 关闭窗口 / OBS 退出，private source 全部释放
+- [ ] 锁顺序与生命周期 audit：无 `source_mutex_` 期间的 OBS 长操作；无 render 期间的 provider 操作
+- [ ] 跨版本：OBS 31.1.1 smoke / 32.0 smoke / 32.1.2 full provider validation
+- [ ] 文档：本清单更新、`README.md` / `plan.md` 状态、`docs/known-limitations.md` 同步
+
