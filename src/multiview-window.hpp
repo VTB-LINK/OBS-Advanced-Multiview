@@ -66,6 +66,22 @@ public:
 	void refresh_sources();
 	void refresh_sources_lazy();
 
+	/* Phase 3 / M5.4 hardening: invoked synchronously from the OBS
+	 * `source_remove` signal handler with the source pointer extracted via
+	 * calldata. We immediately drop any cell whose cached strong/weak ref
+	 * resolves to this source: state → MissingInternal, weak_ref cleared,
+	 * `showing` decremented in pair with the original inc_showing. This
+	 * shortens the race window where another frame could still call
+	 * obs_source_video_render on a source whose sceneitems are about to be
+	 * pruned by OBS — pruning fires `item_remove` signals into other
+	 * plugins, and at least one of them (streamdeck-plugin-obs) has been
+	 * observed to crash when the pruning happens mid-render.
+	 *
+	 * Safe to call from any thread: only touches `cell_sources_` under
+	 * `source_mutex_` and uses obs_source_dec_showing on a source that
+	 * libobs guarantees stays alive for the duration of the signal. */
+	void on_source_being_removed(obs_source_t *source);
+
 	/* Recompute effective visual settings for all cells */
 	void refresh_visual_settings();
 
@@ -354,6 +370,19 @@ private:
 	 * frames (no event fires on Settings → Output → Streaming Track change). */
 	uint64_t last_track_poll_ns_ = 0;
 	void check_active_track_change();
+
+	/* Phase 3 / M5.4 hardening: throttle volmeter rebuilds to at most one
+	 * per VOLMETER_REBUILD_MIN_INTERVAL_NS. Without this, a user that
+	 * repeatedly deletes + restores a nested scene with audio sources
+	 * triggers source_create / source_remove signal storms; each one
+	 * schedules a refresh_sources_lazy which sets volmeters_rebuild_requested_,
+	 * causing release+attach of volmeters at near every-frame rate. The
+	 * resulting churn against OBS audio thread + graphics thread has been
+	 * observed to deadlock OBS in extreme cases. The throttle keeps
+	 * pending rebuilds coalesced into at most ~4 Hz; if rebuild is
+	 * suppressed, the request flag stays set so the next allowed frame
+	 * still rebuilds. */
+	uint64_t last_volmeter_rebuild_ns_ = 0;
 	/* Snapshot of the source pointers attached during the last rebuild,
 	 * sorted for O(N) set comparison. Used by check_active_track_change()
 	 * to detect any change in the currently-visible audio source set:

@@ -277,6 +277,60 @@ void MultiviewWindow::refresh_sources_lazy()
 	update_source_refs_lazy();
 }
 
+void MultiviewWindow::on_source_being_removed(obs_source_t *source)
+{
+	if (!source)
+		return;
+
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	bool any_match = false;
+
+	for (auto &cs : cell_sources_) {
+		if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
+			continue;
+		if (!cs.weak_ref)
+			continue;
+		OBSSourceAutoRelease bound = OBSGetStrongRef(cs.weak_ref);
+		if (bound != source)
+			continue;
+
+		/* Phase 3 / M5.4 hardening: deliberately do NOT call
+		 * obs_source_dec_showing() here, even though we paired the cell's
+		 * inc_showing with one. Two reasons:
+		 *
+		 *  1. dec_showing fires the "hide" signal synchronously into every
+		 *     plugin that subscribed (streamdeck, obs-websocket, scripts,
+		 *     etc). Those handlers run *during* source_remove, while the
+		 *     source is marked removed but not yet destroyed. Several
+		 *     third-party plugins have been observed to corrupt their own
+		 *     state when they receive hide while OBS is mid-removal,
+		 *     manifesting as obs_source_release / obs_scene_release access
+		 *     violations later when OBS undo/redo or RemoveSelectedScene
+		 *     paths release the source's control block.
+		 *
+		 *  2. The source is about to be destroyed (or held alive solely by
+		 *     OBS's undo data, which doesn't render). When destroy actually
+		 *     runs, libobs frees the show_refs counter alongside the
+		 *     source — there is no leak to clean up. Until then the source
+		 *     is unreachable through any surface a user can interact with.
+		 *
+		 * We still drop the weak ref + reset state so subsequent renders
+		 * never call obs_source_video_render() through this binding. */
+		cs.showing = false;
+		cs.weak_ref = nullptr;
+		cs.state = SignalRuntimeState::MissingInternal;
+		cs.last_active_ns = 0;
+		any_match = true;
+	}
+
+	/* Only kick a volmeter rebuild when this window actually held the
+	 * source. Otherwise we'd needlessly churn meters on every unrelated
+	 * source_remove fired across the whole OBS session. */
+	if (any_match)
+		volmeters_rebuild_requested_.store(true, std::memory_order_release);
+}
+
 void MultiviewWindow::update_source_refs_lazy()
 {
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
@@ -324,18 +378,43 @@ void MultiviewWindow::update_source_refs_lazy()
 			 * render thread via the existing lazy re-resolve path
 			 * — we rebind here too so audio metering doesn't have
 			 * to wait for the next render frame. */
-			if (!newType.empty() && newType != "pgm" && newType != "prvw" &&
-			    cs.state == SignalRuntimeState::MissingInternal) {
-				obs_source_t *src = obs_get_source_by_name(newName.c_str());
-				if (src) {
-					cs.weak_ref = OBSGetWeakRef(src);
-					if (!cs.showing) {
-						obs_source_inc_showing(src);
-						cs.showing = true;
+			if (!newType.empty() && newType != "pgm" && newType != "prvw") {
+				/* Phase 3 / M5.4 hardening: if the cached strong ref
+				 * still resolves but obs_source_removed() reports the
+				 * source is marked-removed, treat it as gone. We must
+				 * NOT keep rendering through it (a third-party plugin's
+				 * sceneitem signal handler can crash mid-prune) and we
+				 * must NOT keep the volmeter attached to a doomed
+				 * source. Drop the binding so the next frame picks up
+				 * the configured fallback (or MISSING SOURCE). */
+				if (cs.weak_ref) {
+					OBSSourceAutoRelease cur = OBSGetStrongRef(cs.weak_ref);
+					if (cur && obs_source_removed(cur)) {
+						if (cs.showing) {
+							obs_source_dec_showing(cur);
+							cs.showing = false;
+						}
+						cs.weak_ref = nullptr;
+						cs.state = SignalRuntimeState::MissingInternal;
+						any_state_change = true;
 					}
-					cs.state = SignalRuntimeState::Active;
-					obs_source_release(src);
-					any_state_change = true;
+				}
+				if (cs.state == SignalRuntimeState::MissingInternal) {
+					obs_source_t *src = obs_get_source_by_name(newName.c_str());
+					if (src && obs_source_removed(src)) {
+						/* Resolved by name but already on its way out.
+						 * Don't bind — release and stay missing. */
+						obs_source_release(src);
+					} else if (src) {
+						cs.weak_ref = OBSGetWeakRef(src);
+						if (!cs.showing) {
+							obs_source_inc_showing(src);
+							cs.showing = true;
+						}
+						cs.state = SignalRuntimeState::Active;
+						obs_source_release(src);
+						any_state_change = true;
+					}
 				}
 			}
 			continue;
@@ -525,6 +604,13 @@ bool MultiviewWindow::force_reconnect_cell(int cellIndex)
 
 	if (!cs.name.empty()) {
 		obs_source_t *resolved = obs_get_source_by_name(cs.name.c_str());
+		if (resolved && obs_source_removed(resolved)) {
+			/* Phase 3 / M5.4 hardening: name resolves to a marked-removed
+			 * source (deletion in flight). Don't bind — let the cell stay
+			 * MissingInternal so fallback / overlay paths render instead. */
+			obs_source_release(resolved);
+			resolved = nullptr;
+		}
 		if (resolved) {
 			cs.weak_ref = OBSGetWeakRef(resolved);
 			obs_source_inc_showing(resolved);
@@ -593,6 +679,15 @@ void MultiviewWindow::update_source_refs()
 
 		/* Scene/Source: cache weak ref and inc_showing */
 		obs_source_t *src = obs_get_source_by_name(ca->name.c_str());
+		if (src && obs_source_removed(src)) {
+			/* Phase 3 / M5.4 hardening: matched by name but already on
+			 * the way out (deletion in flight). Don't bind — release
+			 * and let the cell sit in MissingInternal so the fallback /
+			 * overlay paths kick in. */
+			obs_source_release(src);
+			cell_sources_[i].state = SignalRuntimeState::MissingInternal;
+			continue;
+		}
 		if (src) {
 			cell_sources_[i].weak_ref = OBSGetWeakRef(src);
 			obs_source_inc_showing(src);

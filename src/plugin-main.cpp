@@ -236,13 +236,48 @@ static void on_obs_source_signal(void *, calldata_t *)
 	schedule_refresh_sources_all();
 }
 
+/* Phase 3 / M5.4 hardening: precise source_remove handler.
+ *
+ * The generic on_obs_source_signal path schedules a 50ms-debounced lazy
+ * refresh — perfect for source_create / source_destroy / source_rename, but
+ * source_remove has a much narrower deadline. Between source_remove and
+ * source_destroy OBS may keep the source alive (and reachable via our weak
+ * refs) for an arbitrary number of frames if the undo stack still references
+ * it, while internally pruning sceneitems. During that window:
+ *   - obs_source_video_render() can recurse into scene_video_render →
+ *     update_transforms_and_prune_sources, which fires sceneitem signals
+ *     into other plugins; streamdeck-plugin-obs has been observed to crash
+ *     here when the host sceneitem was removed mid-render.
+ *   - volmeters left attached to the doomed source's audio chain end up
+ *     wrestling with the audio thread when OBS finally destroys it.
+ *
+ * Calling MultiviewWindow::on_source_being_removed() synchronously here
+ * drops the binding before anything else has a chance to render through it.
+ * We still kick a lazy refresh afterwards so any cell whose effective Lost
+ * Signal fallback now needs to switch picks up the new state on the next
+ * 50ms tick. The signal fires on whichever thread invoked obs_source_remove
+ * (often the Qt main thread for UI-driven removals), and on_source_being_
+ * removed acquires source_mutex_ — short, bounded, deadlock-free. */
+static void on_obs_source_remove_precise(void *, calldata_t *cd)
+{
+	obs_source_t *source = nullptr;
+	calldata_get_ptr(cd, "source", &source);
+	if (source) {
+		for (auto &[id, window] : open_windows) {
+			if (window)
+				window->on_source_being_removed(source);
+		}
+	}
+	schedule_refresh_sources_all();
+}
+
 static void register_source_list_signals()
 {
 	signal_handler_t *sh = obs_get_signal_handler();
 	if (!sh)
 		return;
 	signal_handler_connect(sh, "source_create", on_obs_source_signal, nullptr);
-	signal_handler_connect(sh, "source_remove", on_obs_source_signal, nullptr);
+	signal_handler_connect(sh, "source_remove", on_obs_source_remove_precise, nullptr);
 	signal_handler_connect(sh, "source_destroy", on_obs_source_signal, nullptr);
 	signal_handler_connect(sh, "source_rename", on_obs_source_signal, nullptr);
 }
@@ -253,7 +288,7 @@ static void unregister_source_list_signals()
 	if (!sh)
 		return;
 	signal_handler_disconnect(sh, "source_create", on_obs_source_signal, nullptr);
-	signal_handler_disconnect(sh, "source_remove", on_obs_source_signal, nullptr);
+	signal_handler_disconnect(sh, "source_remove", on_obs_source_remove_precise, nullptr);
 	signal_handler_disconnect(sh, "source_destroy", on_obs_source_signal, nullptr);
 	signal_handler_disconnect(sh, "source_rename", on_obs_source_signal, nullptr);
 }

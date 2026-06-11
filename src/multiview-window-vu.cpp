@@ -613,12 +613,31 @@ void MultiviewWindow::check_scene_change_for_volmeters()
  *      Audio Track has no event), checked alongside the source set poll. */
 void MultiviewWindow::check_active_track_change()
 {
+	const uint64_t now_ns = os_gettime_ns();
+	/* Phase 3 / M5.4 hardening: throttle to at most ~4 Hz. Repeated delete +
+	 * restore of a nested scene with audio sources fires source_create /
+	 * source_remove storms; each one ends up setting
+	 * volmeters_rebuild_requested_, and without this throttle the resulting
+	 * release+rebuild churn against OBS audio thread has caused OBS hangs
+	 * in field testing. Suppressed requests stay pending — flag is restored
+	 * if it was already true so the very next allowed frame rebuilds. */
+	const uint64_t MIN_REBUILD_INTERVAL_NS = 250000000ULL; /* 250 ms */
+	const bool throttled = last_volmeter_rebuild_ns_ != 0 &&
+			       (now_ns - last_volmeter_rebuild_ns_) < MIN_REBUILD_INTERVAL_NS;
+
 	if (volmeters_rebuild_requested_.exchange(false, std::memory_order_acquire)) {
+		if (throttled) {
+			/* Re-arm the request so the next non-throttled frame
+			 * picks it up; nothing else cares about the flag. */
+			volmeters_rebuild_requested_.store(true, std::memory_order_release);
+			return;
+		}
 		rebuild_volmeters();
+		last_volmeter_rebuild_ns_ = now_ns;
 		return; /* rebuild already refreshed current_track_bit_ + last_active_sources_ */
 	}
 
-	uint64_t now = os_gettime_ns();
+	uint64_t now = now_ns;
 	const uint64_t POLL_INTERVAL_NS = 1000000000ULL; /* 1 second */
 	if (last_track_poll_ns_ != 0 && (now - last_track_poll_ns_) < POLL_INTERVAL_NS)
 		return;
@@ -626,7 +645,12 @@ void MultiviewWindow::check_active_track_change()
 
 	uint32_t newBit = compute_active_track_bit();
 	if (newBit != current_track_bit_) {
-		rebuild_volmeters();
+		if (!throttled) {
+			rebuild_volmeters();
+			last_volmeter_rebuild_ns_ = now_ns;
+		} else {
+			volmeters_rebuild_requested_.store(true, std::memory_order_release);
+		}
 		return;
 	}
 
@@ -637,8 +661,14 @@ void MultiviewWindow::check_active_track_change()
 	 * tree edits, etc.). */
 	std::vector<void *> currentActive;
 	collect_active_source_pointers(currentActive, newBit);
-	if (currentActive != last_active_sources_)
-		rebuild_volmeters();
+	if (currentActive != last_active_sources_) {
+		if (!throttled) {
+			rebuild_volmeters();
+			last_volmeter_rebuild_ns_ = now_ns;
+		} else {
+			volmeters_rebuild_requested_.store(true, std::memory_order_release);
+		}
+	}
 }
 
 /* Enumerate the set of audio source pointers that *would* be attached if we
