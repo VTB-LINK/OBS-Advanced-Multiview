@@ -59,6 +59,7 @@ target_sources(
           src/multiview-window-safe-area.cpp
           src/multiview-window-highlight.cpp
           src/multiview-window-status.cpp
+          src/multiview-window-lost-image.cpp
           src/source-picker.hpp
           src/source-picker.cpp)
 

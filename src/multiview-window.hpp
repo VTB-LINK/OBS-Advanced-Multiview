@@ -314,6 +314,31 @@ private:
 	void rebuild_overlay_images();
 	void release_overlay_images();
 
+	/* Phase 3 / M5.4: Lost-Signal images (one per cell, single slot).
+	 *
+	 * Each cell uses at most one of these images at a time:
+	 *   - placeholder image  (InternalMissingBehavior::PlaceholderImage)
+	 *   - fallback static image (LostSignalSettings.fallbackType == "image")
+	 *   - signal lost image  (M6: ExternalLostBehavior::SignalLostImage)
+	 *
+	 * The "wanted path" is computed per cell from `cs.state` and
+	 * `cs.effective_lost`, so a single slot can switch which strategy is
+	 * displayed when the runtime state flips (e.g. internal missing →
+	 * recovers → external lost). The structure mirrors BgImage exactly so
+	 * the four-stage load pattern (snapshot intentions → disk IO outside
+	 * lock → graphics ops → install under lock) can be reused verbatim. */
+	struct LostSignalImage {
+		gs_texture_t *texture = nullptr;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		std::string path; /* for change detection; "" means no image */
+	};
+	std::vector<LostSignalImage> lost_signal_images_;
+	void rebuild_lost_signal_images();
+	void release_lost_signal_images();
+	void render_lost_signal_image(int cellIndex, int contentX, int contentY, int contentW, int contentH);
+	std::string compute_wanted_lost_image_path(int cellIndex);
+
 	/* Safe area vertex buffers (normalized 0-1 coords, shared across cells) */
 	gs_vertbuffer_t *safe_action_vb_ = nullptr;       /* Action Safe 3.5% */
 	gs_vertbuffer_t *safe_graphics_vb_ = nullptr;     /* Graphics Safe 5.0% */

@@ -194,6 +194,16 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		bandColor = 0xC0202020;
 		entry = &status_missing_source_;
 		break;
+	case StatusOverlayKind::Fallback:
+		/* Phase 3 / M5.4: when a cell renders a Lost-Signal fallback
+		 * (PGM / PRVW / Scene / Source / static image) instead of its
+		 * configured source, surface that with a translucent yellow band
+		 * so the user can tell at a glance the cell is on a fallback,
+		 * not the real assignment. */
+		text = "FALLBACK";
+		bandColor = 0xC0806000; /* warm amber, ~75% opacity */
+		entry = &status_fallback_;
+		break;
 	default:
 		return;
 	}

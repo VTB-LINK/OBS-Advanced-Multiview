@@ -249,6 +249,7 @@ void MultiviewWindow::refresh_sources()
 	update_source_refs();
 	rebuild_label_sources();
 	rebuild_volmeters();
+	rebuild_lost_signal_images();
 }
 
 /* Phase 3 / M5: in-place CellSource refresh used by the source-list signal
@@ -275,6 +276,12 @@ void MultiviewWindow::refresh_sources()
 void MultiviewWindow::refresh_sources_lazy()
 {
 	update_source_refs_lazy();
+	/* Phase 3 / M5.4: a lazy refresh can change cs.state (e.g. a source
+	 * the user just undid is now Active again). Picking up the matching
+	 * placeholder / fallback image needs to happen on the UI thread, so
+	 * piggyback on this entry point. The rebuild itself is path-keyed —
+	 * if nothing changed, it's a no-op. */
+	rebuild_lost_signal_images();
 }
 
 void MultiviewWindow::on_source_being_removed(obs_source_t *source)
@@ -282,53 +289,63 @@ void MultiviewWindow::on_source_being_removed(obs_source_t *source)
 	if (!source)
 		return;
 
-	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-
 	bool any_match = false;
 
-	for (auto &cs : cell_sources_) {
-		if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
-			continue;
-		if (!cs.weak_ref)
-			continue;
-		OBSSourceAutoRelease bound = OBSGetStrongRef(cs.weak_ref);
-		if (bound != source)
-			continue;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
-		/* Phase 3 / M5.4 hardening: deliberately do NOT call
-		 * obs_source_dec_showing() here, even though we paired the cell's
-		 * inc_showing with one. Two reasons:
-		 *
-		 *  1. dec_showing fires the "hide" signal synchronously into every
-		 *     plugin that subscribed (streamdeck, obs-websocket, scripts,
-		 *     etc). Those handlers run *during* source_remove, while the
-		 *     source is marked removed but not yet destroyed. Several
-		 *     third-party plugins have been observed to corrupt their own
-		 *     state when they receive hide while OBS is mid-removal,
-		 *     manifesting as obs_source_release / obs_scene_release access
-		 *     violations later when OBS undo/redo or RemoveSelectedScene
-		 *     paths release the source's control block.
-		 *
-		 *  2. The source is about to be destroyed (or held alive solely by
-		 *     OBS's undo data, which doesn't render). When destroy actually
-		 *     runs, libobs frees the show_refs counter alongside the
-		 *     source — there is no leak to clean up. Until then the source
-		 *     is unreachable through any surface a user can interact with.
-		 *
-		 * We still drop the weak ref + reset state so subsequent renders
-		 * never call obs_source_video_render() through this binding. */
-		cs.showing = false;
-		cs.weak_ref = nullptr;
-		cs.state = SignalRuntimeState::MissingInternal;
-		cs.last_active_ns = 0;
-		any_match = true;
+		for (auto &cs : cell_sources_) {
+			if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
+				continue;
+			if (!cs.weak_ref)
+				continue;
+			OBSSourceAutoRelease bound = OBSGetStrongRef(cs.weak_ref);
+			if (bound != source)
+				continue;
+
+			/* Phase 3 / M5.4 hardening: deliberately do NOT call
+			 * obs_source_dec_showing() here, even though we paired the cell's
+			 * inc_showing with one. Two reasons:
+			 *
+			 *  1. dec_showing fires the "hide" signal synchronously into every
+			 *     plugin that subscribed (streamdeck, obs-websocket, scripts,
+			 *     etc). Those handlers run *during* source_remove, while the
+			 *     source is marked removed but not yet destroyed. Several
+			 *     third-party plugins have been observed to corrupt their own
+			 *     state when they receive hide while OBS is mid-removal,
+			 *     manifesting as obs_source_release / obs_scene_release access
+			 *     violations later when OBS undo/redo or RemoveSelectedScene
+			 *     paths release the source's control block.
+			 *
+			 *  2. The source is about to be destroyed (or held alive solely by
+			 *     OBS's undo data, which doesn't render). When destroy actually
+			 *     runs, libobs frees the show_refs counter alongside the
+			 *     source — there is no leak to clean up. Until then the source
+			 *     is unreachable through any surface a user can interact with.
+			 *
+			 * We still drop the weak ref + reset state so subsequent renders
+			 * never call obs_source_video_render() through this binding. */
+			cs.showing = false;
+			cs.weak_ref = nullptr;
+			cs.state = SignalRuntimeState::MissingInternal;
+			cs.last_active_ns = 0;
+			any_match = true;
+		}
+
+		/* Only kick a volmeter rebuild when this window actually held the
+		 * source. Otherwise we'd needlessly churn meters on every unrelated
+		 * source_remove fired across the whole OBS session. */
+		if (any_match)
+			volmeters_rebuild_requested_.store(true, std::memory_order_release);
 	}
 
-	/* Only kick a volmeter rebuild when this window actually held the
-	 * source. Otherwise we'd needlessly churn meters on every unrelated
-	 * source_remove fired across the whole OBS session. */
+	/* Phase 3 / M5.4: bring up placeholder / static-image fallback texture
+	 * for the cells that just transitioned to MissingInternal. The rebuild
+	 * is path-keyed, so cells whose configured image is empty are no-ops.
+	 * Must run OUTSIDE source_mutex_ — rebuild calls obs_enter_graphics()
+	 * and the render thread takes (graphics, source_mutex_) in that order. */
 	if (any_match)
-		volmeters_rebuild_requested_.store(true, std::memory_order_release);
+		rebuild_lost_signal_images();
 }
 
 void MultiviewWindow::on_source_just_created(obs_source_t *source)
@@ -347,33 +364,43 @@ void MultiviewWindow::on_source_just_created(obs_source_t *source)
 		return;
 	const std::string newName(cname);
 
-	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-
 	bool any_match = false;
-	for (auto &cs : cell_sources_) {
-		if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
-			continue;
-		if (cs.state != SignalRuntimeState::MissingInternal)
-			continue;
-		if (cs.name != newName)
-			continue;
 
-		/* Sync re-bind. Pair the inc_showing here so the source's
-		 * show_refs counter matches the binding lifetime — opposite of
-		 * source_remove where we deliberately don't dec_showing. Here
-		 * the source is alive and stable, so inc_showing is safe and
-		 * keeps audio meters reachable. */
-		cs.weak_ref = OBSGetWeakRef(source);
-		obs_source_inc_showing(source);
-		cs.showing = true;
-		cs.state = SignalRuntimeState::Active;
-		cs.last_active_ns = os_gettime_ns();
-		cs.retry_attempt = 0;
-		any_match = true;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+		for (auto &cs : cell_sources_) {
+			if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
+				continue;
+			if (cs.state != SignalRuntimeState::MissingInternal)
+				continue;
+			if (cs.name != newName)
+				continue;
+
+			/* Sync re-bind. Pair the inc_showing here so the source's
+			 * show_refs counter matches the binding lifetime — opposite of
+			 * source_remove where we deliberately don't dec_showing. Here
+			 * the source is alive and stable, so inc_showing is safe and
+			 * keeps audio meters reachable. */
+			cs.weak_ref = OBSGetWeakRef(source);
+			obs_source_inc_showing(source);
+			cs.showing = true;
+			cs.state = SignalRuntimeState::Active;
+			cs.last_active_ns = os_gettime_ns();
+			cs.retry_attempt = 0;
+			any_match = true;
+		}
+
+		if (any_match)
+			volmeters_rebuild_requested_.store(true, std::memory_order_release);
 	}
 
+	/* Phase 3 / M5.4: cell transitioned out of MissingInternal — release
+	 * the placeholder / static-image texture so the next render falls
+	 * straight through to the real source video. Must run OUTSIDE
+	 * source_mutex_ to honour the (graphics, source_mutex_) lock order. */
 	if (any_match)
-		volmeters_rebuild_requested_.store(true, std::memory_order_release);
+		rebuild_lost_signal_images();
 }
 
 void MultiviewWindow::update_source_refs_lazy()
@@ -519,7 +546,6 @@ void MultiviewWindow::update_source_refs_lazy()
 	 * never render against a stale fallback / placeholder choice. */
 	recompute_effective_lost_locked(cells);
 }
-
 void MultiviewWindow::refresh_visual_settings()
 {
 	{
@@ -558,6 +584,7 @@ void MultiviewWindow::refresh_visual_settings()
 	 * render thread (render thread: graphics lock -> source_mutex_). */
 	rebuild_bg_images();
 	rebuild_overlay_images();
+	rebuild_lost_signal_images();
 	rebuild_scale_label_sources();
 }
 
@@ -573,13 +600,22 @@ void MultiviewWindow::refresh_signal_settings()
 	 * cell assignment. Texture-based placeholder / signal-lost-image loaders
 	 * (the bg-image-style four-stage pipeline) will hook in here as well
 	 * when that work lands. */
-	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
-	LayoutEngine tmpEngine;
-	tmpEngine.set_layout(layout_);
-	tmpEngine.set_viewport(800, 600);
-	tmpEngine.compute();
-	recompute_effective_lost_locked(tmpEngine.cells());
+		LayoutEngine tmpEngine;
+		tmpEngine.set_layout(layout_);
+		tmpEngine.set_viewport(800, 600);
+		tmpEngine.compute();
+		recompute_effective_lost_locked(tmpEngine.cells());
+	}
+
+	/* Phase 3 / M5.4: lost-signal images depend on
+	 * placeholderImagePath / fallbackName which the user just edited.
+	 * The rebuild is path-keyed so cells with unchanged paths are no-ops.
+	 * Must run OUTSIDE source_mutex_ — rebuild calls obs_enter_graphics()
+	 * and the render thread takes (graphics, source_mutex_) in order. */
+	rebuild_lost_signal_images();
 }
 
 bool MultiviewWindow::force_reconnect_cell(int cellIndex)
@@ -821,6 +857,17 @@ void MultiviewWindow::release_source_refs()
 			oi.path.clear();
 		}
 		overlay_images_.clear();
+
+		/* Phase 3 / M5.4: release lost-signal images (placeholder /
+		 * fallback static) alongside bg/overlay so the texture lifetime
+		 * is identical to the rest of the cell visuals. */
+		for (auto &li : lost_signal_images_) {
+			if (li.texture)
+				textures_to_destroy.push_back(li.texture);
+			li.texture = nullptr;
+			li.path.clear();
+		}
+		lost_signal_images_.clear();
 	}
 
 	/* Destroy textures outside mutex, respecting lock order */
@@ -1298,6 +1345,12 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 					endRegion();
 				}
 			}
+
+			/* Phase 3 / M5.4: render placeholder / fallback static image
+			 * on top of the optional bg image but below status overlay.
+			 * No-op when the cell's configured lost-signal path is empty
+			 * or didn't load. */
+			render_lost_signal_image(i, cellX, cellY, cell.w, cell.h);
 		}
 
 		/* Render safe area guides (anchored to SignalRect, after video, before overlay) */
