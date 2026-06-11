@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "config-manager.hpp"
 #include "manager-dialog.hpp"
 #include "multiview-window.hpp"
+#include "signal-provider.hpp"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -357,6 +358,13 @@ bool obs_module_load(void)
 	config_manager = new ConfigManager();
 	config_manager->load();
 
+	/* Phase 3 / M6: bring up the signal provider registry before any UI
+	 * surface that might query it (manager dialog, source picker, future
+	 * external provider implementations). External providers register
+	 * themselves from their own translation units; the registry stays
+	 * usable with only the internal adapters until those land. */
+	signal_provider_registry_init();
+
 	obs_frontend_add_tools_menu_item(obs_module_text("OBSAdvancedMultiview"), on_tools_menu_clicked, nullptr);
 
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
@@ -381,6 +389,8 @@ void obs_module_unload(void)
 		delete config_manager;
 		config_manager = nullptr;
 	}
+
+	signal_provider_registry_shutdown();
 
 	obs_log(LOG_INFO, "plugin unloaded");
 }

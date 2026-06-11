@@ -60,6 +60,8 @@ target_sources(
           src/multiview-window-highlight.cpp
           src/multiview-window-status.cpp
           src/multiview-window-lost-image.cpp
+          src/signal-provider.hpp
+          src/signal-provider.cpp
           src/source-picker.hpp
           src/source-picker.cpp)
 
