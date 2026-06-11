@@ -254,6 +254,240 @@ void MultiviewWindow::refresh_sources()
 	rebuild_lost_signal_images();
 }
 
+bool MultiviewWindow::refresh_cell(int row, int col)
+{
+	/* Phase 3 / M6.1+ task 9.1.A: re-resolve a single cell without
+	 * disturbing the other cells' runtime. Critical for windows that
+	 * host long-segment HLS streams: rebuilding a 10-second-segment
+	 * ffmpeg_source means the user sees seconds of black before
+	 * playback resumes; doing that on every other cell's edit was the
+	 * top usability gripe of the M6.1 first slice.
+	 *
+	 * Lock-order recap:
+	 *   - cell_sources_ is touched only under source_mutex_ (read on
+	 *     render thread, written here on UI thread).
+	 *   - obs_source_create_private / dec_active must run OUTSIDE
+	 *     source_mutex_ because both can fire host-plugin callbacks
+	 *     into other threads which may try to take our mutex.
+	 *
+	 * The function therefore splits into four phases (collect under
+	 * lock → tear down outside lock → build outside lock → install
+	 * under lock), mirroring update_source_refs / release_source_refs
+	 * but scoped to one cell. */
+
+	/* Old refs we need to release outside the lock (for the cell we're
+	 * replacing). For external private sources we keep the OBSSource
+	 * so RAII drops it after the dec pair runs. */
+	OBSSource old_external;
+	OBSWeakSource old_internal_weak;
+	bool old_internal_was_showing = false;
+
+	/* New external intent (if the assignment after refresh is external). */
+	bool new_is_external = false;
+	SignalProviderType new_provider = SignalProviderType::Unknown;
+	std::string new_desired_name;
+	SignalConfig new_cfg_copy;
+
+	int cellIdx = -1;
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+		MultiviewInstance *inst = config_->find_instance(uuid_);
+		if (!inst)
+			return false;
+
+		/* Recompute layout to know cell count + index for (row, col). */
+		LayoutEngine tmpEngine;
+		tmpEngine.set_layout(layout_);
+		tmpEngine.set_viewport(800, 600);
+		tmpEngine.compute();
+
+		const auto &cells = tmpEngine.cells();
+		if (cells.size() != cell_sources_.size()) {
+			/* Layout / grid change in flight — parallel vectors are
+			 * about to be resized. Bail out so the caller falls back
+			 * to refresh_sources() which handles the resize correctly. */
+			return false;
+		}
+
+		for (size_t i = 0; i < cells.size(); i++) {
+			if (cells[i].gridRow == row && cells[i].gridCol == col) {
+				cellIdx = (int)i;
+				break;
+			}
+		}
+		if (cellIdx < 0)
+			return false; /* (row, col) not in current layout */
+
+		auto &cs = cell_sources_[cellIdx];
+
+		/* Phase 1 (under lock): capture old refs into locals so we can
+		 * release them outside the lock. dec_showing on the internal
+		 * weak ref is cheap and side-effect-free, so we keep it inside
+		 * the lock (matching update_source_refs()'s old behavior on
+		 * full refresh). The expensive piece is the external private
+		 * source, which we move out to drop later. */
+		if (cs.showing) {
+			old_internal_weak = cs.weak_ref;
+			old_internal_was_showing = true;
+		}
+		cs.weak_ref = nullptr;
+		cs.showing = false;
+
+		if (cs.private_source) {
+			old_external = std::move(cs.private_source);
+			cs.private_source = nullptr;
+		}
+
+		/* Reset runtime fields to the same defaults update_source_refs
+		 * uses for a fresh cell, then re-resolve the assignment. */
+		cs.type.clear();
+		cs.name.clear();
+		cs.prvw_fallback = false;
+		cs.state = SignalRuntimeState::Empty;
+		cs.last_active_ns = 0;
+		cs.last_reconnect_ns = 0;
+		cs.retry_attempt = 0;
+		cs.provider_type = SignalProviderType::Unknown;
+		cs.provider_settings_hash = 0;
+		cs.last_error_reason.clear();
+
+		/* Look up the (possibly new) assignment for this cell. */
+		const CellAssignment *ca = nullptr;
+		for (auto &a : inst->cellAssignments) {
+			if (a.row == row && a.col == col) {
+				ca = &a;
+				break;
+			}
+		}
+
+		std::string short_uuid = uuid_.size() > 8 ? uuid_.substr(0, 8) : uuid_;
+
+		if (ca && ca->signalConfig.is_external()) {
+			cs.provider_type = ca->signalConfig.provider;
+			cs.name = ca->signalConfig.displayName;
+			cs.state = SignalRuntimeState::Connecting;
+
+			char namebuf[256];
+			snprintf(namebuf, sizeof(namebuf), "OBS Advanced Multiview/%s/%d,%d/%s", short_uuid.c_str(),
+				 row, col, signal_provider_to_string(ca->signalConfig.provider));
+
+			new_is_external = true;
+			new_provider = ca->signalConfig.provider;
+			new_desired_name = namebuf;
+			new_cfg_copy = ca->signalConfig; /* SignalConfig deep-copy */
+		} else if (ca && !ca->type.empty()) {
+			cs.type = ca->type;
+			cs.name = ca->name;
+			if (ca->type == "pgm" || ca->type == "prvw") {
+				cs.state = SignalRuntimeState::Active;
+			} else {
+				obs_source_t *src = obs_get_source_by_name(ca->name.c_str());
+				if (src && obs_source_removed(src)) {
+					obs_source_release(src);
+					cs.state = SignalRuntimeState::MissingInternal;
+				} else if (src) {
+					cs.weak_ref = OBSGetWeakRef(src);
+					obs_source_inc_showing(src);
+					cs.showing = true;
+					cs.state = SignalRuntimeState::Active;
+					obs_source_release(src);
+				} else {
+					cs.state = SignalRuntimeState::MissingInternal;
+				}
+			}
+		}
+
+		/* Refresh effective Lost Signal cache for this cell. Cheap; we
+		 * recompute the whole vector to keep behavior identical to the
+		 * full refresh path's recompute_effective_lost_locked. */
+		recompute_effective_lost_locked(cells);
+	}
+
+	/* Phase 2 (outside lock): tear down old internal ref and old
+	 * external private source. dec_showing on a weak-ref strong
+	 * resolution can fire scene callbacks; dec_active on a private
+	 * ffmpeg_source stops its mp_media worker thread — both must not
+	 * run while source_mutex_ is held. */
+	if (old_internal_was_showing) {
+		OBSSourceAutoRelease oldSrc = OBSGetStrongRef(old_internal_weak);
+		if (oldSrc)
+			obs_source_dec_showing(oldSrc);
+	}
+	if (old_external) {
+		obs_source_dec_showing(old_external);
+		obs_source_dec_active(old_external);
+		old_external = nullptr; /* RAII drops the strong ref */
+	}
+
+	/* Phase 3 (outside lock): build the new external private source if
+	 * the assignment we resolved above is external. */
+	OBSSource new_external;
+	std::string create_failure_reason;
+	if (new_is_external) {
+		auto &reg = SignalProviderRegistry::instance();
+		const auto *provider = reg.find(new_provider);
+		if (!provider) {
+			create_failure_reason = "provider not registered";
+			obs_log(LOG_WARNING,
+				"[multiview-window] refresh_cell: provider not registered for cell (%d,%d) type=%d",
+				row, col, (int)new_provider);
+		} else {
+			new_external = provider->create_private_source(new_desired_name, new_cfg_copy);
+			if (new_external) {
+				obs_source_inc_active(new_external);
+				obs_source_inc_showing(new_external);
+			} else {
+				create_failure_reason = provider->unavailable_reason();
+				if (create_failure_reason.empty())
+					create_failure_reason = "provider failed to create source";
+			}
+		}
+	}
+
+	/* Phase 4 (under lock): install. */
+	bool need_volmeter_rebuild = false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+		if (cellIdx < (int)cell_sources_.size()) {
+			auto &cs = cell_sources_[cellIdx];
+			if (new_is_external) {
+				cs.private_source = new_external;
+				if (new_external) {
+					cs.state = SignalRuntimeState::Active;
+					cs.last_active_ns = os_gettime_ns();
+					cs.last_error_reason.clear();
+				} else {
+					cs.state = SignalRuntimeState::Error;
+					cs.last_error_reason = create_failure_reason;
+				}
+			}
+			need_volmeter_rebuild = true;
+		} else if (new_external) {
+			/* Layout shrank between create and install — unwind the
+			 * inc pair and let RAII drop. */
+			obs_source_dec_showing(new_external);
+			obs_source_dec_active(new_external);
+		}
+	}
+
+	/* Path-keyed bg/overlay/lost-signal/label rebuilds are no-ops when
+	 * the per-cell wanted path or text didn't change. They're cheap
+	 * enough to run unconditionally per single-cell edit; the win we
+	 * really care about (not interrupting OTHER cells' external private
+	 * sources) is already secured by the targeted teardown above. */
+	rebuild_label_sources();
+	rebuild_lost_signal_images();
+
+	/* Volmeter rebuild flag — coalesced by the next render frame's
+	 * check_active_track_change so we never run a heavy rebuild here. */
+	if (need_volmeter_rebuild)
+		volmeters_rebuild_requested_.store(true, std::memory_order_release);
+
+	return true;
+}
+
 /* Phase 3 / M5: in-place CellSource refresh used by the source-list signal
  * bridge (plugin-main connects source_create / source_remove / source_destroy
  * / source_rename and debounces them through this path).
@@ -2177,7 +2411,13 @@ void MultiviewWindow::on_add_source(int cellIndex)
 	inst->signalDirty = true;
 	config_->save();
 
-	refresh_sources();
+	/* Phase 3 / M6.1+ task 9.1.A: try the single-cell incremental path
+	 * first so other cells in the same window keep their external
+	 * private sources alive. Falls back to refresh_sources() if cell
+	 * count changed (shouldn't here — add/change does not affect cell
+	 * count) or any other invariant slips. */
+	if (!refresh_cell(r, c))
+		refresh_sources();
 }
 
 void MultiviewWindow::on_change_source(int cellIndex)
@@ -2214,7 +2454,10 @@ void MultiviewWindow::on_clear_cell(int cellIndex)
 	inst->signalDirty = true;
 	config_->save();
 
-	refresh_sources();
+	/* Phase 3 / M6.1+ task 9.1.A: incremental path — the cleared cell's
+	 * private source is released, the rest of the window untouched. */
+	if (!refresh_cell(r, c))
+		refresh_sources();
 }
 
 void MultiviewWindow::apply_clear_cell_for_rowcols(const std::vector<std::pair<int, int>> &rowCols)
@@ -2248,11 +2491,16 @@ void MultiviewWindow::apply_clear_cell_for_rowcols(const std::vector<std::pair<i
 	inst->signalDirty = true;
 	config_->save();
 
-	/* Heavy refresh resizes cell_sources_ + rebuilds label / VU / images,
-	 * matching the manual on_clear_cell flow. ManagerDialog observes the
-	 * same config_ instance so its assignment list will reflect the change
-	 * on its next repaint. */
-	refresh_sources();
+	/* Phase 3 / M6.1+ task 9.1.A: incremental path per cleared cell.
+	 * If the count somehow changed (shouldn't — ClearCell does not edit
+	 * the layout grid), fall back to the heavy refresh once and break
+	 * out so we don't run it for every entry in rowCols. */
+	for (const auto &rc : rowCols) {
+		if (!refresh_cell(rc.first, rc.second)) {
+			refresh_sources();
+			break;
+		}
+	}
 }
 
 void MultiviewWindow::on_save_assignments()

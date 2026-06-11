@@ -66,6 +66,31 @@ public:
 	void refresh_sources();
 	void refresh_sources_lazy();
 
+	/* Phase 3 / M6.1+ task 9.1.A: single-cell incremental refresh.
+	 *
+	 * `refresh_cell(row, col)` does the same thing refresh_sources()
+	 * does — re-resolve assignment, re-bind weak ref / re-create
+	 * external private source, refresh effective settings — but ONLY
+	 * for the one cell at (row, col). Other cells in the same window
+	 * keep their runtime untouched.
+	 *
+	 * Constraints:
+	 *   - cell_count must NOT have changed (layout / Edit Grid still
+	 *     goes through refresh_sources() because parallel-vector
+	 *     resizing is unsafe to interleave with single-slot in-place
+	 *     edits). The function bails and returns false if it detects
+	 *     a count mismatch; the caller is expected to fall back to
+	 *     refresh_sources() in that case.
+	 *   - External private-source release / create must run OUTSIDE
+	 *     source_mutex_ (lock-order rule from plan.md §6).
+	 *   - Volmeter rebuild uses the existing throttle flag —
+	 *     check_active_track_change() coalesces it on the next render
+	 *     frame, no per-cell volmeter API.
+	 *
+	 * Returns true when the single-cell path was taken; false when the
+	 * caller should fall back to refresh_sources(). */
+	bool refresh_cell(int row, int col);
+
 	/* Phase 3 / M5.4 hardening: invoked synchronously from the OBS
 	 * `source_remove` signal handler with the source pointer extracted via
 	 * calldata. We immediately drop any cell whose cached strong/weak ref
