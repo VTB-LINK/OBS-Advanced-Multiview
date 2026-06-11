@@ -271,12 +271,43 @@ static void on_obs_source_remove_precise(void *, calldata_t *cd)
 	schedule_refresh_sources_all();
 }
 
+/* Phase 3 / M5.4 hardening: precise source_create handler.
+ *
+ * Mirror of on_obs_source_remove_precise. Without this the user-visible
+ * recovery path (Edit → Undo Delete, or any plugin/script re-creating a
+ * source with the bound name) waited up to 50 ms for the debounced lazy
+ * refresh to run. The lazy refresh is still useful for source_destroy /
+ * source_rename storms, but for source_create alone we have a precise
+ * source pointer in calldata and can rebind synchronously.
+ *
+ * Cells whose state is *not* MissingInternal are left alone — we never
+ * forcibly rebind a cell whose existing binding still works, even if the
+ * names happen to collide (OBS allows duplicate display names through
+ * separate scene collections / nested groups; identity is the source
+ * pointer, not the name). */
+static void on_obs_source_create_precise(void *, calldata_t *cd)
+{
+	obs_source_t *source = nullptr;
+	calldata_get_ptr(cd, "source", &source);
+	if (source) {
+		for (auto &[id, window] : open_windows) {
+			if (window)
+				window->on_source_just_created(source);
+		}
+	}
+	/* Still schedule the debounced refresh as a safety net for any state
+	 * the precise path doesn't cover (e.g. a cell that just transitioned
+	 * to MissingInternal in this very frame and hasn't been observed by
+	 * the render loop yet). The lazy refresh is idempotent. */
+	schedule_refresh_sources_all();
+}
+
 static void register_source_list_signals()
 {
 	signal_handler_t *sh = obs_get_signal_handler();
 	if (!sh)
 		return;
-	signal_handler_connect(sh, "source_create", on_obs_source_signal, nullptr);
+	signal_handler_connect(sh, "source_create", on_obs_source_create_precise, nullptr);
 	signal_handler_connect(sh, "source_remove", on_obs_source_remove_precise, nullptr);
 	signal_handler_connect(sh, "source_destroy", on_obs_source_signal, nullptr);
 	signal_handler_connect(sh, "source_rename", on_obs_source_signal, nullptr);
@@ -287,7 +318,7 @@ static void unregister_source_list_signals()
 	signal_handler_t *sh = obs_get_signal_handler();
 	if (!sh)
 		return;
-	signal_handler_disconnect(sh, "source_create", on_obs_source_signal, nullptr);
+	signal_handler_disconnect(sh, "source_create", on_obs_source_create_precise, nullptr);
 	signal_handler_disconnect(sh, "source_remove", on_obs_source_remove_precise, nullptr);
 	signal_handler_disconnect(sh, "source_destroy", on_obs_source_signal, nullptr);
 	signal_handler_disconnect(sh, "source_rename", on_obs_source_signal, nullptr);

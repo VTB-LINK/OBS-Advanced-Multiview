@@ -331,6 +331,51 @@ void MultiviewWindow::on_source_being_removed(obs_source_t *source)
 		volmeters_rebuild_requested_.store(true, std::memory_order_release);
 }
 
+void MultiviewWindow::on_source_just_created(obs_source_t *source)
+{
+	if (!source)
+		return;
+
+	/* Don't rebind through a source that's already on its way out — same
+	 * caution we apply on every other bind path. Shouldn't happen for
+	 * source_create, but cheap defence. */
+	if (obs_source_removed(source))
+		return;
+
+	const char *cname = obs_source_get_name(source);
+	if (!cname || !*cname)
+		return;
+	const std::string newName(cname);
+
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	bool any_match = false;
+	for (auto &cs : cell_sources_) {
+		if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
+			continue;
+		if (cs.state != SignalRuntimeState::MissingInternal)
+			continue;
+		if (cs.name != newName)
+			continue;
+
+		/* Sync re-bind. Pair the inc_showing here so the source's
+		 * show_refs counter matches the binding lifetime — opposite of
+		 * source_remove where we deliberately don't dec_showing. Here
+		 * the source is alive and stable, so inc_showing is safe and
+		 * keeps audio meters reachable. */
+		cs.weak_ref = OBSGetWeakRef(source);
+		obs_source_inc_showing(source);
+		cs.showing = true;
+		cs.state = SignalRuntimeState::Active;
+		cs.last_active_ns = os_gettime_ns();
+		cs.retry_attempt = 0;
+		any_match = true;
+	}
+
+	if (any_match)
+		volmeters_rebuild_requested_.store(true, std::memory_order_release);
+}
+
 void MultiviewWindow::update_source_refs_lazy()
 {
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);

@@ -82,6 +82,16 @@ public:
 	 * libobs guarantees stays alive for the duration of the signal. */
 	void on_source_being_removed(obs_source_t *source);
 
+	/* Phase 3 / M5.4 hardening: invoked synchronously from the OBS
+	 * `source_create` signal handler. If the new source's name matches a
+	 * cell that is currently in MissingInternal (e.g. user just clicked
+	 * Edit → Undo Delete on a scene we were bound to), we re-bind right
+	 * away rather than waiting for the 50ms debounce on the lazy refresh.
+	 * Cells whose state is already Active (or any non-Missing variant)
+	 * are not touched — re-binding a cell whose original source still
+	 * resolves would change render identity unexpectedly. */
+	void on_source_just_created(obs_source_t *source);
+
 	/* Recompute effective visual settings for all cells */
 	void refresh_visual_settings();
 
