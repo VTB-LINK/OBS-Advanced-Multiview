@@ -9,6 +9,7 @@
 - 术语权威基准：[docs/TERMINOLOGY.md](docs/TERMINOLOGY.md)（Phase / Milestone 命名以本文件为准）。
 - Phase 2 视觉参数设计：[docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md)。
 - Phase 2 代码硬化记录：[docs/phase-2-hardening-notes.md](docs/phase-2-hardening-notes.md)。
+- Phase 3 Signal Lost 与外部信号设计：[docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md)。
 - Phase 1 验收清单：[docs/phase-1-acceptance-checklist.md](docs/phase-1-acceptance-checklist.md)。
 - Phase 1 代码硬化记录：[docs/phase-1-hardening-notes.md](docs/phase-1-hardening-notes.md)。
 - 已知限制：[docs/known-limitations.md](docs/known-limitations.md)。
@@ -763,7 +764,7 @@ Phase 2.5 明确不做：
 
 ## 8. Milestone 5：断开 / 删除 / Signal Lost 行为
 
-状态：未开始，需在对应后续阶段详细规划。
+状态：未开始，详细设计已建立，详见 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md)。
 
 当前仅保留已讨论和 PRD 中已列明方向。
 
@@ -803,7 +804,7 @@ OBS 内部源删除时，未来需支持的方向：
 
 ## 9. Milestone 6：外部流接入
 
-状态：未开始，需在对应后续阶段详细规划；部分内容也依赖 Milestone 5。
+状态：未开始，详细设计已建立，详见 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md)；部分内容也依赖 Milestone 5。
 
 当前仅保留已讨论和 PRD 中已列明方向。
 
