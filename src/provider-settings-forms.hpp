@@ -95,7 +95,13 @@ private slots:
 private:
 	void apply_local_visibility(bool is_local);
 
-	/* Common section */
+	/* Form fields. ffmpeg_source's setting keys are persisted verbatim
+	 * (see provider-settings-forms.cpp). The form is flat \u2014 no Advanced
+	 * foldout \u2014 and per-mode visibility hides keys that don't apply to
+	 * the current mode. Keys we hard-lock in FfmpegProvider
+	 * (restart_on_activate / close_when_inactive, plus seekable in any
+	 * mode and looping/speed_percent in network mode) are NOT in this
+	 * form; users never see them and cannot break activation. */
 	QCheckBox *chk_local_file_ = nullptr;
 	QLineEdit *url_edit_ = nullptr;
 	QLineEdit *local_path_edit_ = nullptr;
@@ -105,13 +111,11 @@ private:
 	QSpinBox *spin_buffering_mb_ = nullptr;
 	QCheckBox *chk_hw_decode_ = nullptr;
 	QComboBox *cmb_color_range_ = nullptr;
-	QCheckBox *chk_looping_ = nullptr;
-
-	/* Advanced section */
-	QGroupBox *grp_advanced_ = nullptr;
 	QCheckBox *chk_clear_on_end_ = nullptr;
-	QCheckBox *chk_linear_alpha_ = nullptr;
-	QCheckBox *chk_seekable_ = nullptr;
+	QCheckBox *chk_looping_ = nullptr;
+	QLabel *lbl_speed_percent_ = nullptr;
 	QSpinBox *spin_speed_percent_ = nullptr;
+	QCheckBox *chk_linear_alpha_ = nullptr;
+	QLabel *lbl_ffmpeg_options_ = nullptr;
 	QLineEdit *ffmpeg_options_edit_ = nullptr;
 };
