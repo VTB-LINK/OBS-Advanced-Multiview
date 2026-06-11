@@ -315,6 +315,10 @@ void MultiviewWindow::update_source_refs()
 		cell_sources_[i].weak_ref = nullptr;
 		cell_sources_[i].showing = false;
 		cell_sources_[i].prvw_fallback = false;
+		cell_sources_[i].state = SignalRuntimeState::Empty;
+		cell_sources_[i].last_active_ns = 0;
+		cell_sources_[i].last_reconnect_ns = 0;
+		cell_sources_[i].retry_attempt = 0;
 
 		/* Look up assignment by (gridRow, gridCol) */
 		int r = cells[i].gridRow;
@@ -333,8 +337,10 @@ void MultiviewWindow::update_source_refs()
 		cell_sources_[i].name = ca->name;
 
 		/* PGM/PRVW are resolved per-frame in render(), no caching */
-		if (ca->type == "pgm" || ca->type == "prvw")
+		if (ca->type == "pgm" || ca->type == "prvw") {
+			cell_sources_[i].state = SignalRuntimeState::Active;
 			continue;
+		}
 
 		/* Scene/Source: cache weak ref and inc_showing */
 		obs_source_t *src = obs_get_source_by_name(ca->name.c_str());
@@ -342,7 +348,13 @@ void MultiviewWindow::update_source_refs()
 			cell_sources_[i].weak_ref = OBSGetWeakRef(src);
 			obs_source_inc_showing(src);
 			cell_sources_[i].showing = true;
+			cell_sources_[i].state = SignalRuntimeState::Active;
 			obs_source_release(src);
+		} else {
+			/* Phase 3 / M5: name resolves to nothing right now — mark as missing.
+			 * The Phase 2 lazy re-resolve path in render() can still recover it
+			 * (e.g. user undoes a deletion); we just record the state here. */
+			cell_sources_[i].state = SignalRuntimeState::MissingInternal;
 		}
 	}
 }
@@ -370,6 +382,11 @@ void MultiviewWindow::release_source_refs()
 
 		/* Release label text sources */
 		label_sources_.clear();
+
+		/* Phase 3 / M5: drop shared status overlay text sources alongside
+		 * label sources so the lifetime is identical and no text source
+		 * outlives the runtime that referenced it. */
+		release_status_text_sources();
 
 		/* Collect bg/overlay textures and clear vectors under lock */
 		for (auto &bgi : bg_images_) {
@@ -558,6 +575,28 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 					}
 				}
 				src = srcHolder;
+			}
+
+			/* Phase 3 / M5.1a: track signal runtime state without
+			 * altering Phase 2 visual behavior. State is only consumed
+			 * by future M5 work (Missing Source overlay, Reconnect Now,
+			 * fallback). PGM/PRVW are always considered Active because
+			 * they target whichever scene is currently selected. */
+			SignalRuntimeState newState = cs.state;
+			if (cs.type.empty()) {
+				newState = SignalRuntimeState::Empty;
+			} else if (cs.type == "pgm" || cs.type == "prvw") {
+				newState = SignalRuntimeState::Active;
+			} else if (src) {
+				newState = SignalRuntimeState::Active;
+			} else {
+				newState = SignalRuntimeState::MissingInternal;
+			}
+			if (newState != cs.state)
+				cell_sources_[i].state = newState;
+			if (newState == SignalRuntimeState::Active) {
+				cell_sources_[i].last_active_ns = os_gettime_ns();
+				cell_sources_[i].retry_attempt = 0;
 			}
 		}
 
@@ -876,6 +915,11 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 
 		/* Render label overlay */
 		render_label(i, cell, vpX, vpY);
+
+		/* Phase 3 / M5: status overlay (Missing Source for now). Rendered
+		 * after label so a Below-mode label area never gets covered, and
+		 * before VU meter / highlight which are intentionally on top. */
+		render_status_overlay(i, cellX, cellY, cell.w, cell.h);
 
 		/* Render VU meter bars */
 		render_vu_meter(i, cell, vpX, vpY, vrX, vrY, vrW, vrH);

@@ -155,6 +155,58 @@ struct OverlaySettings {
 	static OverlaySettings from_obs_data(obs_data_t *data);
 };
 
+/* ========== Signal Lost / Missing Behavior (Phase 3 / M5) ==========
+ *
+ * Behavior selected when a cell's primary signal is unavailable. Two
+ * orthogonal sources of unavailability:
+ *
+ *   - Internal source missing: assigned OBS scene/source no longer
+ *     resolvable by name (deleted, scene collection switch, etc.).
+ *   - External source lost: provider-backed private source has no recent
+ *     valid output (reserved for M6; data model already future-proof).
+ *
+ * Defaults follow [docs/phase-3-signal-lost-and-external-sources-design.md]
+ * §5: black + 'Missing Source' overlay for internal, Signal Lost overlay for
+ * external; fallback off; manual reconnect cooldown 1000 ms.
+ */
+enum class InternalMissingBehavior {
+	Black,            /* keep cell black + 'Missing Source' overlay (default) */
+	PlaceholderImage, /* show user-selected static image + overlay */
+	ClearCell,        /* clear assignment and release cell (must be explicit) */
+};
+
+enum class ExternalLostBehavior {
+	SignalLostOverlay, /* keep provider source alive, draw 'Signal Lost' overlay (default) */
+	RetryOnly,         /* same as overlay, but fallback never engages */
+	RetryWithFallback, /* show fallbackAssignment while monitoring main signal */
+	SignalLostImage,   /* show signalLostImagePath when lost */
+};
+
+struct LostSignalSettings {
+	InternalMissingBehavior internalMissingBehavior = InternalMissingBehavior::Black;
+	ExternalLostBehavior externalLostBehavior = ExternalLostBehavior::SignalLostOverlay;
+
+	/* Optional resource paths */
+	std::string placeholderImagePath; /* used when internal == PlaceholderImage */
+	std::string signalLostImagePath;  /* used when external == SignalLostImage */
+
+	/* Fallback signal — Phase 3 first-pass supports static image and OBS
+	 * internal sources only (mirror of CellAssignment). External fallback
+	 * is reserved for later. fallbackType empty == disabled. */
+	std::string fallbackType; /* "", "image", "pgm", "prvw", "scene", "source" */
+	std::string fallbackName; /* image path (when type == image) or source name */
+
+	/* Backoff timing for monitor-layer reconnect attempts. Provider plugins
+	 * have their own internal retry loops; these only gate Multiview's
+	 * private-source rebuild attempts. */
+	int retryInitialMs = 1000;
+	int retryMaxMs = 30000;
+	int manualReconnectCooldownMs = 1000;
+
+	obs_data_t *to_obs_data() const;
+	static LostSignalSettings from_obs_data(obs_data_t *data);
+};
+
 /* PGM / PRVW cell highlight border (OBS native-style red/green borders).
  *
  * Scope is intentionally window-wide (Global + Instance only): per-cell
@@ -273,6 +325,32 @@ struct LayoutData {
 	static LayoutData from_obs_data(obs_data_t *data);
 };
 
+/* Per-cell Lost Signal override.
+ *
+ * Phase 3 uses a 2-layer model (Global + Cell) — instance-level override
+ * is intentionally NOT introduced in M5 to keep the UI surface and JSON
+ * shape minimal. If future feedback warrants it, an `InstanceLostSignalSettings`
+ * container can be inserted between Global and Cell without breaking this
+ * struct's persistence (fields are forward-compatible).
+ *
+ * `mode == Inherit` ⇒ resolver returns the global default and ignores the
+ * `settings` payload. We still persist the payload so users can toggle
+ * inheritance on/off without losing their previous overrides.
+ */
+struct CellLostSignalSettings {
+	int row = -1;
+	int col = -1;
+	InheritanceMode mode = InheritanceMode::Inherit;
+	LostSignalSettings settings;
+
+	obs_data_t *to_obs_data() const;
+	static CellLostSignalSettings from_obs_data(obs_data_t *data);
+};
+
+/* Resolve effective Lost Signal settings for a given (row, col).
+ * cell == nullptr || cell->mode == Inherit ⇒ returns the global default. */
+LostSignalSettings resolve_effective_lost_signal(const LostSignalSettings &global, const CellLostSignalSettings *cell);
+
 struct MultiviewInstance {
 	std::string uuid;
 	std::string name;
@@ -282,6 +360,10 @@ struct MultiviewInstance {
 	InstanceVisualSettings visualSettings;
 	std::vector<CellVisualSettings> cellVisualSettings;
 
+	/* Phase 3 / M5: per-cell Lost Signal overrides. Empty = all cells inherit
+	 * the global default. Persisted only for cells with mode == Override. */
+	std::vector<CellLostSignalSettings> cellLostSignalSettings;
+
 	bool useGlobalGutter = true;
 	bool layoutDirty = false;
 	bool signalDirty = false;
@@ -290,6 +372,9 @@ struct MultiviewInstance {
 
 	/* Find cell visual settings for given coordinate, or nullptr */
 	const CellVisualSettings *find_cell_visual(int row, int col) const;
+
+	/* Find cell Lost Signal override for given coordinate, or nullptr */
+	const CellLostSignalSettings *find_cell_lost_signal(int row, int col) const;
 
 	obs_data_t *to_obs_data() const;
 	static MultiviewInstance from_obs_data(obs_data_t *data);
@@ -312,6 +397,10 @@ struct GlobalSettings {
 	bool reResolveInheritObs = true;
 	double reResolveCustomFps = 30.0;
 	GlobalVisualSettings visualSettings;
+
+	/* Phase 3 / M5: project-wide default Lost Signal behavior. Cells without
+	 * an Override entry resolve to this struct. */
+	LostSignalSettings lostSignal;
 
 	obs_data_t *to_obs_data() const;
 	static GlobalSettings from_obs_data(obs_data_t *data);

@@ -25,7 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 class ConfigManager {
 public:
-	static constexpr int CURRENT_CONFIG_VERSION = 2;
+	static constexpr int CURRENT_CONFIG_VERSION = 3;
 
 	ConfigManager();
 	~ConfigManager();

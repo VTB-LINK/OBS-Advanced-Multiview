@@ -97,6 +97,36 @@ private:
 	LayoutData layout_;
 	int gutter_px_ = 0;
 
+	/* Phase 3 / M5: cell signal runtime state.
+	 *
+	 * Wraps the existing PGM/PRVW/Scene/Source flow so future work (Signal
+	 * Lost overlay, Reconnect Now, fallback, M6 external providers) can
+	 * branch on a single state value instead of scattering string-type
+	 * checks throughout render(). M5.1a only populates the state; the
+	 * Phase 2 visual behavior is intentionally preserved.
+	 *
+	 * State semantics (see [docs/phase-3-signal-lost-and-external-sources-design.md] §6):
+	 *   Empty           : cell has no assignment.
+	 *   Resolving       : reserved for async resolution paths (M6).
+	 *   Active          : cell currently has a usable source for render.
+	 *   MissingInternal : assignment exists but obs_get_source_by_name() fails.
+	 *   Connecting      : reserved for external providers (M6).
+	 *   Lost            : reserved for external providers (M6).
+	 *   RetryScheduled  : reserved for backoff timer integration (M5.3+).
+	 *   FallbackActive  : reserved for fallback engagement (M5.4).
+	 *   Error           : provider/source unavailable; non-recoverable. */
+	enum class SignalRuntimeState {
+		Empty,
+		Resolving,
+		Active,
+		MissingInternal,
+		Connecting,
+		Lost,
+		RetryScheduled,
+		FallbackActive,
+		Error,
+	};
+
 	/* Sources per cell (indexed same as engine_.cells()) */
 	struct CellSource {
 		std::string type;       /* "pgm", "prvw", "scene", "source", "" */
@@ -104,6 +134,16 @@ private:
 		OBSWeakSource weak_ref; /* cached for scene/source only */
 		bool showing = false;
 		bool prvw_fallback = false; /* PRVW fell back to PGM */
+
+		/* Phase 3 / M5 runtime state. Read on render thread, mutated under
+		 * source_mutex_ on UI thread (refresh_sources) and render thread
+		 * (lazy re-resolve / per-frame health check). recursive_mutex
+		 * already protects vector-level access, so plain field reads are
+		 * safe within the same lock scope. */
+		SignalRuntimeState state = SignalRuntimeState::Empty;
+		uint64_t last_active_ns = 0;    /* set when render produced a non-empty frame */
+		uint64_t last_reconnect_ns = 0; /* set on manual / scheduled rebuild attempt */
+		int retry_attempt = 0;          /* backoff counter, reset on Active */
 	};
 	std::vector<CellSource> cell_sources_;
 	std::recursive_mutex source_mutex_;
@@ -135,6 +175,38 @@ private:
 	std::vector<LabelSource> label_sources_;
 	void rebuild_label_sources();
 	void render_label(int cellIndex, const CellRect &cell, int vpX, int vpY);
+
+	/* Phase 3 / M5: shared status overlay text sources.
+	 *
+	 * One private text source per status text variant ("Missing Source",
+	 * "Signal Lost", etc.). They're created lazily on first use and
+	 * shared across all cells of this window — sized once at high font
+	 * resolution and scaled DOWN to each cell, mirroring the label
+	 * source pattern to avoid blurry upscaling.
+	 *
+	 * `release_status_text_sources()` is invoked from the same teardown
+	 * paths as label_sources_ so the source lifetime is bounded by the
+	 * MultiviewWindow. */
+	struct StatusTextEntry {
+		OBSSource source;   /* private text_gdiplus / text_ft2_source_v2 */
+		uint32_t width = 0; /* cached after first non-zero query */
+		uint32_t height = 0;
+	};
+	enum class StatusOverlayKind {
+		None,
+		MissingSource,
+		SignalLost,
+		Reconnecting,
+		Fallback,
+	};
+	StatusTextEntry status_missing_source_;
+	StatusTextEntry status_signal_lost_;  /* reserved for M6 */
+	StatusTextEntry status_reconnecting_; /* reserved for M5.3 */
+	StatusTextEntry status_fallback_;     /* reserved for M5.4 */
+	void ensure_status_text_source(StatusTextEntry &entry, const char *text);
+	void release_status_text_sources();
+	StatusOverlayKind status_overlay_kind_for_state(SignalRuntimeState state) const;
+	void render_status_overlay(int cellIndex, int cellX, int cellY, int cellW, int cellH);
 
 	/* dB scale label text sources (cached per unique dB value) */
 	struct ScaleLabelEntry {

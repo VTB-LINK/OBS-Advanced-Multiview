@@ -43,6 +43,59 @@ static InheritanceMode inheritance_mode_from_str(const char *s)
 	return InheritanceMode::Inherit;
 }
 
+/* Phase 3 / M5: Lost Signal enum string mapping. Strings instead of ints so
+ * future additions (e.g. ColorBars, PreviousFrameFreeze) won't shift the
+ * numeric meaning of older configs. */
+static const char *internal_missing_behavior_to_str(InternalMissingBehavior b)
+{
+	switch (b) {
+	case InternalMissingBehavior::PlaceholderImage:
+		return "placeholder_image";
+	case InternalMissingBehavior::ClearCell:
+		return "clear_cell";
+	default:
+		return "black";
+	}
+}
+
+static InternalMissingBehavior internal_missing_behavior_from_str(const char *s)
+{
+	if (!s)
+		return InternalMissingBehavior::Black;
+	if (strcmp(s, "placeholder_image") == 0)
+		return InternalMissingBehavior::PlaceholderImage;
+	if (strcmp(s, "clear_cell") == 0)
+		return InternalMissingBehavior::ClearCell;
+	return InternalMissingBehavior::Black;
+}
+
+static const char *external_lost_behavior_to_str(ExternalLostBehavior b)
+{
+	switch (b) {
+	case ExternalLostBehavior::RetryOnly:
+		return "retry_only";
+	case ExternalLostBehavior::RetryWithFallback:
+		return "retry_with_fallback";
+	case ExternalLostBehavior::SignalLostImage:
+		return "signal_lost_image";
+	default:
+		return "signal_lost_overlay";
+	}
+}
+
+static ExternalLostBehavior external_lost_behavior_from_str(const char *s)
+{
+	if (!s)
+		return ExternalLostBehavior::SignalLostOverlay;
+	if (strcmp(s, "retry_only") == 0)
+		return ExternalLostBehavior::RetryOnly;
+	if (strcmp(s, "retry_with_fallback") == 0)
+		return ExternalLostBehavior::RetryWithFallback;
+	if (strcmp(s, "signal_lost_image") == 0)
+		return ExternalLostBehavior::SignalLostImage;
+	return ExternalLostBehavior::SignalLostOverlay;
+}
+
 static const char *label_display_mode_to_str(LabelDisplayMode m)
 {
 	switch (m) {
@@ -664,6 +717,118 @@ HighlightSettings HighlightSettings::from_obs_data(obs_data_t *data)
 	return s;
 }
 
+/* ========== LostSignalSettings (Phase 3 / M5) ==========
+ *
+ * fallbackType is intentionally a free-form string mirroring CellAssignment:
+ *   - ""        : fallback disabled
+ *   - "image"   : fallbackName is an absolute file path
+ *   - "pgm"     : current Program scene
+ *   - "prvw"    : current Preview scene
+ *   - "scene"   : OBS scene name in fallbackName
+ *   - "source"  : OBS source name in fallbackName
+ * Future external-source fallback can extend this set without breaking
+ * persistence; unknown values resolve to "" (disabled) on load.
+ */
+
+obs_data_t *LostSignalSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_string(data, "internalMissingBehavior", internal_missing_behavior_to_str(internalMissingBehavior));
+	obs_data_set_string(data, "externalLostBehavior", external_lost_behavior_to_str(externalLostBehavior));
+	obs_data_set_string(data, "placeholderImagePath", placeholderImagePath.c_str());
+	obs_data_set_string(data, "signalLostImagePath", signalLostImagePath.c_str());
+	obs_data_set_string(data, "fallbackType", fallbackType.c_str());
+	obs_data_set_string(data, "fallbackName", fallbackName.c_str());
+	obs_data_set_int(data, "retryInitialMs", retryInitialMs);
+	obs_data_set_int(data, "retryMaxMs", retryMaxMs);
+	obs_data_set_int(data, "manualReconnectCooldownMs", manualReconnectCooldownMs);
+	return data;
+}
+
+LostSignalSettings LostSignalSettings::from_obs_data(obs_data_t *data)
+{
+	LostSignalSettings s;
+	if (!data)
+		return s;
+	s.internalMissingBehavior =
+		internal_missing_behavior_from_str(obs_data_get_string(data, "internalMissingBehavior"));
+	s.externalLostBehavior = external_lost_behavior_from_str(obs_data_get_string(data, "externalLostBehavior"));
+	s.placeholderImagePath = obs_data_get_string(data, "placeholderImagePath");
+	s.signalLostImagePath = obs_data_get_string(data, "signalLostImagePath");
+
+	/* Whitelist fallbackType so an arbitrary string from disk can never reach
+	 * the runtime. Anything unrecognised becomes "" (disabled) and the
+	 * fallbackName is kept verbatim so the user can re-enable later. */
+	const char *ft = obs_data_get_string(data, "fallbackType");
+	if (ft && (strcmp(ft, "image") == 0 || strcmp(ft, "pgm") == 0 || strcmp(ft, "prvw") == 0 ||
+		   strcmp(ft, "scene") == 0 || strcmp(ft, "source") == 0)) {
+		s.fallbackType = ft;
+	} else {
+		s.fallbackType.clear();
+	}
+	s.fallbackName = obs_data_get_string(data, "fallbackName");
+
+	if (obs_data_has_user_value(data, "retryInitialMs"))
+		s.retryInitialMs = (int)obs_data_get_int(data, "retryInitialMs");
+	if (obs_data_has_user_value(data, "retryMaxMs"))
+		s.retryMaxMs = (int)obs_data_get_int(data, "retryMaxMs");
+	if (obs_data_has_user_value(data, "manualReconnectCooldownMs"))
+		s.manualReconnectCooldownMs = (int)obs_data_get_int(data, "manualReconnectCooldownMs");
+
+	/* Clamps: match design defaults in [docs/phase-3-signal-lost-and-external-sources-design.md] §10
+	 * (1s..30s backoff, 1s manual cooldown). Out-of-range values can come from
+	 * hand-edited configs or future versions; clamp instead of reject. */
+	if (s.retryInitialMs < 100)
+		s.retryInitialMs = 100;
+	if (s.retryInitialMs > 60000)
+		s.retryInitialMs = 60000;
+	if (s.retryMaxMs < s.retryInitialMs)
+		s.retryMaxMs = s.retryInitialMs;
+	if (s.retryMaxMs > 600000)
+		s.retryMaxMs = 600000;
+	if (s.manualReconnectCooldownMs < 0)
+		s.manualReconnectCooldownMs = 0;
+	if (s.manualReconnectCooldownMs > 60000)
+		s.manualReconnectCooldownMs = 60000;
+	return s;
+}
+
+/* ========== CellLostSignalSettings (Phase 3 / M5) ========== */
+
+obs_data_t *CellLostSignalSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_int(data, "row", row);
+	obs_data_set_int(data, "col", col);
+	obs_data_set_string(data, "mode", inheritance_mode_to_str(mode));
+	obs_data_t *inner = settings.to_obs_data();
+	obs_data_set_obj(data, "settings", inner);
+	obs_data_release(inner);
+	return data;
+}
+
+CellLostSignalSettings CellLostSignalSettings::from_obs_data(obs_data_t *data)
+{
+	CellLostSignalSettings c;
+	if (!data)
+		return c;
+	c.row = (int)obs_data_get_int(data, "row");
+	c.col = (int)obs_data_get_int(data, "col");
+	c.mode = inheritance_mode_from_str(obs_data_get_string(data, "mode"));
+	obs_data_t *inner = obs_data_get_obj(data, "settings");
+	c.settings = LostSignalSettings::from_obs_data(inner);
+	if (inner)
+		obs_data_release(inner);
+	return c;
+}
+
+LostSignalSettings resolve_effective_lost_signal(const LostSignalSettings &global, const CellLostSignalSettings *cell)
+{
+	if (cell && cell->mode == InheritanceMode::Override)
+		return cell->settings;
+	return global;
+}
+
 /* ========== GlobalVisualSettings ========== */
 
 obs_data_t *GlobalVisualSettings::to_obs_data() const
@@ -1115,6 +1280,20 @@ obs_data_t *MultiviewInstance::to_obs_data() const
 	obs_data_set_array(data, "cellVisualSettings", cvs_arr);
 	obs_data_array_release(cvs_arr);
 
+	/* Phase 3 / M5: per-cell Lost Signal overrides. Mirror the cellVisualSettings
+	 * sparse-persistence rule — only cells with mode == Override hit disk so
+	 * default-everywhere instances keep a clean JSON shape. */
+	obs_data_array_t *cls_arr = obs_data_array_create();
+	for (auto &cls : cellLostSignalSettings) {
+		if (cls.mode != InheritanceMode::Override)
+			continue;
+		obs_data_t *item = cls.to_obs_data();
+		obs_data_array_push_back(cls_arr, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(data, "cellLostSignalSettings", cls_arr);
+	obs_data_array_release(cls_arr);
+
 	return data;
 }
 
@@ -1177,6 +1356,19 @@ MultiviewInstance MultiviewInstance::from_obs_data(obs_data_t *data)
 		obs_data_array_release(cvs_arr);
 	}
 
+	/* Phase 3 / M5: per-cell Lost Signal overrides. Absent in v1/v2 configs;
+	 * resolver falls back to global default when the override list is empty. */
+	obs_data_array_t *cls_arr = obs_data_get_array(data, "cellLostSignalSettings");
+	if (cls_arr) {
+		size_t count = obs_data_array_count(cls_arr);
+		for (size_t i = 0; i < count; i++) {
+			obs_data_t *item = obs_data_array_item(cls_arr, i);
+			inst.cellLostSignalSettings.push_back(CellLostSignalSettings::from_obs_data(item));
+			obs_data_release(item);
+		}
+		obs_data_array_release(cls_arr);
+	}
+
 	return inst;
 }
 
@@ -1209,6 +1401,15 @@ const CellVisualSettings *MultiviewInstance::find_cell_visual(int row, int col) 
 	for (auto &cvs : cellVisualSettings) {
 		if (cvs.row == row && cvs.col == col)
 			return &cvs;
+	}
+	return nullptr;
+}
+
+const CellLostSignalSettings *MultiviewInstance::find_cell_lost_signal(int row, int col) const
+{
+	for (auto &cls : cellLostSignalSettings) {
+		if (cls.row == row && cls.col == col)
+			return &cls;
 	}
 	return nullptr;
 }
@@ -1256,6 +1457,11 @@ obs_data_t *GlobalSettings::to_obs_data() const
 	obs_data_set_obj(data, "visualSettings", vs);
 	obs_data_release(vs);
 
+	/* Phase 3 / M5: project-wide Lost Signal default. */
+	obs_data_t *ls = lostSignal.to_obs_data();
+	obs_data_set_obj(data, "lostSignal", ls);
+	obs_data_release(ls);
+
 	return data;
 }
 
@@ -1283,6 +1489,13 @@ GlobalSettings GlobalSettings::from_obs_data(obs_data_t *data)
 	gs.visualSettings = GlobalVisualSettings::from_obs_data(vs);
 	if (vs)
 		obs_data_release(vs);
+
+	/* Phase 3 / M5: Absent on v1/v2 configs — from_obs_data(nullptr) returns
+	 * struct defaults, matching the documented project-wide defaults. */
+	obs_data_t *ls = obs_data_get_obj(data, "lostSignal");
+	gs.lostSignal = LostSignalSettings::from_obs_data(ls);
+	if (ls)
+		obs_data_release(ls);
 
 	return gs;
 }
