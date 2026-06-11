@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "source-picker.hpp"
+#include "provider-settings-forms.hpp"
 #include "signal-provider.hpp"
 
 #include <obs.h>
@@ -27,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QScrollArea>
 #include <QVBoxLayout>
 
 SourcePicker::SourcePicker(QWidget *parent) : QDialog(parent)
@@ -196,25 +198,17 @@ void SourcePicker::on_accept()
 	else if (idx == 2)
 		activeList = source_list_;
 	else if (tabs_->widget(idx) == media_tab_) {
-		/* Phase 3 / M6.1: Media tab — build a CellAssignment whose
-		 * signalConfig.provider == Ffmpeg and providerSettings carries
-		 * the user's URL under the canonical `input` key. The legacy
-		 * `type` / `name` fields stay empty: external cells are
-		 * recognized via signalConfig.is_external() and the runtime
-		 * never tries to obs_get_source_by_name them. */
-		const QString url = media_url_edit_ ? media_url_edit_->text().trimmed() : QString();
-		if (url.isEmpty()) {
-			QMessageBox::information(this, QStringLiteral("URL required"),
-						 QStringLiteral("Enter a media URL (RTMP / HLS / FLV / SRT / "
-								"file URL) before adding the source."));
+		/* Phase 3 / M6.1+ task 9.1.B: full ffmpeg parity. The form
+		 * builds a ready-to-persist SignalConfig with provider=Ffmpeg
+		 * and providerSettings carrying every key the user touched
+		 * (defaults are dropped to keep persisted JSON compact). */
+		if (!media_form_ || !media_form_->is_valid()) {
+			QMessageBox::information(this, QStringLiteral("Media input required"),
+						 media_form_ ? media_form_->invalid_reason() : QString());
 			return;
 		}
-
 		result_ = CellAssignment{};
-		result_.signalConfig.provider = SignalProviderType::Ffmpeg;
-		result_.signalConfig.displayName = url.toStdString();
-		result_.signalConfig.providerSettings = obs_data_create();
-		obs_data_set_string(result_.signalConfig.providerSettings, "input", url.toUtf8().constData());
+		result_.signalConfig = media_form_->to_signal_config();
 		accept();
 		return;
 	} else {
@@ -297,7 +291,7 @@ QWidget *SourcePicker::build_media_tab()
 	layout->setContentsMargins(12, 12, 12, 12);
 	layout->setSpacing(10);
 
-	auto *heading = new QLabel(QStringLiteral("Network media (FFmpeg)"), page);
+	auto *heading = new QLabel(QStringLiteral("Network media or local file (FFmpeg)"), page);
 	{
 		QFont f = heading->font();
 		f.setBold(true);
@@ -307,23 +301,20 @@ QWidget *SourcePicker::build_media_tab()
 
 	auto *body = new QLabel(
 		QStringLiteral(
-			"Enter an FFmpeg-accepted URL (RTMP / HLS / FLV / SRT / http / file://). The cell will host "
-			"a private ffmpeg_source created only for this Multiview \u2014 it does not appear in OBS's "
-			"Sources dock and reconnects automatically on network drops."),
+			"Cell hosts a private ffmpeg_source created only for this Multiview \u2014 it does not appear in OBS's "
+			"Sources dock. Network streams reconnect automatically; local files can loop."),
 		page);
 	body->setWordWrap(true);
 	layout->addWidget(body);
 
-	auto *form = new QFormLayout();
-	media_url_edit_ = new QLineEdit(page);
-	media_url_edit_->setPlaceholderText(QStringLiteral("e.g. https://example.com/live.m3u8"));
-	media_url_edit_->setClearButtonEnabled(true);
-	form->addRow(QStringLiteral("URL:"), media_url_edit_);
-	layout->addLayout(form);
-
-	/* Pressing Enter inside the URL field accepts the dialog so the user
-	 * doesn't need to grab the mouse for every paste. */
-	connect(media_url_edit_, &QLineEdit::returnPressed, this, &SourcePicker::on_accept);
+	/* The form is moderately tall once Advanced expands; embed it in a
+	 * scroll area so the dialog stays usable on small screens. */
+	auto *scroll = new QScrollArea(page);
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	media_form_ = new FfmpegMediaForm();
+	scroll->setWidget(media_form_);
+	layout->addWidget(scroll, 1);
 
 	/* Availability hint mirrors the placeholder tabs so all external tabs
 	 * use the same diagnostic surface. ffmpeg_source is built into OBS so
@@ -345,6 +336,5 @@ QWidget *SourcePicker::build_media_tab()
 	availLabel->setStyleSheet(QStringLiteral("color: #888;"));
 	layout->addWidget(availLabel);
 
-	layout->addStretch(1);
 	return page;
 }

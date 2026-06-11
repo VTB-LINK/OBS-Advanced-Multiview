@@ -28,6 +28,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTabWidget>
 #include <QWidget>
 
+class FfmpegMediaForm;
+
 class SourcePicker : public QDialog {
 	Q_OBJECT
 
@@ -79,6 +81,10 @@ private:
 	/* Phase 3 / M6.1: Media tab URL line edit (kept as a member so
 	 * on_accept can read its value). Null until build_media_tab runs. */
 	QLineEdit *media_url_edit_ = nullptr;
+
+	/* Phase 3 / M6.1+ task 9.1.B: full ffmpeg parity form. Owned by
+	 * the Media tab page; lifetime ends with the dialog. */
+	FfmpegMediaForm *media_form_ = nullptr;
 
 	CellAssignment result_;
 };

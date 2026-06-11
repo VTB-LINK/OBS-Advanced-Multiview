@@ -38,6 +38,7 @@ constexpr const char *kFfmpegSourceId = "ffmpeg_source";
  * source defaults so OBS's own behavior is the reference. */
 constexpr const char *kKeyInput = "input";
 constexpr const char *kKeyIsLocalFile = "is_local_file";
+constexpr const char *kKeyLocalFile = "local_file";
 constexpr const char *kKeyReconnectDelaySec = "reconnect_delay_sec";
 constexpr const char *kKeyBufferingMb = "buffering_mb";
 constexpr const char *kKeyRestartOnActivate = "restart_on_activate";
@@ -77,38 +78,62 @@ public:
 			return OBSSource();
 		}
 
-		/* Pull the user-entered URL out of the provider settings.
-		 * SourcePicker writes it to `input`; we treat missing/empty
-		 * URL as a soft failure (return null) so the runtime can paint
-		 * the cell as MISSING and the user can edit. */
-		const char *input_url = nullptr;
 		obs_data_t *src_settings = cfg.providerSettings;
-		if (src_settings)
-			input_url = obs_data_get_string(src_settings, kKeyInput);
-		if (!input_url || !*input_url) {
-			obs_log(LOG_WARNING, "[signal-provider/ffmpeg] create skipped: empty input URL");
+
+		/* Phase 3 / M6.1+ task 9.1.B: support both network and local-file
+		 * playback. is_local_file picks which input key matters. We
+		 * still treat "no URL and no path" as a soft failure so the
+		 * runtime can paint MISSING and let the user re-edit. */
+		const bool is_local_file = src_settings ? obs_data_get_bool(src_settings, kKeyIsLocalFile) : false;
+		const char *input_url = src_settings ? obs_data_get_string(src_settings, kKeyInput) : nullptr;
+		const char *local_path = src_settings ? obs_data_get_string(src_settings, kKeyLocalFile) : nullptr;
+		const bool has_input = is_local_file ? (local_path && *local_path) : (input_url && *input_url);
+		if (!has_input) {
+			obs_log(LOG_WARNING, "[signal-provider/ffmpeg] create skipped: empty %s",
+				is_local_file ? "local_file path" : "input URL");
 			return OBSSource();
 		}
 
-		/* Build OBS source settings from the provider config plus the
-		 * M6.1 live-URL defaults documented in the plan. We deliberately
-		 * keep the obs_data_t separate from cfg.providerSettings so the
-		 * user-facing config never sees our defaults persisted back. */
+		/* Build OBS source settings starting from the user's persisted
+		 * providerSettings (so all advanced keys travel through), then
+		 * re-assert the M6.1 defaults for any key the form doesn't fill,
+		 * then HARD-LOCK the two activation-safety keys regardless of
+		 * what's in providerSettings. The locks are explained in
+		 * provider-settings-forms.hpp.
+		 *
+		 * obs_data_create_from_json + obs_data_get_json gives a deep
+		 * copy without dragging in obs_data_apply (which would write
+		 * defaults back into the user's persisted object). */
 		obs_data_t *settings = obs_data_create();
-		obs_data_set_string(settings, kKeyInput, input_url);
-		obs_data_set_bool(settings, kKeyIsLocalFile, false);
-		obs_data_set_int(settings, kKeyReconnectDelaySec, 10);
-		obs_data_set_int(settings, kKeyBufferingMb, 2);
+		if (src_settings) {
+			const char *json = obs_data_get_json(src_settings);
+			if (json && *json) {
+				obs_data_t *copy = obs_data_create_from_json(json);
+				if (copy) {
+					obs_data_apply(settings, copy);
+					obs_data_release(copy);
+				}
+			}
+		}
+
+		/* Defaults that the form may have omitted (set_or_default_*
+		 * deliberately drops default values to keep persisted JSON
+		 * compact). */
+		if (!obs_data_has_user_value(settings, kKeyReconnectDelaySec))
+			obs_data_set_int(settings, kKeyReconnectDelaySec, 10);
+		if (!obs_data_has_user_value(settings, kKeyBufferingMb))
+			obs_data_set_int(settings, kKeyBufferingMb, 2);
+		if (!obs_data_has_user_value(settings, kKeyClearOnMediaEnd))
+			obs_data_set_bool(settings, kKeyClearOnMediaEnd, true);
+
+		/* HARD LOCKS \u2014 these keys are never user-editable. They pair
+		 * with our inc_active activation model: if either flips,
+		 * playback never starts or stops on every Multiview cell
+		 * visibility change. We overwrite even if the form somehow
+		 * persisted a different value. */
 		obs_data_set_bool(settings, kKeyRestartOnActivate, true);
 		obs_data_set_bool(settings, kKeyCloseWhenInactive, false);
-		obs_data_set_bool(settings, kKeyClearOnMediaEnd, true);
-		obs_data_set_bool(settings, kKeyLinearAlpha, false);
 
-		/* obs_source_create_private returns a +1 strong ref; we hand
-		 * it to OBSSource which holds it as a +1 strong ref and will
-		 * release on destruction. The intermediate raw release matches
-		 * the standard OBS C++ wrapper idiom and ensures no leak if
-		 * the OBSSource assignment throws. */
 		obs_source_t *raw = obs_source_create_private(kFfmpegSourceId, desired_name.c_str(), settings);
 		obs_data_release(settings);
 		if (!raw) {
@@ -117,8 +142,8 @@ public:
 			return OBSSource();
 		}
 
-		obs_log(LOG_INFO, "[signal-provider/ffmpeg] created private source '%s' input='%s'",
-			desired_name.c_str(), input_url);
+		obs_log(LOG_INFO, "[signal-provider/ffmpeg] created private source '%s' %s='%s'", desired_name.c_str(),
+			is_local_file ? "local_file" : "input", is_local_file ? local_path : input_url);
 
 		OBSSource wrapper(raw);
 		obs_source_release(raw);
