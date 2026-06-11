@@ -32,9 +32,12 @@
 
 > Phase 2.5（M4 收尾 / Phase 3 准备）已完成：文档重基线、术语统一、Phase 2 验收清单、VU meter polish 设计/实现与代码硬化。详见 [plan.md](plan.md) 顶部状态表与 §7。
 
-### Phase 3（M5~M6，规划中）
+### Phase 3（M5：功能完成 / M6：未开始）
 
 - **[Phase 3 Signal Lost 与外部信号设计](docs/phase-3-signal-lost-and-external-sources-design.md)** ⭐ — Signal Lost、fallback、DistroAV NDI、obs-spout2 Spout、FFmpeg/VLC media provider 设计基准
+- **[Phase 3 / M5 验收清单](docs/phase-3-acceptance-checklist.md)** — M5（Signal Lost 与删除行为）功能完成度与人工验证记录
+
+> M5 已完成：内部源 Signal Lost 全套（Black / PlaceholderImage / ClearCell）+ Fallback (PGM / PRVW / Scene / Source / Image) + Reconnect Now + 动态生效。M6 外部源接入（NDI / Spout / FFmpeg / VLC）尚未开始；统一硬化 pass 计划放在 M6 完成后。
 
 ## 快速开始
 

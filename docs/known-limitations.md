@@ -1,6 +1,6 @@
 # 已知限制 (Known Limitations)
 
-> 本文档记录当前版本（0.2.x，Phase 2 / M4 主体完成，Phase 2.5 已完成）已知的功能缺失、设计边界与跨平台验证缺口。
+> 本文档记录当前版本（0.2.x，Phase 2 / M4 主体完成，Phase 2.5 已完成，Phase 3 / M5 功能已完成）已知的功能缺失、设计边界与跨平台验证缺口。
 > 术语口径以 [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) 为准。
 > 这些不是 bug，而是尚未规划或排期到后续阶段的功能；其中部分项被显式标注为 **设计决策不做**，避免被重复提议。
 
@@ -29,7 +29,15 @@
 - **NDI / Spout 直连**：尚未实现，需后续阶段通过动态调用宿主 obs-ndi / obs-spout2 插件完成。
 - **RTMP / HLS / FLV / SRT 拉流**：尚未实现。
 - **WebRTC 接入**：尚未实现。
-- **Signal Lost / 断流策略**：重试、备播、彩条等断开行为尚未实现（属 Phase 3 / M5）。
+- ~~**Signal Lost / 断流策略**：重试、备播、彩条等断开行为尚未实现（属 Phase 3 / M5）。~~ **M5 内部源部分已完成**（[docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md)）：Black / PlaceholderImage / ClearCell + Fallback (PGM/PRVW/Scene/Source/Image) + Reconnect Now + 动态生效。**外部源**（NDI/Spout/FFmpeg/VLC）的 SignalLost / RetryWithFallback / Reconnecting overlay 留给 M6。
+
+## Signal Lost / Phase 3 / M5 范围内的边界
+
+- **Duplicate Scene / Duplicate Sources（OBS Studio Mode）**：当用户在 OBS 顶部菜单 *Edit → Duplicate Scene* / *Duplicate Sources* 启用副本策略时，Preview 中删除的 source 在 Program 仍持有副本时**不会触发 `source_remove`**。Multiview cell 此时状态保持 Active（直到 Program 释放最后一个引用），符合 OBS source identity 语义；不属于本插件 bug。要求"PGM tree 不可达即 missing"属于 M7+ 的"逻辑可见性"特性，**M5 不做**。
+- **fallback chain（多级链）**：第一版只支持单一 fallback；fallback 自身失败时直接退到 MISSING / SIGNAL LOST，不级联。**明确不做**。
+- **placeholder / fallback static image FillCrop fit 模式**：当前仅 `Stretch / Fit`，与 bg-image 一致。FillCrop **暂不扩展**。
+- **status overlay 文案多语言**：`MISSING SOURCE / MISSING SCENE / FALLBACK` 当前为英文常量，未走 OBS locale。Phase 4 再考虑。
+- **placeholder / fallback 图片纹理跨 instance / 跨 window 不共享**：每个 MultiviewWindow 独立 4 阶段加载，同一图片被多实例引用时会重复加载。属性能优化项，当前用例数量级小（≤数张图），**不做**。
 
 ## 实例管理
 

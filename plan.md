@@ -26,7 +26,8 @@
 | M0 ~ M3 / Phase 1 | 功能闭环已完成 | 详见 [docs/phase-1-acceptance-checklist.md](docs/phase-1-acceptance-checklist.md)；OBS 32.0 / tag 构建 / Linux / macOS 运行时尚未完全勾选 |
 | M4 / Phase 2 | 主体功能已完成 | Label、Background、SafeArea、Overlay、VU Meter、PGM/PRVW Highlight、三层 Visual Settings、动态生效；详见 [docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md) 与 [docs/phase-2-hardening-notes.md](docs/phase-2-hardening-notes.md) |
 | Phase 2.5（M4 收尾 / Phase 3 准备） | 已完成 | 文档重基线、验收清单、术语统一、VU meter polish 设计/实现均已完成；不是新的全局 Milestone，仅收尾窗口 |
-| M5 / M6 / Phase 3 | 未开始 | Signal Lost 行为、外部流接入 |
+| M5 / Phase 3 上半段 | 功能完成 | Signal Lost 完整运行时（Black / PlaceholderImage / ClearCell）+ Fallback (PGM/PRVW/Scene/Source/Image) + Reconnect Now + 动态生效；详见 [docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md) |
+| M6 / Phase 3 下半段 | 未开始 | 外部流接入：DistroAV NDI、obs-spout2 Spout、FFmpeg、VLC |
 | M7 / M8 / Phase 4 | 未开始 | 打包/安装版/便携版、性能稳定性回归 |
 
 ---
