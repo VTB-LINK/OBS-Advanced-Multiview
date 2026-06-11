@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QStandardItemModel>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -95,15 +96,30 @@ int idx_from_external(ExternalLostBehavior b)
 
 /* fallbackType uses the same string namespace as CellAssignment.type so that
  * future M6 work can reuse provider plumbing. The combo just maps display
- * label <-> token. */
+ * label <-> token.
+ *
+ * Phase 3 / M5.4 hardening: the OBS-source-based fallback options
+ * (pgm / prvw / scene / source) are temporarily disabled in the UI. All
+ * four resolve through obs_source_video_render -> scene_video_render ->
+ * sceneitem signal callbacks, which has been observed to crash OBS when
+ * a third-party plugin (e.g. streamdeck-plugin-obs) holds stale
+ * sceneitem state across a source remove + restore. The fallback render
+ * code still honors these tokens for previously-persisted configs, but
+ * users can no longer pick them in this dialog until we ship a safe
+ * render path. "None" and "Static image" stay enabled. */
 struct FallbackOption {
 	const char *token;
 	const char *label;
+	bool enabled;
 };
 
 constexpr FallbackOption kFallbackOptions[] = {
-	{"", "None (disabled)"},    {"image", "Static image"}, {"pgm", "Program (PGM)"},
-	{"prvw", "Preview (PRVW)"}, {"scene", "OBS Scene"},    {"source", "OBS Source"},
+	{"", "None (disabled)", true},
+	{"image", "Static image", true},
+	{"pgm", "Program (PGM) \u2014 coming soon", false},
+	{"prvw", "Preview (PRVW) \u2014 coming soon", false},
+	{"scene", "OBS Scene \u2014 coming soon", false},
+	{"source", "OBS Source \u2014 coming soon", false},
 };
 
 constexpr int kFallbackOptionCount = sizeof(kFallbackOptions) / sizeof(kFallbackOptions[0]);
@@ -230,6 +246,23 @@ void SignalLostSettingsDialog::build_ui()
 	cmb_fallback_type_ = new QComboBox(grp_fallback);
 	for (int i = 0; i < kFallbackOptionCount; i++)
 		cmb_fallback_type_->addItem(QString::fromUtf8(kFallbackOptions[i].label));
+	/* Phase 3 / M5.4 hardening: grey out the OBS-source-based fallback
+	 * options (pgm/prvw/scene/source). They still render correctly when
+	 * present in a previously-persisted config, but the user can no longer
+	 * pick them here — they trigger a third-party-plugin crash on source
+	 * restore. Reach the underlying QStandardItemModel to clear
+	 * ItemIsEnabled / ItemIsSelectable on each disabled row. */
+	if (auto *model = qobject_cast<QStandardItemModel *>(cmb_fallback_type_->model())) {
+		for (int i = 0; i < kFallbackOptionCount; i++) {
+			if (kFallbackOptions[i].enabled)
+				continue;
+			if (auto *item = model->item(i)) {
+				Qt::ItemFlags flags = item->flags();
+				flags &= ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+				item->setFlags(flags);
+			}
+		}
+	}
 	form_fallback->addRow(QStringLiteral("Fallback type"), cmb_fallback_type_);
 
 	auto *fallback_row = new QHBoxLayout();
