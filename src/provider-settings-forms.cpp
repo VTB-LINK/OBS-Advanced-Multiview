@@ -94,9 +94,15 @@ FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : QWidget(parent)
 	spin_reconnect_delay_->setRange(1, 60);
 	spin_reconnect_delay_->setSuffix(QStringLiteral(" s"));
 	spin_reconnect_delay_->setValue(kDefaultReconnectDelaySec);
-	spin_reconnect_delay_->setToolTip(QStringLiteral(
-		"Seconds to wait before retrying a network stream that drops or fails to open. Default 10."));
-	common_form->addRow(QStringLiteral("Reconnect delay:"), spin_reconnect_delay_);
+	/* Phase 3 / M6.1+ post-9.1.B: the same field is shown in both
+	 * network and local-file mode but the label changes to match the
+	 * mode. Both modes write reconnect_delay_sec to ffmpeg_source which
+	 * is also used as the open-retry interval for failed local opens
+	 * (e.g. file moved between sessions, file on a network drive that
+	 * dropped). Default 10 s for both. apply_local_visibility() sets
+	 * the label text + tooltip per mode. */
+	lbl_reconnect_delay_ = new QLabel(QStringLiteral("Reconnect delay:"), this);
+	common_form->addRow(lbl_reconnect_delay_, spin_reconnect_delay_);
 
 	spin_buffering_mb_ = new QSpinBox(this);
 	spin_buffering_mb_->setRange(0, 16);
@@ -174,9 +180,24 @@ void FfmpegMediaForm::apply_local_visibility(bool is_local)
 	url_edit_->setVisible(!is_local);
 	local_path_edit_->setVisible(is_local);
 	local_browse_btn_->setVisible(is_local);
-	spin_reconnect_delay_->setVisible(!is_local);
 	spin_buffering_mb_->setVisible(!is_local);
 	chk_looping_->setVisible(is_local);
+
+	/* Phase 3 / M6.1+ post-9.1.B: reconnect_delay_sec is meaningful in
+	 * both modes (open-retry for local files; reconnect interval for
+	 * network streams), so keep the field visible. Just rename the
+	 * label / tooltip per mode so users don't see "Reconnect" on a
+	 * local file and assume it does nothing. */
+	if (lbl_reconnect_delay_) {
+		lbl_reconnect_delay_->setText(is_local ? QStringLiteral("Replay delay:")
+						       : QStringLiteral("Reconnect delay:"));
+	}
+	spin_reconnect_delay_->setToolTip(
+		is_local
+			? QStringLiteral("Seconds to wait before retrying playback when the local file fails to open. "
+					 "Useful when the file lives on a network drive that occasionally drops.")
+			: QStringLiteral(
+				  "Seconds to wait before retrying a network stream that drops or fails to open. Default 10."));
 
 	/* QFormLayout doesn't auto-hide labels for hidden field widgets; we
 	 * walk the layout once to flip label visibility paired with each

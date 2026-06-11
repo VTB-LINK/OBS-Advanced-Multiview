@@ -133,7 +133,23 @@ public:
 		 * persisted a different value. */
 		obs_data_set_bool(settings, kKeyRestartOnActivate, true);
 		obs_data_set_bool(settings, kKeyCloseWhenInactive, false);
-
+		/* Phase 3 / M6.1+ post-9.1.B fix: keys that only make sense
+		 * for local-file playback must be force-cleared on network
+		 * streams. The form preserves checkbox state across mode
+		 * switches, so a user who first picked a local file with
+		 * looping enabled and then switched to URL mode would otherwise
+		 * persist looping=true into the network-stream providerSettings.
+		 *
+		 * For HLS / RTMP / SRT streams, looping=true confuses
+		 * ffmpeg_source's seek-on-media-end logic on segment boundaries
+		 * (visible symptom: stream never plays or freezes one segment in).
+		 * seekable=true and speed_percent != 100 are similarly
+		 * meaningless for live network streams — lock them off too. */
+		if (!is_local_file) {
+			obs_data_set_bool(settings, "looping", false);
+			obs_data_set_bool(settings, "seekable", false);
+			obs_data_set_int(settings, "speed_percent", 100);
+		}
 		obs_source_t *raw = obs_source_create_private(kFfmpegSourceId, desired_name.c_str(), settings);
 		obs_data_release(settings);
 		if (!raw) {

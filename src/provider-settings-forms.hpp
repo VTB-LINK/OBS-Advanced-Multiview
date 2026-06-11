@@ -26,6 +26,7 @@ License: GPL-2.0-or-later
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QSpinBox>
 #include <QToolButton>
@@ -99,6 +100,7 @@ private:
 	QLineEdit *url_edit_ = nullptr;
 	QLineEdit *local_path_edit_ = nullptr;
 	QToolButton *local_browse_btn_ = nullptr;
+	QLabel *lbl_reconnect_delay_ = nullptr;
 	QSpinBox *spin_reconnect_delay_ = nullptr;
 	QSpinBox *spin_buffering_mb_ = nullptr;
 	QCheckBox *chk_hw_decode_ = nullptr;

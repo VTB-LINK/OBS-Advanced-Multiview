@@ -34,8 +34,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 SourcePicker::SourcePicker(QWidget *parent) : QDialog(parent)
 {
 	setWindowTitle(QStringLiteral("Select Source"));
-	setMinimumSize(360, 400);
-	resize(400, 500);
+	setMinimumSize(480, 540);
+	resize(560, 720);
 
 	auto *mainLayout = new QVBoxLayout(this);
 
