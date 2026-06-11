@@ -65,6 +65,8 @@ target_sources(
           src/signal-provider-ffmpeg.cpp
           src/provider-settings-forms.hpp
           src/provider-settings-forms.cpp
+          src/edit-source-dialog.hpp
+          src/edit-source-dialog.cpp
           src/source-picker.hpp
           src/source-picker.cpp)
 

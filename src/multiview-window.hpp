@@ -179,6 +179,12 @@ private:
 	void on_add_source(int cellIndex);
 	void on_change_source(int cellIndex);
 	void on_clear_cell(int cellIndex);
+
+	/* Phase 3 / M6.1+ task 9.1.C: Edit Source for external-provider
+	 * cells. Opens a provider-specific form populated from the cell's
+	 * current SignalConfig; on Save writes the new config back into
+	 * the assignment and runs refresh_cell so other cells stay live. */
+	void on_edit_source(int cellIndex);
 	void on_save_assignments();
 	void on_edit_grid();
 	void on_global_settings();

@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "multiview-window.hpp"
 #include "cell-display-settings-dialog.hpp"
+#include "edit-source-dialog.hpp"
 #include "signal-lost-settings-dialog.hpp"
 #include "signal-provider.hpp"
 #include "source-picker.hpp"
@@ -2299,6 +2300,7 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 	if (cellIndex >= 0) {
 		/* Check if cell has a source assigned */
 		bool hasSource = false;
+		bool isExternal = false;
 		{
 			std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 			if (cellIndex < (int)cell_sources_.size()) {
@@ -2311,6 +2313,9 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 				 * instead of Add Source. */
 				if (!cs.type.empty() || cs.provider_type != SignalProviderType::Unknown)
 					hasSource = true;
+				if (cs.provider_type != SignalProviderType::Unknown &&
+				    !signal_provider_is_internal(cs.provider_type))
+					isExternal = true;
 			}
 		}
 
@@ -2318,6 +2323,16 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			QAction *changeAction = menu.addAction(QStringLiteral("Change Source..."));
 			connect(changeAction, &QAction::triggered, this,
 				[this, cellIndex]() { on_change_source(cellIndex); });
+
+			/* Phase 3 / M6.1+ task 9.1.C: Edit Source... shown only
+			 * for external-provider cells. Internal cells already
+			 * have Change Source... covering the same surface; a
+			 * second entry would be confusing. */
+			if (isExternal) {
+				QAction *editAction = menu.addAction(QStringLiteral("Edit Source..."));
+				connect(editAction, &QAction::triggered, this,
+					[this, cellIndex]() { on_edit_source(cellIndex); });
+			}
 
 			QAction *clearAction = menu.addAction(QStringLiteral("Clear Cell"));
 			connect(clearAction, &QAction::triggered, this,
@@ -2423,6 +2438,72 @@ void MultiviewWindow::on_add_source(int cellIndex)
 void MultiviewWindow::on_change_source(int cellIndex)
 {
 	on_add_source(cellIndex); /* Same flow */
+}
+
+void MultiviewWindow::on_edit_source(int cellIndex)
+{
+	/* Phase 3 / M6.1+ task 9.1.C: Edit Source for external-provider
+	 * cells. Opens the provider-specific form populated from the cell's
+	 * current SignalConfig; on Save writes the new config back into
+	 * the assignment and runs refresh_cell so other cells stay live.
+	 *
+	 * Internal cells (pgm/prvw/scene/source) never reach this entry
+	 * because the menu hides Edit Source for them, but defend in depth
+	 * against an unexpected dispatch path. */
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	/* Resolve (row, col) from cellIndex via the layout engine. */
+	int r, c;
+	{
+		LayoutEngine tmpEngine;
+		tmpEngine.set_layout(layout_);
+		tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+		tmpEngine.compute();
+		const auto &cells = tmpEngine.cells();
+		if (cellIndex < 0 || cellIndex >= (int)cells.size())
+			return;
+		r = cells[cellIndex].gridRow;
+		c = cells[cellIndex].gridCol;
+	}
+
+	/* Find the matching CellAssignment and confirm it's external. */
+	CellAssignment *target = nullptr;
+	for (auto &a : inst->cellAssignments) {
+		if (a.row == r && a.col == c) {
+			target = &a;
+			break;
+		}
+	}
+	if (!target || !target->signalConfig.is_external())
+		return;
+
+	/* Snapshot the current signalConfig (deep copy via SignalConfig copy
+	 * semantics so the dialog can edit a private copy without touching
+	 * the live assignment). */
+	SignalConfig snapshot = target->signalConfig;
+
+	EditSourceDialog dlg(snapshot, this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	SignalConfig new_cfg = dlg.signal_config();
+	if (new_cfg.empty()) {
+		/* Provider-specific form rejected validation post-Accept (rare;
+		 * the dialog already shows a popup on its own). Bail without
+		 * touching persisted state. */
+		return;
+	}
+
+	/* Mutate, persist, then run the single-cell incremental refresh
+	 * so neighboring external cells keep playing without interruption. */
+	target->signalConfig = std::move(new_cfg);
+	inst->signalDirty = true;
+	config_->save();
+
+	if (!refresh_cell(r, c))
+		refresh_sources();
 }
 
 void MultiviewWindow::on_clear_cell(int cellIndex)
