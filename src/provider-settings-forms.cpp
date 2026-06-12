@@ -360,20 +360,43 @@ namespace {
  * DistroAV's ndi-source.cpp so the form persists identical JSON to what
  * the user would see in OBS's own ndi_source dialog. */
 constexpr const char *kNdiKeySourceName = "ndi_source_name";
+constexpr const char *kNdiKeyBehavior = "ndi_behavior";
+constexpr const char *kNdiKeyBehaviorTimeout = "ndi_behavior_timeout";
 constexpr const char *kNdiKeyBandwidth = "ndi_bw_mode";
 constexpr const char *kNdiKeySync = "ndi_sync";
 constexpr const char *kNdiKeyLatency = "latency";
 constexpr const char *kNdiKeyFramesync = "ndi_framesync";
 constexpr const char *kNdiKeyHwAccel = "ndi_recv_hw_accel";
 constexpr const char *kNdiKeyAudio = "ndi_audio";
+constexpr const char *kNdiKeyYuvRange = "yuv_range";
+constexpr const char *kNdiKeyYuvColorspace = "yuv_colorspace";
+constexpr const char *kNdiKeyFixAlpha = "ndi_fix_alpha_blending";
 
 constexpr int kNdiBwHighest = 0;
 constexpr int kNdiBwLowest = 1;
 constexpr int kNdiBwAudioOnly = 2;
 
+constexpr int kNdiBehaviorKeepActive = 0;
+constexpr int kNdiBehaviorStopBlank = 1;
+constexpr int kNdiBehaviorStopLastFrame = 2;
+
+constexpr int kNdiTimeoutClearContent = 0;
+constexpr int kNdiTimeoutKeepContent = 1;
+
+constexpr int kNdiSyncInternal = 0; /* legacy, removed in DistroAV but kept for round-trip */
+constexpr int kNdiSyncNDITimestamp = 1;
+constexpr int kNdiSyncNDISourceTimecode = 2;
+
 constexpr int kNdiLatencyNormal = 0;
 constexpr int kNdiLatencyLow = 1;
 constexpr int kNdiLatencyLowest = 2;
+
+constexpr int kNdiYuvRangePartial = 1;
+constexpr int kNdiYuvRangeFull = 2;
+
+constexpr int kNdiYuvSpaceBT601 = 1;
+constexpr int kNdiYuvSpaceBT709 = 2;
+constexpr int kNdiYuvSpaceBT2100 = 3;
 
 } // namespace
 
@@ -415,6 +438,15 @@ NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
 	resolved_label_->setStyleSheet(QStringLiteral("color: #888;"));
 	form->addRow(QStringLiteral("Will bind to:"), resolved_label_);
 
+	cmb_behavior_ = new QComboBox(this);
+	cmb_behavior_->addItem(QStringLiteral("Keep active (always receive)"), kNdiBehaviorKeepActive);
+	cmb_behavior_->addItem(QStringLiteral("Pause when not visible (blank on resume)"), kNdiBehaviorStopBlank);
+	cmb_behavior_->addItem(QStringLiteral("Pause when not visible (keep last frame)"), kNdiBehaviorStopLastFrame);
+	cmb_behavior_->setToolTip(QStringLiteral(
+		"What DistroAV does with the receiver when the source is not visible. For Multiview cells "
+		"this rarely matters \u2014 the cell is always 'visible' for monitoring purposes."));
+	form->addRow(QStringLiteral("Behavior:"), cmb_behavior_);
+
 	cmb_bandwidth_ = new QComboBox(this);
 	cmb_bandwidth_->addItem(QStringLiteral("Highest (full quality)"), kNdiBwHighest);
 	cmb_bandwidth_->addItem(QStringLiteral("Lowest (proxy)"), kNdiBwLowest);
@@ -424,6 +456,14 @@ NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
 			       "for monitoring at low bitrate. Audio only = no video frames at all."));
 	form->addRow(QStringLiteral("Bandwidth:"), cmb_bandwidth_);
 
+	cmb_sync_ = new QComboBox(this);
+	cmb_sync_->addItem(QStringLiteral("Source timecode (recommended)"), kNdiSyncNDISourceTimecode);
+	cmb_sync_->addItem(QStringLiteral("NDI timestamp"), kNdiSyncNDITimestamp);
+	cmb_sync_->setToolTip(
+		QStringLiteral("How DistroAV aligns NDI frames to OBS's clock. Source timecode follows the sender's "
+			       "own timecode; NDI timestamp uses NDI library's internal timing."));
+	form->addRow(QStringLiteral("A/V sync:"), cmb_sync_);
+
 	cmb_latency_ = new QComboBox(this);
 	cmb_latency_->addItem(QStringLiteral("Normal"), kNdiLatencyNormal);
 	cmb_latency_->addItem(QStringLiteral("Low"), kNdiLatencyLow);
@@ -431,6 +471,21 @@ NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
 	cmb_latency_->setToolTip(QStringLiteral("Lower latency means less buffering on receive; can stutter "
 						"on a flaky network."));
 	form->addRow(QStringLiteral("Latency:"), cmb_latency_);
+
+	cmb_yuv_range_ = new QComboBox(this);
+	cmb_yuv_range_->addItem(QStringLiteral("Limited (TV)"), kNdiYuvRangePartial);
+	cmb_yuv_range_->addItem(QStringLiteral("Full (PC)"), kNdiYuvRangeFull);
+	cmb_yuv_range_->setToolTip(
+		QStringLiteral("YUV range the sender uses. Override only if the cell looks washed-out or crushed."));
+	form->addRow(QStringLiteral("YUV range:"), cmb_yuv_range_);
+
+	cmb_yuv_colorspace_ = new QComboBox(this);
+	cmb_yuv_colorspace_->addItem(QStringLiteral("BT.709 (HD)"), kNdiYuvSpaceBT709);
+	cmb_yuv_colorspace_->addItem(QStringLiteral("BT.601 (SD)"), kNdiYuvSpaceBT601);
+	cmb_yuv_colorspace_->addItem(QStringLiteral("BT.2100 (HDR)"), kNdiYuvSpaceBT2100);
+	cmb_yuv_colorspace_->setToolTip(
+		QStringLiteral("YUV colorspace. Mostly relevant for SD content (BT.601) or HDR content (BT.2100)."));
+	form->addRow(QStringLiteral("YUV colorspace:"), cmb_yuv_colorspace_);
 
 	chk_audio_ = new QCheckBox(QStringLiteral("Receive audio"), this);
 	chk_audio_->setChecked(true);
@@ -448,6 +503,13 @@ NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
 	chk_hw_accel_->setChecked(false);
 	chk_hw_accel_->setToolTip(QStringLiteral("Request DistroAV use GPU decoding. Falls back to CPU silently."));
 	form->addRow(QString(), chk_hw_accel_);
+
+	chk_fix_alpha_ = new QCheckBox(QStringLiteral("Fix alpha blending"), this);
+	chk_fix_alpha_->setChecked(false);
+	chk_fix_alpha_->setToolTip(
+		QStringLiteral("DistroAV adds an alpha-fix filter to compensate for senders that produce "
+			       "premultiplied alpha. Leave off unless the cell looks washed-out on edges."));
+	form->addRow(QString(), chk_fix_alpha_);
 
 	root->addLayout(form);
 
@@ -536,19 +598,40 @@ void NdiSourceForm::load_from(const SignalConfig &cfg)
 	}
 	manual_name_edit_->setText(selected_in_list ? QString() : persisted_name);
 
+	if (src && obs_data_has_user_value(src, kNdiKeyBehavior)) {
+		int idx = cmb_behavior_->findData((int)obs_data_get_int(src, kNdiKeyBehavior));
+		if (idx >= 0)
+			cmb_behavior_->setCurrentIndex(idx);
+	}
 	if (src && obs_data_has_user_value(src, kNdiKeyBandwidth)) {
 		int idx = cmb_bandwidth_->findData((int)obs_data_get_int(src, kNdiKeyBandwidth));
 		if (idx >= 0)
 			cmb_bandwidth_->setCurrentIndex(idx);
+	}
+	if (src && obs_data_has_user_value(src, kNdiKeySync)) {
+		int idx = cmb_sync_->findData((int)obs_data_get_int(src, kNdiKeySync));
+		if (idx >= 0)
+			cmb_sync_->setCurrentIndex(idx);
 	}
 	if (src && obs_data_has_user_value(src, kNdiKeyLatency)) {
 		int idx = cmb_latency_->findData((int)obs_data_get_int(src, kNdiKeyLatency));
 		if (idx >= 0)
 			cmb_latency_->setCurrentIndex(idx);
 	}
+	if (src && obs_data_has_user_value(src, kNdiKeyYuvRange)) {
+		int idx = cmb_yuv_range_->findData((int)obs_data_get_int(src, kNdiKeyYuvRange));
+		if (idx >= 0)
+			cmb_yuv_range_->setCurrentIndex(idx);
+	}
+	if (src && obs_data_has_user_value(src, kNdiKeyYuvColorspace)) {
+		int idx = cmb_yuv_colorspace_->findData((int)obs_data_get_int(src, kNdiKeyYuvColorspace));
+		if (idx >= 0)
+			cmb_yuv_colorspace_->setCurrentIndex(idx);
+	}
 	chk_audio_->setChecked(src ? obs_data_get_bool(src, kNdiKeyAudio) : true);
 	chk_framesync_->setChecked(src ? obs_data_get_bool(src, kNdiKeyFramesync) : false);
 	chk_hw_accel_->setChecked(src ? obs_data_get_bool(src, kNdiKeyHwAccel) : false);
+	chk_fix_alpha_->setChecked(src ? obs_data_get_bool(src, kNdiKeyFixAlpha) : false);
 
 	update_resolved_name(QString());
 }
@@ -591,11 +674,16 @@ SignalConfig NdiSourceForm::to_signal_config() const
 	obs_data_t *d = cfg.providerSettings;
 	obs_data_set_string(d, kNdiKeySourceName, name.toUtf8().constData());
 
+	set_or_default_int(d, kNdiKeyBehavior, cmb_behavior_->currentData().toInt(), kNdiBehaviorKeepActive);
 	set_or_default_int(d, kNdiKeyBandwidth, cmb_bandwidth_->currentData().toInt(), kNdiBwHighest);
+	set_or_default_int(d, kNdiKeySync, cmb_sync_->currentData().toInt(), kNdiSyncNDISourceTimecode);
 	set_or_default_int(d, kNdiKeyLatency, cmb_latency_->currentData().toInt(), kNdiLatencyNormal);
+	set_or_default_int(d, kNdiKeyYuvRange, cmb_yuv_range_->currentData().toInt(), kNdiYuvRangePartial);
+	set_or_default_int(d, kNdiKeyYuvColorspace, cmb_yuv_colorspace_->currentData().toInt(), kNdiYuvSpaceBT709);
 	set_or_default_bool(d, kNdiKeyAudio, chk_audio_->isChecked(), true);
 	set_or_default_bool(d, kNdiKeyFramesync, chk_framesync_->isChecked(), false);
 	set_or_default_bool(d, kNdiKeyHwAccel, chk_hw_accel_->isChecked(), false);
+	set_or_default_bool(d, kNdiKeyFixAlpha, chk_fix_alpha_->isChecked(), false);
 
 	return cfg;
 }

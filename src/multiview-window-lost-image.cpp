@@ -30,7 +30,16 @@ std::string MultiviewWindow::compute_wanted_lost_image_path(int cellIndex)
 		return std::string();
 
 	const auto &cs = cell_sources_[cellIndex];
-	if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
+
+	/* Phase 3 / M6 step 10: classify the cell as internal-cell (legacy
+	 * M5 path: type in {scene,source}; pgm/prvw never hit the lost-image
+	 * pipeline because they always resolve), or external-provider cell
+	 * (M6: type empty + provider_type non-internal). Empty cells return
+	 * the empty path either way. */
+	const bool is_internal_cell = !cs.type.empty() && cs.type != "pgm" && cs.type != "prvw";
+	const bool is_external_cell = cs.provider_type != SignalProviderType::Unknown &&
+				      !signal_provider_is_internal(cs.provider_type);
+	if (!is_internal_cell && !is_external_cell)
 		return std::string();
 
 	/* Phase 3 / M5.1 ClearCell: cell is about to be cleared on the next
@@ -47,7 +56,7 @@ std::string MultiviewWindow::compute_wanted_lost_image_path(int cellIndex)
 
 	const LostSignalSettings &eff = cs.effective_lost;
 
-	if (cs.state == SignalRuntimeState::MissingInternal) {
+	if (is_internal_cell && cs.state == SignalRuntimeState::MissingInternal) {
 		/* InternalMissingBehavior::PlaceholderImage takes precedence
 		 * over the static-image fallback. Both are user-configured and
 		 * Phase 3 § 7.2 lists placeholder explicitly under M5.1; the
@@ -61,9 +70,35 @@ std::string MultiviewWindow::compute_wanted_lost_image_path(int cellIndex)
 			return eff.fallbackName;
 	}
 
-	/* Lost / Connecting / RetryScheduled / Error are M6-side states;
-	 * SignalLostImage rendering will hook in when external providers
-	 * land. Until then they fall through to the status overlay path. */
+	/* Phase 3 / M6 step 10: external cell in Lost / Error / Connecting /
+	 * RetryScheduled. The user's ExternalLostBehavior gates which (if
+	 * any) image to show:
+	 *
+	 *   SignalLostImage   -> always show signalLostImagePath while not
+	 *                        Active. This is the "I want a static
+	 *                        graphic in place of the broken stream"
+	 *                        choice.
+	 *   RetryWithFallback -> if the user also picked fallbackType=image
+	 *                        and gave a path, show it while waiting for
+	 *                        recovery. The OBS-source fallbacks (pgm/
+	 *                        prvw/scene/source) are handled by the live
+	 *                        render path, not this image renderer.
+	 *   SignalLostOverlay /
+	 *   RetryOnly         -> no image, the overlay text alone covers
+	 *                        the cell. Render returns empty path here.
+	 *
+	 * The status overlay (RECONNECTING / SIGNAL LOST band) sits on top
+	 * of whatever this returns, so the user gets BOTH the explanation
+	 * text and their custom graphic. */
+	if (is_external_cell && cs.state != SignalRuntimeState::Empty) {
+		if (eff.externalLostBehavior == ExternalLostBehavior::SignalLostImage &&
+		    !eff.signalLostImagePath.empty())
+			return eff.signalLostImagePath;
+		if (eff.externalLostBehavior == ExternalLostBehavior::RetryWithFallback &&
+		    eff.fallbackType == std::string("image") && !eff.fallbackName.empty())
+			return eff.fallbackName;
+	}
+
 	return std::string();
 }
 
@@ -215,22 +250,27 @@ void MultiviewWindow::render_lost_signal_image(int cellIndex, int contentX, int 
 	if (!li.texture || li.width == 0 || li.height == 0)
 		return;
 
-	/* Phase 3 / M5.4: pick fit mode for the slot the cell is currently
-	 * showing. The slot is determined by exactly the same logic as
-	 * compute_wanted_lost_image_path() but here we only need the *kind*,
-	 * not the path — the texture is already loaded. */
+	/* Phase 3 / M5.4 + M6 step 10: pick fit mode for the slot the cell
+	 * is currently showing. The slot is determined by exactly the same
+	 * logic as compute_wanted_lost_image_path() but here we only need
+	 * the *kind*, not the path — the texture is already loaded. */
 	ImageFitMode fitMode = ImageFitMode::Stretch;
 	if (cellIndex < (int)cell_sources_.size()) {
 		const auto &cs = cell_sources_[cellIndex];
 		const LostSignalSettings &eff = cs.effective_lost;
-		const bool placeholderActive = cs.state == SignalRuntimeState::MissingInternal &&
-					       eff.internalMissingBehavior ==
-						       InternalMissingBehavior::PlaceholderImage &&
-					       !eff.placeholderImagePath.empty();
-		if (placeholderActive)
+
+		const bool is_external_cell = cs.provider_type != SignalProviderType::Unknown &&
+					      !signal_provider_is_internal(cs.provider_type);
+
+		if (is_external_cell && eff.externalLostBehavior == ExternalLostBehavior::SignalLostImage) {
+			fitMode = eff.signalLostImageFitMode;
+		} else if (cs.state == SignalRuntimeState::MissingInternal &&
+			   eff.internalMissingBehavior == InternalMissingBehavior::PlaceholderImage &&
+			   !eff.placeholderImagePath.empty()) {
 			fitMode = eff.placeholderImageFitMode;
-		else
+		} else {
 			fitMode = eff.fallbackImageFitMode;
+		}
 	}
 
 	int drawX = contentX, drawY = contentY, drawW = contentW, drawH = contentH;

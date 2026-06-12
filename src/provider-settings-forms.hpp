@@ -157,11 +157,16 @@ private:
 	QPushButton *refresh_btn_ = nullptr;
 	QLineEdit *manual_name_edit_ = nullptr;
 	QLabel *resolved_label_ = nullptr;
+	QComboBox *cmb_behavior_ = nullptr;
 	QComboBox *cmb_bandwidth_ = nullptr;
+	QComboBox *cmb_sync_ = nullptr;
 	QComboBox *cmb_latency_ = nullptr;
+	QComboBox *cmb_yuv_range_ = nullptr;
+	QComboBox *cmb_yuv_colorspace_ = nullptr;
 	QCheckBox *chk_audio_ = nullptr;
 	QCheckBox *chk_framesync_ = nullptr;
 	QCheckBox *chk_hw_accel_ = nullptr;
+	QCheckBox *chk_fix_alpha_ = nullptr;
 };
 
 /* Discovery hook implemented in signal-provider-ndi.cpp. Returns the

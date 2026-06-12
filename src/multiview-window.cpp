@@ -1720,8 +1720,28 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			}
 
 			if (srcW == 0 || srcH == 0) {
-				/* Source not ready - leave as gutter/window bg */
-				continue;
+				/* Phase 3 / M6 step 10: source resolved but produces
+				 * no frame yet (or has stopped producing frames).
+				 * Common for:
+				 *   - external cells where DistroAV cleared content
+				 *     on disconnect (Clear content default);
+				 *   - FFmpeg cells with an unreachable URL;
+				 *   - sources still in their initial open phase.
+				 *
+				 * Treat the cell as no-signal for the rest of this
+				 * frame's render: drop the source ref so the live
+				 * video path below is skipped, but DO let the cell
+				 * background, bg image, and lost-signal image
+				 * render. The supervisor's state classification
+				 * (Connecting / Lost / Error) drives the status
+				 * overlay (RECONNECTING / SIGNAL LOST band) which
+				 * is rendered unconditionally after this block. */
+				src = nullptr;
+				srcHolder = nullptr;
+				isPgm = false;
+				isPrvwFallback = false;
+				isFallback = false;
+				goto render_no_signal;
 			}
 
 			/* Determine content area (may be reduced for Below label mode) */
@@ -1864,7 +1884,13 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			}
 		} else {
 			/* Empty cell / no signal - leave as gutter/window background.
-			 * Only draw background image if one is configured. */
+			 * Only draw background image if one is configured.
+			 *
+			 * Phase 3 / M6 step 10: also reachable via the goto from
+			 * the if(src) branch when srcW/srcH are zero (source open
+			 * but not producing frames). The cell background fill
+			 * already painted earlier in the loop covers the canvas. */
+		render_no_signal:
 			if (i < (int)bg_images_.size() && bg_images_[i].texture) {
 				gs_texture_t *tex = bg_images_[i].texture;
 				uint32_t imgW = bg_images_[i].width;

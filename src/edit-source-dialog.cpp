@@ -7,6 +7,7 @@ License: GPL-2.0-or-later
 
 #include "edit-source-dialog.hpp"
 #include "provider-settings-forms.hpp"
+#include "signal-provider.hpp"
 
 #include <QDialogButtonBox>
 #include <QLabel>
