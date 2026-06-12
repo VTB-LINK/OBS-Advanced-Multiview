@@ -60,11 +60,19 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 		ffmpeg_form_->load_from(cfg);
 		scroll->setWidget(ffmpeg_form_);
 		root->addWidget(scroll, 1);
+	} else if (cfg.provider == SignalProviderType::Ndi) {
+		auto *scroll = new QScrollArea(this);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		ndi_form_ = new NdiSourceForm();
+		ndi_form_->load_from(cfg);
+		scroll->setWidget(ndi_form_);
+		root->addWidget(scroll, 1);
 	} else {
 		/* Other external providers don't have an editor yet; their
-		 * own milestones (M6.2 NDI, M6.3 Spout, M6.4 VLC) will add
-		 * sibling forms. Until then, show a plain message so the
-		 * user knows nothing was saved. */
+		 * own milestones (M6.3 Spout, M6.4 VLC) will add sibling
+		 * forms. Until then, show a plain message so the user knows
+		 * nothing was saved. */
 		auto *msg = new QLabel(QStringLiteral("Editing this provider's settings is not implemented yet. "
 						      "Use Change Source... to replace the assignment instead."),
 				       this);
@@ -73,9 +81,9 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 	}
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-	if (cfg.provider != SignalProviderType::Ffmpeg) {
-		/* No editable form for non-FFmpeg providers yet; disable Save
-		 * so cancel is the only available action. */
+	if (cfg.provider != SignalProviderType::Ffmpeg && cfg.provider != SignalProviderType::Ndi) {
+		/* No editable form for non-FFmpeg/non-NDI providers yet;
+		 * disable Save so cancel is the only available action. */
 		QPushButton *okBtn = buttons->button(QDialogButtonBox::Ok);
 		if (okBtn)
 			okBtn->setEnabled(false);
@@ -94,6 +102,12 @@ void EditSourceDialog::on_accept()
 						 ffmpeg_form_->invalid_reason());
 			return;
 		}
+	} else if (provider_ == SignalProviderType::Ndi && ndi_form_) {
+		if (!ndi_form_->is_valid()) {
+			QMessageBox::information(this, QStringLiteral("NDI source required"),
+						 ndi_form_->invalid_reason());
+			return;
+		}
 	}
 	accept();
 }
@@ -102,5 +116,7 @@ SignalConfig EditSourceDialog::signal_config() const
 {
 	if (provider_ == SignalProviderType::Ffmpeg && ffmpeg_form_)
 		return ffmpeg_form_->to_signal_config();
+	if (provider_ == SignalProviderType::Ndi && ndi_form_)
+		return ndi_form_->to_signal_config();
 	return SignalConfig();
 }

@@ -28,9 +28,14 @@ License: GPL-2.0-or-later
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QToolButton>
 #include <QWidget>
+
+#include <string>
+#include <vector>
 
 /* Form for the FFmpeg media provider.
  *
@@ -119,3 +124,49 @@ private:
 	QLabel *lbl_ffmpeg_options_ = nullptr;
 	QLineEdit *ffmpeg_options_edit_ = nullptr;
 };
+/* Form for the DistroAV NDI provider (Phase 3 / M6.2).
+ *
+ * UI shape mirrors OBS's own ndi_source properties dialog for the keys
+ * that matter on a multiview cell: source name (with live discovery +
+ * Refresh + manual fallback), bandwidth mode, audio, latency,
+ * framesync, hardware acceleration. Advanced DistroAV keys
+ * (yuv_range / yuv_colorspace / behavior / behavior_timeout /
+ * fix_alpha) stay at the provider defaults; round-tripping a config
+ * edited by hand still preserves them.
+ *
+ * Discovery is fully driven by signal_provider_ndi_discover_sources()
+ * which talks to DistroAV's NDIFinder via a long-lived dormant
+ * ndi_source probe. The form just renders the returned list. */
+class NdiSourceForm : public QWidget {
+	Q_OBJECT
+public:
+	explicit NdiSourceForm(QWidget *parent = nullptr);
+
+	void load_from(const SignalConfig &cfg);
+	SignalConfig to_signal_config() const;
+	bool is_valid() const;
+	QString invalid_reason() const;
+
+public slots:
+	void refresh_discovery();
+
+private:
+	void update_resolved_name(const QString &name);
+
+	QListWidget *discovered_list_ = nullptr;
+	QPushButton *refresh_btn_ = nullptr;
+	QLineEdit *manual_name_edit_ = nullptr;
+	QLabel *resolved_label_ = nullptr;
+	QComboBox *cmb_bandwidth_ = nullptr;
+	QComboBox *cmb_latency_ = nullptr;
+	QCheckBox *chk_audio_ = nullptr;
+	QCheckBox *chk_framesync_ = nullptr;
+	QCheckBox *chk_hw_accel_ = nullptr;
+};
+
+/* Discovery hook implemented in signal-provider-ndi.cpp. Returns the
+ * NDI source names currently visible on the LAN, sorted and deduped.
+ * Empty when DistroAV is not installed. Safe to call from the UI
+ * thread; under the hood it triggers DistroAV's NDIFinder async refresh
+ * via a private dormant ndi_source. */
+std::vector<std::string> signal_provider_ndi_discover_sources();

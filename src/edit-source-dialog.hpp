@@ -19,6 +19,7 @@ License: GPL-2.0-or-later
 #include <QDialog>
 
 class FfmpegMediaForm;
+class NdiSourceForm;
 
 class EditSourceDialog : public QDialog {
 	Q_OBJECT
@@ -39,4 +40,5 @@ private slots:
 private:
 	SignalProviderType provider_ = SignalProviderType::Unknown;
 	FfmpegMediaForm *ffmpeg_form_ = nullptr;
+	NdiSourceForm *ndi_form_ = nullptr;
 };

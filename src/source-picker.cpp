@@ -71,9 +71,7 @@ SourcePicker::SourcePicker(QWidget *parent) : QDialog(parent)
 	media_tab_ = build_media_tab();
 	tabs_->addTab(media_tab_, QStringLiteral("Media"));
 
-	ndi_tab_ = build_external_placeholder(SignalProviderType::Ndi, "M6.2",
-					      "DistroAV NDI sources discovered on the network. The discovered list "
-					      "plus Refresh and bandwidth/latency controls land here.");
+	ndi_tab_ = build_ndi_tab();
 	tabs_->addTab(ndi_tab_, QStringLiteral("NDI"));
 
 	spout_tab_ =
@@ -211,6 +209,20 @@ void SourcePicker::on_accept()
 		result_.signalConfig = media_form_->to_signal_config();
 		accept();
 		return;
+	} else if (tabs_->widget(idx) == ndi_tab_) {
+		/* Phase 3 / M6.2: NDI tab. Form yields a SignalConfig with
+		 * provider=Ndi and providerSettings carrying ndi_source_name +
+		 * the user's choice of bandwidth / latency / audio / framesync
+		 * / hardware acceleration. */
+		if (!ndi_form_ || !ndi_form_->is_valid()) {
+			QMessageBox::information(this, QStringLiteral("NDI source required"),
+						 ndi_form_ ? ndi_form_->invalid_reason() : QString());
+			return;
+		}
+		result_ = CellAssignment{};
+		result_.signalConfig = ndi_form_->to_signal_config();
+		accept();
+		return;
 	} else {
 		/* Other external provider tabs are still placeholders. Surface
 		 * a clear message instead of silently rejecting so the user
@@ -333,6 +345,59 @@ QWidget *SourcePicker::build_media_tab()
 						     : QString::fromStdString(reason));
 	}
 	auto *availLabel = new QLabel(status, page);
+	availLabel->setStyleSheet(QStringLiteral("color: #888;"));
+	layout->addWidget(availLabel);
+
+	return page;
+}
+
+QWidget *SourcePicker::build_ndi_tab()
+{
+	auto *page = new QWidget(this);
+	auto *layout = new QVBoxLayout(page);
+	layout->setContentsMargins(12, 12, 12, 12);
+	layout->setSpacing(10);
+
+	auto *heading = new QLabel(QStringLiteral("NDI source (DistroAV)"), page);
+	{
+		QFont f = heading->font();
+		f.setBold(true);
+		heading->setFont(f);
+	}
+	layout->addWidget(heading);
+
+	/* Provider availability gate. If DistroAV isn't installed there's no
+	 * point showing the discovery list \u2014 it will be empty forever \u2014 so
+	 * fall back to the placeholder body that explains how to fix it. */
+	const auto &reg = SignalProviderRegistry::instance();
+	const auto *p = reg.find(SignalProviderType::Ndi);
+	if (!p || !p->is_available()) {
+		auto *body = new QLabel(QStringLiteral("DistroAV NDI plugin is not installed (or its NDI Runtime "
+						       "is missing). Install DistroAV and restart OBS to enable "
+						       "this tab."),
+					page);
+		body->setWordWrap(true);
+		layout->addWidget(body);
+		layout->addStretch(1);
+		return page;
+	}
+
+	auto *body = new QLabel(
+		QStringLiteral("Cell hosts a private ndi_source created only for this Multiview \\u2014 it does not "
+			       "appear in OBS's Sources dock. DistroAV's NDIFinder handles discovery and "
+			       "reconnection automatically; this dialog just selects which source to bind."),
+		page);
+	body->setWordWrap(true);
+	layout->addWidget(body);
+
+	auto *scroll = new QScrollArea(page);
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	ndi_form_ = new NdiSourceForm();
+	scroll->setWidget(ndi_form_);
+	layout->addWidget(scroll, 1);
+
+	auto *availLabel = new QLabel(QStringLiteral("Provider available (DistroAV ndi_source)."), page);
 	availLabel->setStyleSheet(QStringLiteral("color: #888;"));
 	layout->addWidget(availLabel);
 

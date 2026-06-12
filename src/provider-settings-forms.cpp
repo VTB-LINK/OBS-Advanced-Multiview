@@ -11,6 +11,7 @@ License: GPL-2.0-or-later
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidgetItem>
 #include <QVBoxLayout>
 
 /* ---------- FfmpegMediaForm ---------- */
@@ -347,6 +348,254 @@ SignalConfig FfmpegMediaForm::to_signal_config() const
 		set_or_default_bool(d, "looping", chk_looping_->isChecked(), false);
 		set_or_default_int(d, "speed_percent", spin_speed_percent_->value(), kDefaultSpeedPercent);
 	}
+
+	return cfg;
+}
+
+/* ---------- NdiSourceForm (Phase 3 / M6.2) ---------- */
+
+namespace {
+
+/* DistroAV setting keys + integer enum values, kept verbatim from
+ * DistroAV's ndi-source.cpp so the form persists identical JSON to what
+ * the user would see in OBS's own ndi_source dialog. */
+constexpr const char *kNdiKeySourceName = "ndi_source_name";
+constexpr const char *kNdiKeyBandwidth = "ndi_bw_mode";
+constexpr const char *kNdiKeySync = "ndi_sync";
+constexpr const char *kNdiKeyLatency = "latency";
+constexpr const char *kNdiKeyFramesync = "ndi_framesync";
+constexpr const char *kNdiKeyHwAccel = "ndi_recv_hw_accel";
+constexpr const char *kNdiKeyAudio = "ndi_audio";
+
+constexpr int kNdiBwHighest = 0;
+constexpr int kNdiBwLowest = 1;
+constexpr int kNdiBwAudioOnly = 2;
+
+constexpr int kNdiLatencyNormal = 0;
+constexpr int kNdiLatencyLow = 1;
+constexpr int kNdiLatencyLowest = 2;
+
+} // namespace
+
+NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
+{
+	auto *root = new QVBoxLayout(this);
+	root->setContentsMargins(0, 0, 0, 0);
+	root->setSpacing(8);
+
+	auto *list_label = new QLabel(QStringLiteral("Discovered NDI sources on the network:"), this);
+	root->addWidget(list_label);
+
+	discovered_list_ = new QListWidget(this);
+	discovered_list_->setSelectionMode(QAbstractItemView::SingleSelection);
+	discovered_list_->setToolTip(
+		QStringLiteral("DistroAV scans the LAN once when this dialog opens. Click Refresh to scan again. "
+			       "If no sources appear, ensure your NDI sender is running on the same network."));
+	root->addWidget(discovered_list_, 1);
+
+	auto *refresh_row = new QHBoxLayout();
+	refresh_btn_ = new QPushButton(QStringLiteral("Refresh"), this);
+	refresh_btn_->setToolTip(
+		QStringLiteral("Re-scan for NDI sources. Discovery uses DistroAV's NDIFinder which caches "
+			       "results for 5 seconds; clicking Refresh more often than that is harmless."));
+	refresh_row->addWidget(refresh_btn_);
+	refresh_row->addStretch(1);
+	root->addLayout(refresh_row);
+
+	auto *form = new QFormLayout();
+
+	manual_name_edit_ = new QLineEdit(this);
+	manual_name_edit_->setPlaceholderText(QStringLiteral("e.g. MACHINE (Source Name)"));
+	manual_name_edit_->setToolTip(
+		QStringLiteral("Fallback for sources DistroAV's discovery hasn't found yet (firewall, routing issue, "
+			       "or sender just started). Manual name overrides the list selection."));
+	form->addRow(QStringLiteral("Manual name:"), manual_name_edit_);
+
+	resolved_label_ = new QLabel(QStringLiteral("(no source selected)"), this);
+	resolved_label_->setStyleSheet(QStringLiteral("color: #888;"));
+	form->addRow(QStringLiteral("Will bind to:"), resolved_label_);
+
+	cmb_bandwidth_ = new QComboBox(this);
+	cmb_bandwidth_->addItem(QStringLiteral("Highest (full quality)"), kNdiBwHighest);
+	cmb_bandwidth_->addItem(QStringLiteral("Lowest (proxy)"), kNdiBwLowest);
+	cmb_bandwidth_->addItem(QStringLiteral("Audio only"), kNdiBwAudioOnly);
+	cmb_bandwidth_->setToolTip(
+		QStringLiteral("Highest = full-resolution stream. Lowest = DistroAV's built-in proxy stream "
+			       "for monitoring at low bitrate. Audio only = no video frames at all."));
+	form->addRow(QStringLiteral("Bandwidth:"), cmb_bandwidth_);
+
+	cmb_latency_ = new QComboBox(this);
+	cmb_latency_->addItem(QStringLiteral("Normal"), kNdiLatencyNormal);
+	cmb_latency_->addItem(QStringLiteral("Low"), kNdiLatencyLow);
+	cmb_latency_->addItem(QStringLiteral("Lowest"), kNdiLatencyLowest);
+	cmb_latency_->setToolTip(QStringLiteral("Lower latency means less buffering on receive; can stutter "
+						"on a flaky network."));
+	form->addRow(QStringLiteral("Latency:"), cmb_latency_);
+
+	chk_audio_ = new QCheckBox(QStringLiteral("Receive audio"), this);
+	chk_audio_->setChecked(true);
+	chk_audio_->setToolTip(QStringLiteral("When off, the cell is video-only."));
+	form->addRow(QString(), chk_audio_);
+
+	chk_framesync_ = new QCheckBox(QStringLiteral("Frame sync"), this);
+	chk_framesync_->setChecked(false);
+	chk_framesync_->setToolTip(
+		QStringLiteral("Resample audio/video to match OBS's frame clock. Helps on senders with "
+			       "drifting timing; adds ~1 frame of latency."));
+	form->addRow(QString(), chk_framesync_);
+
+	chk_hw_accel_ = new QCheckBox(QStringLiteral("Hardware acceleration (if available)"), this);
+	chk_hw_accel_->setChecked(false);
+	chk_hw_accel_->setToolTip(QStringLiteral("Request DistroAV use GPU decoding. Falls back to CPU silently."));
+	form->addRow(QString(), chk_hw_accel_);
+
+	root->addLayout(form);
+
+	connect(refresh_btn_, &QPushButton::clicked, this, &NdiSourceForm::refresh_discovery);
+	connect(discovered_list_, &QListWidget::currentItemChanged, this,
+		[this](QListWidgetItem *current, QListWidgetItem *) {
+			if (current)
+				update_resolved_name(current->text());
+		});
+	connect(manual_name_edit_, &QLineEdit::textChanged, this,
+		[this](const QString &) { update_resolved_name(QString()); });
+
+	/* Kick the first scan so the list isn't empty on open. The scan
+	 * itself goes through DistroAV's NDIFinder cache; the first call in
+	 * a fresh OBS session returns whatever's in the 5-second cache (may
+	 * be empty), and triggers an async refresh in the background. The
+	 * user clicking Refresh after a few seconds will populate the list. */
+	refresh_discovery();
+}
+
+void NdiSourceForm::refresh_discovery()
+{
+	const QString previously_selected = discovered_list_->currentItem() ? discovered_list_->currentItem()->text()
+									    : QString();
+	discovered_list_->clear();
+
+	const auto names = signal_provider_ndi_discover_sources();
+	for (const auto &name : names) {
+		auto *item = new QListWidgetItem(QString::fromStdString(name));
+		discovered_list_->addItem(item);
+		if (item->text() == previously_selected)
+			discovered_list_->setCurrentItem(item);
+	}
+
+	if (names.empty()) {
+		/* Surface an explanatory placeholder so an empty list doesn't
+		 * read as a bug. DistroAV's NDIFinder cache may legitimately
+		 * be empty for the first 5 s on cold start. */
+		auto *item = new QListWidgetItem(QStringLiteral("(scanning... click Refresh again in a few seconds)"));
+		item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+		QFont f = item->font();
+		f.setItalic(true);
+		item->setFont(f);
+		discovered_list_->addItem(item);
+	}
+
+	update_resolved_name(QString());
+}
+
+void NdiSourceForm::update_resolved_name(const QString &name_hint)
+{
+	QString resolved = manual_name_edit_->text().trimmed();
+	if (resolved.isEmpty()) {
+		if (!name_hint.isEmpty()) {
+			resolved = name_hint;
+		} else if (discovered_list_->currentItem()) {
+			const QString sel = discovered_list_->currentItem()->text();
+			if (discovered_list_->currentItem()->flags() & Qt::ItemIsSelectable)
+				resolved = sel;
+		}
+	}
+	if (resolved.isEmpty())
+		resolved_label_->setText(QStringLiteral("(no source selected)"));
+	else
+		resolved_label_->setText(resolved);
+}
+
+void NdiSourceForm::load_from(const SignalConfig &cfg)
+{
+	obs_data_t *src = cfg.providerSettings;
+
+	const QString persisted_name = src ? QString::fromUtf8(obs_data_get_string(src, kNdiKeySourceName)) : QString();
+
+	/* If the persisted name appears in the discovery list, select it;
+	 * otherwise treat it as a manual entry. */
+	bool selected_in_list = false;
+	for (int i = 0; i < discovered_list_->count(); i++) {
+		auto *item = discovered_list_->item(i);
+		if (!(item->flags() & Qt::ItemIsSelectable))
+			continue;
+		if (item->text() == persisted_name) {
+			discovered_list_->setCurrentItem(item);
+			selected_in_list = true;
+			break;
+		}
+	}
+	manual_name_edit_->setText(selected_in_list ? QString() : persisted_name);
+
+	if (src && obs_data_has_user_value(src, kNdiKeyBandwidth)) {
+		int idx = cmb_bandwidth_->findData((int)obs_data_get_int(src, kNdiKeyBandwidth));
+		if (idx >= 0)
+			cmb_bandwidth_->setCurrentIndex(idx);
+	}
+	if (src && obs_data_has_user_value(src, kNdiKeyLatency)) {
+		int idx = cmb_latency_->findData((int)obs_data_get_int(src, kNdiKeyLatency));
+		if (idx >= 0)
+			cmb_latency_->setCurrentIndex(idx);
+	}
+	chk_audio_->setChecked(src ? obs_data_get_bool(src, kNdiKeyAudio) : true);
+	chk_framesync_->setChecked(src ? obs_data_get_bool(src, kNdiKeyFramesync) : false);
+	chk_hw_accel_->setChecked(src ? obs_data_get_bool(src, kNdiKeyHwAccel) : false);
+
+	update_resolved_name(QString());
+}
+
+bool NdiSourceForm::is_valid() const
+{
+	const QString manual = manual_name_edit_->text().trimmed();
+	if (!manual.isEmpty())
+		return true;
+	auto *cur = discovered_list_->currentItem();
+	if (cur && (cur->flags() & Qt::ItemIsSelectable))
+		return true;
+	return false;
+}
+
+QString NdiSourceForm::invalid_reason() const
+{
+	if (is_valid())
+		return QString();
+	return QStringLiteral("Select a discovered NDI source or enter a manual source name.");
+}
+
+SignalConfig NdiSourceForm::to_signal_config() const
+{
+	SignalConfig cfg;
+	if (!is_valid())
+		return cfg;
+
+	cfg.provider = SignalProviderType::Ndi;
+
+	QString name = manual_name_edit_->text().trimmed();
+	if (name.isEmpty()) {
+		auto *cur = discovered_list_->currentItem();
+		if (cur && (cur->flags() & Qt::ItemIsSelectable))
+			name = cur->text();
+	}
+	cfg.displayName = name.toStdString();
+
+	cfg.providerSettings = obs_data_create();
+	obs_data_t *d = cfg.providerSettings;
+	obs_data_set_string(d, kNdiKeySourceName, name.toUtf8().constData());
+
+	set_or_default_int(d, kNdiKeyBandwidth, cmb_bandwidth_->currentData().toInt(), kNdiBwHighest);
+	set_or_default_int(d, kNdiKeyLatency, cmb_latency_->currentData().toInt(), kNdiLatencyNormal);
+	set_or_default_bool(d, kNdiKeyAudio, chk_audio_->isChecked(), true);
+	set_or_default_bool(d, kNdiKeyFramesync, chk_framesync_->isChecked(), false);
+	set_or_default_bool(d, kNdiKeyHwAccel, chk_hw_accel_->isChecked(), false);
 
 	return cfg;
 }

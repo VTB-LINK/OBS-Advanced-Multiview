@@ -29,6 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QWidget>
 
 class FfmpegMediaForm;
+class NdiSourceForm;
 
 class SourcePicker : public QDialog {
 	Q_OBJECT
@@ -63,6 +64,12 @@ private:
 	 * under the `input` key. */
 	QWidget *build_media_tab();
 
+	/* Phase 3 / M6.2: real NDI tab — discovered list + Refresh button
+	 * + manual fallback + bandwidth/latency/audio/framesync/hw-accel
+	 * controls. Returns a CellAssignment with provider=Ndi when the
+	 * user picks a source. */
+	QWidget *build_ndi_tab();
+
 	QTabWidget *tabs_;
 	QLineEdit *filter_edit_;
 	QListWidget *special_list_;
@@ -85,6 +92,10 @@ private:
 	/* Phase 3 / M6.1+ task 9.1.B: full ffmpeg parity form. Owned by
 	 * the Media tab page; lifetime ends with the dialog. */
 	FfmpegMediaForm *media_form_ = nullptr;
+
+	/* Phase 3 / M6.2: NDI form. Owned by the NDI tab page; lifetime
+	 * ends with the dialog. */
+	NdiSourceForm *ndi_form_ = nullptr;
 
 	CellAssignment result_;
 };

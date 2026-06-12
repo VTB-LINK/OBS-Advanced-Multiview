@@ -128,6 +128,8 @@ static InternalSourceProvider g_internal_source;
 /* External-provider registration hooks live in their own translation units
  * to keep the registry skeleton free of host-plugin specifics. */
 void register_ffmpeg_provider();
+void register_ndi_provider();
+void signal_provider_ndi_shutdown();
 
 void signal_provider_registry_init()
 {
@@ -143,6 +145,7 @@ void signal_provider_registry_init()
 	 * self-contained and the registry can add/remove host integrations
 	 * without touching this file. */
 	register_ffmpeg_provider();
+	register_ndi_provider();
 
 	obs_log(LOG_INFO, "[signal-provider] registry initialized with %zu provider(s)",
 		(size_t)reg.providers().size());
@@ -150,6 +153,12 @@ void signal_provider_registry_init()
 
 void signal_provider_registry_shutdown()
 {
+	/* External providers may have allocated runtime helpers (e.g. NDI's
+	 * long-lived discovery probe). Tear them down explicitly so the OBS
+	 * log shows the order; the OBS shutdown path would clean up
+	 * eventually either way. */
+	signal_provider_ndi_shutdown();
+
 	/* Providers are static singletons owned by translation units; we do
 	 * not delete anything here. Resetting the registry is unnecessary
 	 * because the entire DLL is unloading; this hook exists so future
