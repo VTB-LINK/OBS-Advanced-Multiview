@@ -100,6 +100,24 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 	if (!report.reason.empty())
 		cs.last_error_reason = report.reason;
 
+	/* Phase 3 / M6.1 perf diag: every 5s, log render-call rate alongside
+	 * the supervisor's view of the source. Lets us correlate user-visible
+	 * stutter with provider state vs render-thread starvation. The diag
+	 * is unconditional so it ships in release builds too \u2014 produces ~12
+	 * lines per minute per external cell, negligible log volume. */
+	constexpr uint64_t kPerfLogIntervalNs = 5ULL * NS_PER_SEC;
+	if (now_ns - cs.last_perf_log_ns >= kPerfLogIntervalNs) {
+		const uint64_t elapsed_ns = cs.last_perf_log_ns == 0 ? kPerfLogIntervalNs
+								     : (now_ns - cs.last_perf_log_ns);
+		const double elapsed_sec = (double)elapsed_ns / 1e9;
+		const double render_fps = (double)cs.render_calls / elapsed_sec;
+		obs_log(LOG_INFO, "[perf] cell (%d,%d) provider=%s render_fps=%.1f frame=%ux%u health=%d state=%d",
+			cellRow, cellCol, signal_provider_to_string(cs.provider_type), render_fps, cs.last_dimensions_w,
+			cs.last_dimensions_h, (int)report.code, (int)cs.state);
+		cs.render_calls = 0;
+		cs.last_perf_log_ns = now_ns;
+	}
+
 	switch (report.code) {
 	case ISignalProvider::HealthCode::Active:
 		/* Source is producing frames. Clear all the recovery

@@ -437,8 +437,11 @@ bool MultiviewWindow::refresh_cell(int row, int col)
 		} else {
 			new_external = provider->create_private_source(new_desired_name, new_cfg_copy);
 			if (new_external) {
+				/* Activate the private source so async providers (FFmpeg,
+				 * NDI, etc.) start producing frames. inc_active is enough
+				 * — it already bumps show_refs internally via MAIN_VIEW
+				 * activate, so a separate inc_showing would double-count. */
 				obs_source_inc_active(new_external);
-				obs_source_inc_showing(new_external);
 			} else {
 				create_failure_reason = provider->unavailable_reason();
 				if (create_failure_reason.empty())
@@ -478,8 +481,7 @@ bool MultiviewWindow::refresh_cell(int row, int col)
 			need_volmeter_rebuild = true;
 		} else if (new_external) {
 			/* Layout shrank between create and install — unwind the
-			 * inc pair and let RAII drop. */
-			obs_source_dec_showing(new_external);
+			 * inc_active and let RAII drop the strong ref. */
 			obs_source_dec_active(new_external);
 		}
 	}
@@ -1186,24 +1188,25 @@ void MultiviewWindow::update_source_refs()
 			 * media when their `active` count goes above 0. Private sources
 			 * are never added to a scene, so OBS never bumps active on our
 			 * behalf — the source would just sit dormant and our cell would
-			 * paint black forever. inc_showing keeps the show ref count in
-			 * sync with the strong ref so frontend tools that watch showing
-			 * (audio meter UIs, properties dialogs) behave correctly when
-			 * we later attach a volmeter. Both must be paired by matching
-			 * dec_* calls in release_source_refs(). */
+			 * paint black forever.
+			 *
+			 * obs_source_inc_active(MAIN_VIEW) already does the show_refs
+			 * increment internally (obs_source_activate calls
+			 * enum_active_tree+show_tree before enum_active_tree+activate_
+			 * tree), so we deliberately do NOT call obs_source_inc_showing
+			 * separately — that would double-count show_refs and confuse
+			 * frontend tools that watch the showing state. Paired with
+			 * dec_active in release_source_refs(). */
 			if (priv) {
 				obs_source_inc_active(priv);
-				obs_source_inc_showing(priv);
 			}
 
 			std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 			if (it.cell_idx >= cell_sources_.size()) {
 				/* Layout shrank between intent collection and install.
-				 * Unwind the inc_active / inc_showing pair before the
-				 * OBSSource RAII drops the strong ref so the source
-				 * tears down cleanly. */
+				 * Unwind the inc_active before the OBSSource RAII drops
+				 * the strong ref so the source tears down cleanly. */
 				if (priv) {
-					obs_source_dec_showing(priv);
 					obs_source_dec_active(priv);
 				}
 				continue;
@@ -1361,7 +1364,10 @@ void MultiviewWindow::release_source_refs()
 	 * must not run inside source_mutex_. */
 	for (auto &priv : externals_to_release) {
 		if (priv) {
-			obs_source_dec_showing(priv);
+			/* Matched dec_active for the inc_active we did on create.
+			 * dec_active triggers ffmpeg_source_deactivate (stops
+			 * mp_media worker thread), which must run with source_mutex_
+			 * already released. */
 			obs_source_dec_active(priv);
 		}
 	}
@@ -1662,14 +1668,17 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 						tick_external_cell_health(i, cell.gridRow, cell.gridCol, now_health_ns);
 				} else {
 					/* Between probes: trust the supervisor's last
-					 * verdict. If render produced a frame, sync to
-					 * Active so a transient Connecting state from
-					 * a previous probe doesn't keep showing the
-					 * RECONNECTING overlay over a now-playing cell. */
-					newState = src ? SignalRuntimeState::Active : cs.state;
-					if (cs.state == SignalRuntimeState::Empty)
-						newState = src ? SignalRuntimeState::Active
-							       : SignalRuntimeState::Connecting;
+					 * verdict. We deliberately do NOT use `src` as
+					 * an Active proxy here \u2014 ffmpeg_source can keep
+					 * its last frame and stale width/height around for
+					 * a long time after the network drops, so a Lost /
+					 * Connecting verdict from the last probe must
+					 * persist instead of being overwritten by `src`
+					 * still resolving. The supervisor will re-evaluate
+					 * within at most kProbeIntervalNs. */
+					newState = (cs.state == SignalRuntimeState::Empty && src)
+							   ? SignalRuntimeState::Active
+							   : cs.state;
 				}
 			} else if (cs.type.empty()) {
 				newState = SignalRuntimeState::Empty;
@@ -1868,6 +1877,8 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				 * between resolve and render even within one frame
 				 * (other plugins / scripts can mark it removed). */
 				obs_source_video_render(src);
+				if (i < (int)cell_sources_.size())
+					cell_sources_[i].render_calls++;
 			}
 			endRegion();
 

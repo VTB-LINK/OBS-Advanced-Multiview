@@ -305,6 +305,18 @@ private:
 		uint64_t connecting_since_ns = 0; /* start of current Opening/Connecting phase */
 		uint64_t lost_since_ns = 0;       /* start of current Lost phase */
 		int media_restart_attempts = 0;   /* obs_source_media_restart attempts since last Active */
+
+		/* Phase 3 / M6.1 perf diag: counters used by the optional
+		 * 5-second perf-stats log line. We track render-thread
+		 * activity to correlate user-visible stutter with what the
+		 * supervisor sees:
+		 *   render_calls      -> times this cell ran obs_source_video_render
+		 *   render_skipped_*  -> reasons we elected to NOT render this frame
+		 *   last_perf_log_ns  -> 5s rate-limit timer */
+		uint64_t render_calls = 0;
+		uint64_t render_skipped_no_src = 0;
+		uint64_t render_skipped_zero_dim = 0;
+		uint64_t last_perf_log_ns = 0;
 	};
 	std::vector<CellSource> cell_sources_;
 	std::recursive_mutex source_mutex_;
