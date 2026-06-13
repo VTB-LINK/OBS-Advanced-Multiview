@@ -140,6 +140,14 @@ public:
 			return OBSSource();
 		}
 
+		/* Phase 3 / M6.1 perf consistency with FFmpeg: monitoring
+		 * cells want the latest frame every tick, not OBS's default
+		 * async-buffered timing (which schedules display via the
+		 * frame's NDI timestamp). DistroAV's own latency_mode setting
+		 * still controls receiver-side buffering; unbuffered here
+		 * only affects OBS's display-side timing pipeline. */
+		obs_source_set_async_unbuffered(raw, true);
+
 		obs_log(LOG_INFO, "[signal-provider/ndi] created private source '%s' ndi_source_name='%s'",
 			desired_name.c_str(), ndi_name);
 
