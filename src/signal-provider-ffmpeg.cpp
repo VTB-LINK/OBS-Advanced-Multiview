@@ -75,7 +75,9 @@ public:
 	OBSSource create_private_source(const std::string &desired_name, const SignalConfig &cfg) const override
 	{
 		if (!is_available()) {
-			obs_log(LOG_WARNING, "[signal-provider/ffmpeg] create skipped: ffmpeg_source unavailable");
+			obs_log(LOG_WARNING,
+				"[signal-provider/ffmpeg] create skipped for '%s': ffmpeg_source unavailable",
+				desired_name.c_str());
 			return OBSSource();
 		}
 
@@ -90,8 +92,8 @@ public:
 		const char *local_path = src_settings ? obs_data_get_string(src_settings, kKeyLocalFile) : nullptr;
 		const bool has_input = is_local_file ? (local_path && *local_path) : (input_url && *input_url);
 		if (!has_input) {
-			obs_log(LOG_WARNING, "[signal-provider/ffmpeg] create skipped: empty %s",
-				is_local_file ? "local_file path" : "input URL");
+			obs_log(LOG_WARNING, "[signal-provider/ffmpeg] create skipped for '%s': empty %s",
+				desired_name.c_str(), is_local_file ? "local_file path" : "input URL");
 			return OBSSource();
 		}
 

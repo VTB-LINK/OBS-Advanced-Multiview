@@ -91,7 +91,9 @@ public:
 	OBSSource create_private_source(const std::string &desired_name, const SignalConfig &cfg) const override
 	{
 		if (!is_available()) {
-			obs_log(LOG_WARNING, "[signal-provider/spout] create skipped: spout_capture unavailable");
+			obs_log(LOG_WARNING,
+				"[signal-provider/spout] create skipped for '%s': spout_capture unavailable",
+				desired_name.c_str());
 			return OBSSource();
 		}
 

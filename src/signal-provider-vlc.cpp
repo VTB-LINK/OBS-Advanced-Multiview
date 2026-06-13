@@ -110,7 +110,8 @@ public:
 	OBSSource create_private_source(const std::string &desired_name, const SignalConfig &cfg) const override
 	{
 		if (!is_available()) {
-			obs_log(LOG_WARNING, "[signal-provider/vlc] create skipped: vlc_source unavailable");
+			obs_log(LOG_WARNING, "[signal-provider/vlc] create skipped for '%s': vlc_source unavailable",
+				desired_name.c_str());
 			return OBSSource();
 		}
 
@@ -120,7 +121,8 @@ public:
 		 * MISSING and the user can re-edit, mirroring FFmpeg's
 		 * empty-URL handling. */
 		if (!src_settings) {
-			obs_log(LOG_WARNING, "[signal-provider/vlc] create skipped: no providerSettings");
+			obs_log(LOG_WARNING, "[signal-provider/vlc] create skipped for '%s': no providerSettings",
+				desired_name.c_str());
 			return OBSSource();
 		}
 		obs_data_array_t *playlist = obs_data_get_array(src_settings, kKeyPlaylist);
@@ -128,7 +130,8 @@ public:
 		if (playlist)
 			obs_data_array_release(playlist);
 		if (playlist_count == 0) {
-			obs_log(LOG_WARNING, "[signal-provider/vlc] create skipped: empty playlist");
+			obs_log(LOG_WARNING, "[signal-provider/vlc] create skipped for '%s': empty playlist",
+				desired_name.c_str());
 			return OBSSource();
 		}
 

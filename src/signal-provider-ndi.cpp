@@ -77,14 +77,16 @@ public:
 	OBSSource create_private_source(const std::string &desired_name, const SignalConfig &cfg) const override
 	{
 		if (!is_available()) {
-			obs_log(LOG_WARNING, "[signal-provider/ndi] create skipped: ndi_source unavailable");
+			obs_log(LOG_WARNING, "[signal-provider/ndi] create skipped for '%s': ndi_source unavailable",
+				desired_name.c_str());
 			return OBSSource();
 		}
 
 		obs_data_t *src = cfg.providerSettings;
 		const char *ndi_name = src ? obs_data_get_string(src, kKeySourceName) : nullptr;
 		if (!ndi_name || !*ndi_name) {
-			obs_log(LOG_WARNING, "[signal-provider/ndi] create skipped: empty ndi_source_name");
+			obs_log(LOG_WARNING, "[signal-provider/ndi] create skipped for '%s': empty ndi_source_name",
+				desired_name.c_str());
 			return OBSSource();
 		}
 
