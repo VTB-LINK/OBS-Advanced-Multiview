@@ -99,24 +99,53 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 {
 	QMenu menu(this);
 
-	/* Fullscreen */
+	/* Phase 3 / M6.6 H.5: Plan B layout.
+	 *
+	 * Sections (top -> bottom), with separators between:
+	 *
+	 *   1. Window / instance state
+	 *      - Fullscreen, Always on Top, Safe Area, VU Meter.
+	 *      - Always shown regardless of cell hit.
+	 *
+	 *   2. Cell display & lost-signal config (cell hit only)
+	 *      - Cell Display Settings..., Signal Lost Settings...
+	 *      - Non-destructive, same family as Safe Area / VU Meter
+	 *        above so the visual props all live in the upper half.
+	 *
+	 *   3. Source binding (cell hit only)
+	 *      - Add Source... (empty cell)
+	 *      - Change Source... / Edit Source... (external only) /
+	 *        Clear Cell (occupied cell)
+	 *      - Group destructive 'Clear Cell' with the binding-mutation
+	 *        operations so it is not adjacent to non-destructive
+	 *        config above.
+	 *
+	 *   4. Playback / reconnect (cell hit + occupied + provider supports)
+	 *      - Replay Now / Reconnect Now
+	 *      - Previous (VLC), Play / Pause (VLC + ffmpeg local), Next (VLC)
+	 *
+	 *   5. Window actions (always)
+	 *      - Edit Grid... / Global Settings / Close
+	 *
+	 * Non-cell hits (gutter / border / outside grid): sections 2 / 3 / 4
+	 * collapse to nothing, the menu shrinks to sections 1 + 5. */
+
+	/* ---------- Section 1: window / instance ---------- */
+
 	QAction *fullscreenAction = menu.addAction(QStringLiteral("Fullscreen"));
 	fullscreenAction->setCheckable(true);
 	fullscreenAction->setChecked(isFullScreen());
 	connect(fullscreenAction, &QAction::triggered, this, &MultiviewWindow::on_toggle_fullscreen);
 
-	/* Always on top */
 	QAction *onTopAction = menu.addAction(QStringLiteral("Always on Top"));
 	onTopAction->setCheckable(true);
 	onTopAction->setChecked(is_always_on_top_);
 	connect(onTopAction, &QAction::triggered, this, &MultiviewWindow::on_toggle_always_on_top);
 
-	/* Safe Area toggle (instance-level) */
 	{
 		MultiviewInstance *inst = config_->find_instance(uuid_);
 		if (inst) {
 			bool safeEnabled = false;
-			/* Check instance effective safe area state */
 			if (inst->visualSettings.safeAreaMode == InheritanceMode::Override)
 				safeEnabled = inst->visualSettings.safeArea.enabled;
 			else
@@ -129,7 +158,6 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 				MultiviewInstance *inst = config_->find_instance(uuid_);
 				if (!inst)
 					return;
-				/* Switch to override mode and toggle */
 				inst->visualSettings.safeAreaMode = InheritanceMode::Override;
 				inst->visualSettings.safeArea.enabled = !safeEnabled;
 				config_->save();
@@ -138,7 +166,6 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 		}
 	}
 
-	/* VU Meter toggle (instance-level) */
 	{
 		MultiviewInstance *inst = config_->find_instance(uuid_);
 		if (inst) {
@@ -163,15 +190,17 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 		}
 	}
 
-	/* Cell Display Settings (per-cell) */
+	/* ---------- Section 2: cell display & lost (cell hit only) ---------- */
+
 	if (cellIndex >= 0) {
+		menu.addSeparator();
+
 		QAction *cellSettingsAction = menu.addAction(QStringLiteral("Cell Display Settings..."));
 		connect(cellSettingsAction, &QAction::triggered, this, [this, cellIndex]() {
 			MultiviewInstance *inst = config_->find_instance(uuid_);
 			if (!inst)
 				return;
 
-			/* Find cell (row, col) from engine */
 			LayoutEngine tmpEngine;
 			tmpEngine.set_layout(inst->layout);
 			tmpEngine.set_viewport(100, 100);
@@ -182,7 +211,6 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			int row = cells[cellIndex].gridRow;
 			int col = cells[cellIndex].gridCol;
 
-			/* Find or create CellVisualSettings for this cell */
 			CellVisualSettings *cvs = nullptr;
 			for (auto &c : inst->cellVisualSettings) {
 				if (c.row == row && c.col == col) {
@@ -205,7 +233,6 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 				result.row = row;
 				result.col = col;
 
-				/* Update or insert */
 				bool found = false;
 				for (auto &c : inst->cellVisualSettings) {
 					if (c.row == row && c.col == col) {
@@ -261,10 +288,6 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			result.row = row;
 			result.col = col;
 
-			/* Insert or update in the instance vector. We keep entries even
-			 * when mode == Inherit so the user retains the previously
-			 * configured payload across toggles — the to_obs_data() side
-			 * already filters Inherit-only entries when persisting. */
 			bool found = false;
 			for (auto &c : inst->cellLostSignalSettings) {
 				if (c.row == row && c.col == col) {
@@ -281,10 +304,9 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 		});
 	}
 
-	menu.addSeparator();
+	/* ---------- Section 3: source binding (cell hit only) ---------- */
 
 	if (cellIndex >= 0) {
-		/* Check if cell has a source assigned */
 		bool hasSource = false;
 		bool isExternal = false;
 		{
@@ -305,6 +327,8 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			}
 		}
 
+		menu.addSeparator();
+
 		if (hasSource) {
 			QAction *changeAction = menu.addAction(QStringLiteral("Change Source..."));
 			connect(changeAction, &QAction::triggered, this,
@@ -323,6 +347,8 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			QAction *clearAction = menu.addAction(QStringLiteral("Clear Cell"));
 			connect(clearAction, &QAction::triggered, this,
 				[this, cellIndex]() { on_clear_cell(cellIndex); });
+
+			/* ---------- Section 4: playback / reconnect ---------- */
 
 			/* Phase 3 / M5.3: Reconnect Now is enabled only when the cell is
 			 * not already happily Active. Keeps the menu clean for steady
@@ -348,17 +374,19 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 				std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 				if (cellIndex < (int)cell_sources_.size()) {
 					const auto &cs = cell_sources_[cellIndex];
-					const bool isExternal = cs.provider_type != SignalProviderType::Unknown &&
-								!signal_provider_is_internal(cs.provider_type);
-					canReconnect = cs.state == SignalRuntimeState::MissingInternal ||
-						       cs.state == SignalRuntimeState::Lost ||
-						       cs.state == SignalRuntimeState::Connecting ||
-						       cs.state == SignalRuntimeState::RetryScheduled ||
-						       cs.state == SignalRuntimeState::FallbackActive ||
-						       cs.state == SignalRuntimeState::Error ||
-						       (isExternal && cs.state == SignalRuntimeState::Active);
+					const bool isExternalForReconnect =
+						cs.provider_type != SignalProviderType::Unknown &&
+						!signal_provider_is_internal(cs.provider_type);
+					canReconnect =
+						cs.state == SignalRuntimeState::MissingInternal ||
+						cs.state == SignalRuntimeState::Lost ||
+						cs.state == SignalRuntimeState::Connecting ||
+						cs.state == SignalRuntimeState::RetryScheduled ||
+						cs.state == SignalRuntimeState::FallbackActive ||
+						cs.state == SignalRuntimeState::Error ||
+						(isExternalForReconnect && cs.state == SignalRuntimeState::Active);
 
-					if (isExternal && cs.private_source) {
+					if (isExternalForReconnect && cs.private_source) {
 						obs_data_t *cur = obs_source_get_settings(cs.private_source);
 						if (cur) {
 							isExternalLocalFile = obs_data_get_bool(cur, "is_local_file");
@@ -391,6 +419,14 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 					}
 				}
 			}
+
+			/* Section 4 separator. Only emit if at least one playback /
+			 * reconnect action will be added; otherwise an empty section
+			 * leaves a cosmetic dangling separator before Edit Grid. */
+			const bool hasPlaybackSection = true; /* Reconnect/Replay always shown when hasSource */
+			if (hasPlaybackSection)
+				menu.addSeparator();
+
 			/* VLC has no "connection" to re-establish either \u2014 the
 			 * action restarts the current playlist entry via
 			 * obs_source_media_restart, semantically identical to a
@@ -441,13 +477,16 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 					});
 			}
 		} else {
+			/* Empty cell: Add Source. No playback section follows. */
 			QAction *addAction = menu.addAction(QStringLiteral("Add Source..."));
 			connect(addAction, &QAction::triggered, this,
 				[this, cellIndex]() { on_add_source(cellIndex); });
 		}
-
-		menu.addSeparator();
 	}
+
+	/* ---------- Section 5: window-level actions (always) ---------- */
+
+	menu.addSeparator();
 
 	QAction *editGridAction = menu.addAction(QStringLiteral("Edit Grid..."));
 	connect(editGridAction, &QAction::triggered, this, &MultiviewWindow::on_edit_grid);
