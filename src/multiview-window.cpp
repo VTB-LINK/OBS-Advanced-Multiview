@@ -954,8 +954,14 @@ bool MultiviewWindow::force_reconnect_cell(int cellIndex)
 	/* Resolve cooldown from effective Lost Signal settings so users who
 	 * raised the cooldown deliberately (e.g. flaky NDI sources) keep their
 	 * preferred pacing. Falls back to the documented 1s default if the
-	 * instance / global config disappears mid-call. */
+	 * instance / global config disappears mid-call.
+	 *
+	 * Also capture the cell's grid row/col here so the recreate
+	 * escalation below can queue refresh_cell(row, col) without a
+	 * second LayoutEngine pass. -1 means "unknown" (instance vanished). */
 	int cooldownMs = 1000;
+	int cellRow = -1;
+	int cellCol = -1;
 	{
 		MultiviewInstance *inst = config_->find_instance(uuid_);
 		if (inst) {
@@ -965,9 +971,9 @@ bool MultiviewWindow::force_reconnect_cell(int cellIndex)
 			tmpEngine.compute();
 			const auto &cells = tmpEngine.cells();
 			if (cellIndex < (int)cells.size()) {
-				int r = cells[cellIndex].gridRow;
-				int c = cells[cellIndex].gridCol;
-				const CellLostSignalSettings *cls = inst->find_cell_lost_signal(r, c);
+				cellRow = cells[cellIndex].gridRow;
+				cellCol = cells[cellIndex].gridCol;
+				const CellLostSignalSettings *cls = inst->find_cell_lost_signal(cellRow, cellCol);
 				LostSignalSettings eff =
 					resolve_effective_lost_signal(config_->global_settings().lostSignal, cls);
 				cooldownMs = eff.manualReconnectCooldownMs;
@@ -979,37 +985,99 @@ bool MultiviewWindow::force_reconnect_cell(int cellIndex)
 	if (cs.last_reconnect_ns != 0 && cooldownMs > 0) {
 		uint64_t elapsedMs = (now - cs.last_reconnect_ns) / 1000000ull;
 		if ((int)elapsedMs < cooldownMs) {
-			obs_log(LOG_DEBUG, "reconnect cooldown active for cell %d (%llu/%d ms)", cellIndex,
-				(unsigned long long)elapsedMs, cooldownMs);
+			amv_log_detailed(LOG_DEBUG, "reconnect cooldown active for cell %d (%llu/%d ms)", cellIndex,
+					 (unsigned long long)elapsedMs, cooldownMs);
 			return false;
 		}
 	}
 	cs.last_reconnect_ns = now;
 	cs.retry_attempt++;
 
-	/* Phase 3 / M6.1: external provider cell. The cheap reconnect path is
-	 * obs_source_media_restart, which for ffmpeg_source re-opens the URL
-	 * via mp_media_set_active(false) -> set_active(true) on its worker
-	 * thread. No need to recreate the private source. Full recreate
-	 * (release_source_refs + refresh_sources) is reserved for step 10's
-	 * health supervisor when restart alone has failed N times.
+	/* Phase 3 hardening tail: manual Reconnect Now mirrors the supervisor
+	 * Lost-branch logic (capability-driven, no per-provider branches).
+	 *
+	 * The user is explicitly asking for a recovery attempt, so each click
+	 * must do *something* visible. The escalation ladder is the same as
+	 * the supervisor:
+	 *
+	 *   supports_media_restart  &&  attempts < kMaxLostRestartAttempts
+	 *     -> media_restart, bump lost_restart_attempts
+	 *   supports_media_restart  &&  !benefits_from_recreate
+	 *     -> media_restart on every click (no recreate is meaningful);
+	 *        reset counter so the click ladder doesn't lock out
+	 *   benefits_from_recreate
+	 *     -> queue refresh_cell on the Qt main thread, reset counter
+	 *   neither (NDI / Spout)
+	 *     -> ack the click for cooldown bookkeeping; host plugin owns
+	 *        actual recovery
 	 *
 	 * Held strong ref via OBSSource (private_source) survives the call;
 	 * obs_source_media_restart is safe to call on any source type that
-	 * registered the media callbacks (ffmpeg_source / vlc_source). For
-	 * provider types that don't expose media controls (ndi_source,
-	 * spout_capture) it is a no-op in OBS, which still satisfies the
-	 * "manual attempt was made" semantics for the cooldown / UI. */
+	 * registered the media callbacks (ffmpeg_source / vlc_source). */
 	if (cs.provider_type != SignalProviderType::Unknown && !signal_provider_is_internal(cs.provider_type)) {
-		if (cs.private_source) {
-			obs_source_media_restart(cs.private_source);
-			cs.state = SignalRuntimeState::Connecting;
-			obs_log(LOG_INFO, "reconnect cell %d: media_restart on external provider '%s'", cellIndex,
-				signal_provider_to_string(cs.provider_type));
-		} else {
+		const auto *provider = SignalProviderRegistry::instance().find(cs.provider_type);
+		const bool restart_eligible = provider && provider->supports_media_restart();
+		const bool recreate_eligible = provider && provider->benefits_from_recreate();
+
+		if (!cs.private_source) {
+			/* No live source to act on: if the provider supports
+			 * recreate and we have row/col, queue refresh_cell;
+			 * otherwise just mark Error so the overlay surfaces. */
 			cs.state = SignalRuntimeState::Error;
-			obs_log(LOG_INFO, "reconnect cell %d: external provider has no private source", cellIndex);
+			amv_log_detailed(LOG_INFO, "%sreconnect cell %d: external provider has no private source",
+					 log_prefix().c_str(), cellIndex);
+			if (recreate_eligible && cellRow >= 0 && cellCol >= 0) {
+				cs.lost_restart_attempts = 0;
+				QTimer::singleShot(0, this, [this, cellRow, cellCol]() {
+					if (!refresh_cell(cellRow, cellCol))
+						refresh_sources();
+				});
+			}
+			return true;
 		}
+
+		if (restart_eligible && cs.lost_restart_attempts < kMaxLostRestartAttempts) {
+			obs_source_media_restart(cs.private_source);
+			cs.lost_restart_attempts++;
+			cs.state = SignalRuntimeState::Connecting;
+			amv_log_detailed(LOG_INFO,
+					 "%sreconnect cell %d: media_restart #%d/%d on external provider '%s'",
+					 log_prefix().c_str(), cellIndex, cs.lost_restart_attempts,
+					 kMaxLostRestartAttempts, signal_provider_to_string(cs.provider_type));
+			return true;
+		}
+
+		if (recreate_eligible && cellRow >= 0 && cellCol >= 0) {
+			cs.lost_restart_attempts = 0;
+			cs.state = SignalRuntimeState::Connecting;
+			amv_log_detailed(LOG_INFO,
+					 "%sreconnect cell %d: scheduling full recreate of external provider '%s'",
+					 log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
+			QTimer::singleShot(0, this, [this, cellRow, cellCol]() {
+				if (!refresh_cell(cellRow, cellCol))
+					refresh_sources();
+			});
+			return true;
+		}
+
+		if (restart_eligible) {
+			/* restart-only or recreate unavailable due to missing
+			 * row/col: fall back to repeating the cheap restart and
+			 * reset the counter so the user can keep clicking. */
+			obs_source_media_restart(cs.private_source);
+			cs.lost_restart_attempts = 0;
+			cs.state = SignalRuntimeState::Connecting;
+			amv_log_detailed(LOG_INFO, "%sreconnect cell %d: media_restart on external provider '%s'",
+					 log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
+			return true;
+		}
+
+		/* NDI / Spout: no useful action; host plugin owns reconnect.
+		 * Touch last_reconnect_ns above so the cooldown still ticks. */
+		amv_log_detailed(
+			LOG_INFO,
+			"%sreconnect cell %d: provider '%s' has no manual recovery action (host plugin auto-reconnects)",
+			log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
 		return true;
 	}
 

@@ -393,6 +393,13 @@ private:
 	 * call does not need to re-walk the layout. */
 	SignalRuntimeState tick_external_cell_health(int cellIndex, int cellRow, int cellCol, uint64_t now_ns);
 
+	/* Phase 3 hardening tail: max cheap-restart attempts per Lost window
+	 * (shared by the supervisor in multiview-window-health.cpp and the
+	 * manual Reconnect Now path in multiview-window.cpp). Same value
+	 * means manual clicks escalate to full recreate on the same N as
+	 * the automatic supervisor. */
+	static constexpr int kMaxLostRestartAttempts = 3;
+
 	/* Canvas aspect ratio for fixed-ratio viewport */
 	double canvas_aspect_ = 16.0 / 9.0;
 

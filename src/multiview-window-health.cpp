@@ -57,12 +57,6 @@ constexpr uint64_t kMediaRestartCooldownNs = 3 * NS_PER_SEC;
  * effective_lost.manualReconnectCooldownMs (or set it absurdly low). */
 constexpr uint64_t kMinRecreateCooldownNs = 5 * NS_PER_SEC;
 
-/* Phase 3 hardening tail: max cheap-restart attempts in a single Lost
- * window before promoting to full recreate. Symmetric with the Opening
- * cap above so a misbehaving stream takes roughly the same number of
- * cycles to fall back to the heavy path. */
-constexpr int kMaxLostRestartAttempts = 3;
-
 } // namespace
 
 MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(int cellIndex, int cellRow, int cellCol,
