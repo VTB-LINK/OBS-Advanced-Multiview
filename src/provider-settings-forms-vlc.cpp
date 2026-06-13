@@ -32,6 +32,8 @@ constexpr const char *kVlcKeyShuffle = "shuffle";
 constexpr const char *kVlcKeyBehavior = "playback_behavior";
 constexpr const char *kVlcKeyNetworkCaching = "network_caching";
 constexpr const char *kVlcKeyTrack = "track";
+constexpr const char *kVlcKeySubtitleEnable = "subtitle_enable";
+constexpr const char *kVlcKeySubtitleTrack = "subtitle_track";
 constexpr const char *kVlcPlaylistItemValueKey = "value";
 
 constexpr const char *kVlcBehaviorStopRestart = "stop_restart";

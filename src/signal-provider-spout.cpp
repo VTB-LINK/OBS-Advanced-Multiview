@@ -61,10 +61,11 @@ constexpr const char *kKeyTickSpeedLimit = "tickspeedlimit";
  * sender is registered first". */
 constexpr const char *kUseFirstAvailableSender = "usefirstavailablesender";
 
-/* Composite mode integer from win-spout-source.cpp's #defines. The full
- * enum (Opaque=1, Alpha=2, Default=3, Premultiplied=4) lives in
- * provider-settings-forms-spout.cpp where the UI exposes the choices. */
+/* Composite mode integers from win-spout-source.cpp's #defines. */
+constexpr int kCompositeModeOpaque = 1;
+constexpr int kCompositeModeAlpha = 2;
 constexpr int kCompositeModeDefault = 3;
+constexpr int kCompositeModePremultiplied = 4;
 
 /* Forward declarations: spout_discovery_scan and its 1Hz cache live
  * below the SpoutProvider class but the class needs them for

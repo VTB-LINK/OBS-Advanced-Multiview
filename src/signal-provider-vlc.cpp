@@ -65,6 +65,8 @@ constexpr const char *kKeySubtitleEnable = "subtitle_enable";
 constexpr const char *kKeySubtitleTrack = "subtitle";
 
 constexpr const char *kBehaviorStopRestart = "stop_restart";
+constexpr const char *kBehaviorPauseUnpause = "pause_unpause";
+constexpr const char *kBehaviorAlwaysPlay = "always_play";
 
 /* Each playlist entry is an obs_data_t with a single "value" string
  * (vlc-video-source.c line 637 reads it via obs_data_get_string(item,

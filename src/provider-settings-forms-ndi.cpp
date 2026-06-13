@@ -54,10 +54,10 @@ constexpr int kNdiBehaviorKeepActive = 0;
 constexpr int kNdiBehaviorStopBlank = 1;
 constexpr int kNdiBehaviorStopLastFrame = 2;
 
-/* DistroAV also defines ndi_behavior_timeout ClearContent=0 / KeepContent=1,
- * and a legacy sync Internal=0. AMV does not expose those in this form:
- * runtime hard-locks timeout to ClearContent, and DistroAV removed Internal
- * sync from the UI years ago. */
+constexpr int kNdiTimeoutClearContent = 0;
+constexpr int kNdiTimeoutKeepContent = 1;
+
+constexpr int kNdiSyncInternal = 0; /* legacy, removed in DistroAV but kept for round-trip */
 constexpr int kNdiSyncNDITimestamp = 1;
 constexpr int kNdiSyncNDISourceTimecode = 2;
 
