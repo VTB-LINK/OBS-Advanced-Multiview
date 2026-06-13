@@ -37,6 +37,8 @@ endif()
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE src/plugin-main.cpp
+          src/amv-logging.hpp
+          src/amv-logging.cpp
           src/multiview-instance.hpp
           src/multiview-instance.cpp
           src/config-manager.hpp

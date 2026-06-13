@@ -20,6 +20,7 @@ License: GPL-2.0-or-later
 */
 
 #include "signal-provider.hpp"
+#include "amv-logging.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -155,8 +156,9 @@ public:
 		 * multiview runtime after create. See signal-provider.hpp
 		 * for why this lives at the provider interface level. */
 
-		obs_log(LOG_INFO, "[signal-provider/ffmpeg] created private source '%s' %s='%s'", desired_name.c_str(),
-			is_local_file ? "local_file" : "input", is_local_file ? local_path : input_url);
+		amv_log_detailed(LOG_INFO, "[signal-provider/ffmpeg] created private source '%s' %s='%s'",
+				 desired_name.c_str(), is_local_file ? "local_file" : "input",
+				 is_local_file ? local_path : input_url);
 
 		OBSSource wrapper(raw);
 		obs_source_release(raw);

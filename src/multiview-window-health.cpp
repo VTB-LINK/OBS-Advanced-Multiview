@@ -32,6 +32,7 @@ License: GPL-2.0-or-later
 
 #include "multiview-window.hpp"
 #include "signal-provider.hpp"
+#include "amv-logging.hpp"
 
 #include <obs.h>
 #include <util/platform.h>
@@ -102,18 +103,23 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 
 	/* Phase 3 / M6.1 perf diag: every 5s, log render-call rate alongside
 	 * the supervisor's view of the source. Lets us correlate user-visible
-	 * stutter with provider state vs render-thread starvation. The diag
-	 * is unconditional so it ships in release builds too \u2014 produces ~12
-	 * lines per minute per external cell, negligible log volume. */
+	 * stutter with provider state vs render-thread starvation.
+	 *
+	 * Phase 3 hardening tail: the per-cell 5-second cadence noticeably
+	 * pollutes OBS logs in normal operation, so this is now gated behind
+	 * the global Detailed logs toggle. Failures still surface via state
+	 * transitions (overlays + WARNING/ERROR paths). */
 	constexpr uint64_t kPerfLogIntervalNs = 5ULL * NS_PER_SEC;
 	if (now_ns - cs.last_perf_log_ns >= kPerfLogIntervalNs) {
 		const uint64_t elapsed_ns = cs.last_perf_log_ns == 0 ? kPerfLogIntervalNs
 								     : (now_ns - cs.last_perf_log_ns);
 		const double elapsed_sec = (double)elapsed_ns / 1e9;
 		const double render_fps = (double)cs.render_calls / elapsed_sec;
-		obs_log(LOG_INFO, "%s[perf] cell (%d,%d) provider=%s render_fps=%.1f frame=%ux%u health=%d state=%d",
-			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type), render_fps,
-			cs.last_dimensions_w, cs.last_dimensions_h, (int)report.code, (int)cs.state);
+		amv_log_detailed(LOG_INFO,
+				 "%s[perf] cell (%d,%d) provider=%s render_fps=%.1f frame=%ux%u health=%d state=%d",
+				 log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type),
+				 render_fps, cs.last_dimensions_w, cs.last_dimensions_h, (int)report.code,
+				 (int)cs.state);
 		cs.render_calls = 0;
 		cs.last_perf_log_ns = now_ns;
 	}
@@ -164,9 +170,9 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 			cs.media_restart_attempts++;
 			cs.next_retry_ns = now_ns + kMediaRestartCooldownNs;
 			cs.last_reconnect_ns = now_ns;
-			obs_log(LOG_INFO, "%s[health] cell (%d,%d) media_restart #%d on '%s' (reason='%s')",
-				log_prefix().c_str(), cellRow, cellCol, cs.media_restart_attempts,
-				signal_provider_to_string(cs.provider_type), cs.last_error_reason.c_str());
+			amv_log_detailed(LOG_INFO, "%s[health] cell (%d,%d) media_restart #%d on '%s' (reason='%s')",
+					 log_prefix().c_str(), cellRow, cellCol, cs.media_restart_attempts,
+					 signal_provider_to_string(cs.provider_type), cs.last_error_reason.c_str());
 			return SignalRuntimeState::Connecting;
 		}
 
@@ -216,9 +222,10 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 
 		cs.next_retry_ns = now_ns + cooldown_ns;
 		cs.retry_attempt++;
-		obs_log(LOG_INFO, "%s[health] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s')",
-			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type),
-			cs.retry_attempt, cs.last_error_reason.c_str());
+		amv_log_detailed(LOG_INFO,
+				 "%s[health] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s')",
+				 log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type),
+				 cs.retry_attempt, cs.last_error_reason.c_str());
 
 		/* Queue refresh_cell onto the Qt main thread \u2014 it must NOT
 		 * run while we hold source_mutex_. By the time the timer

@@ -38,6 +38,7 @@ License: GPL-2.0-or-later
 */
 
 #include "signal-provider.hpp"
+#include "amv-logging.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -161,8 +162,8 @@ public:
 			return OBSSource();
 		}
 
-		obs_log(LOG_INFO, "[signal-provider/vlc] created private source '%s' playlist_items=%zu",
-			desired_name.c_str(), playlist_count);
+		amv_log_detailed(LOG_INFO, "[signal-provider/vlc] created private source '%s' playlist_items=%zu",
+				 desired_name.c_str(), playlist_count);
 
 		OBSSource wrapper(raw);
 		obs_source_release(raw);

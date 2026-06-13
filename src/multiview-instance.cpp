@@ -1714,6 +1714,10 @@ obs_data_t *GlobalSettings::to_obs_data() const
 	obs_data_set_obj(data, "lostSignal", ls);
 	obs_data_release(ls);
 
+	/* Phase 3 hardening tail: persist the Detailed logs toggle so a
+	 * fresh OBS startup respects whatever the user picked last session. */
+	obs_data_set_bool(data, "detailedLogs", detailedLogs);
+
 	return data;
 }
 
@@ -1748,6 +1752,13 @@ GlobalSettings GlobalSettings::from_obs_data(obs_data_t *data)
 	gs.lostSignal = LostSignalSettings::from_obs_data(ls);
 	if (ls)
 		obs_data_release(ls);
+
+	/* Phase 3 hardening tail: Detailed logs toggle. Default false when
+	 * the key is absent so existing configs do not silently flip on. */
+	if (obs_data_has_user_value(data, "detailedLogs"))
+		gs.detailedLogs = obs_data_get_bool(data, "detailedLogs");
+	else
+		gs.detailedLogs = false;
 
 	return gs;
 }

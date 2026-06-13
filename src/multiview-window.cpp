@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "multiview-window.hpp"
+#include "amv-logging.hpp"
 #include "cell-display-settings-dialog.hpp"
 #include "edit-source-dialog.hpp"
 #include "signal-lost-settings-dialog.hpp"
@@ -2057,7 +2058,8 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 						   ((uint64_t)(uint32_t)cell.w << 16) ^ (uint64_t)(uint32_t)cell.h;
 				if (cell_sources_[i].fill_log_hash != h) {
 					cell_sources_[i].fill_log_hash = h;
-					obs_log(LOG_INFO,
+					amv_log_detailed(
+						LOG_INFO,
 						"%s[fill] cell (%d,%d) provider=%s src=%ux%u (%.4f) cell=%dx%d "
 						"content=%dx%d (%.4f) vr=%dx%d snap=%s",
 						log_prefix().c_str(), cell.gridRow, cell.gridCol,

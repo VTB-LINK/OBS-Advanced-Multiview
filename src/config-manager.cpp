@@ -18,6 +18,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "config-manager.hpp"
 
+#include "amv-logging.hpp"
+
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <util/platform.h>
@@ -128,6 +130,11 @@ bool ConfigManager::load_from_file(const std::string &path)
 	} else {
 		global_settings_ = GlobalSettings();
 	}
+
+	/* Phase 3 hardening tail: mirror persisted Detailed logs flag into
+	 * the process-wide atomic so static-context provider code can read
+	 * it without touching ConfigManager. */
+	amv::set_detailed_logs_enabled(global_settings_.detailedLogs);
 
 	/* instances */
 	instances_.clear();

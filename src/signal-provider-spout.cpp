@@ -34,6 +34,7 @@ License: GPL-2.0-or-later
 */
 
 #include "signal-provider.hpp"
+#include "amv-logging.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -132,8 +133,8 @@ public:
 			return OBSSource();
 		}
 
-		obs_log(LOG_INFO, "[signal-provider/spout] created private source '%s' sender='%s'",
-			desired_name.c_str(), sender_name);
+		amv_log_detailed(LOG_INFO, "[signal-provider/spout] created private source '%s' sender='%s'",
+				 desired_name.c_str(), sender_name);
 
 		OBSSource wrapper(raw);
 		obs_source_release(raw);

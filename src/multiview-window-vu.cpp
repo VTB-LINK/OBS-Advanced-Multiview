@@ -8,6 +8,7 @@ License: GPL-2.0-or-later
 */
 
 #include "multiview-window.hpp"
+#include "amv-logging.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -631,11 +632,15 @@ void MultiviewWindow::rebuild_volmeters()
 	 * rebuilds on any scene-tree mutation, per-source logs flooded the OBS
 	 * log; one line per rebuild is sufficient for diagnostics. The instance
 	 * prefix `[name(uuid8)]` lets logs stay readable when several Multiview
-	 * windows are open simultaneously. */
-	obs_log(LOG_INFO, "[%s(%s)] VU meters rebuilt: cells=%d sources=%d track_bit=0x%x%s%s",
-		inst_name.empty() ? "?" : inst_name.c_str(), short_uuid.empty() ? "?" : short_uuid.c_str(),
-		cells_with_meters, total_attached, current_track_bit_, cells_breakdown.empty() ? "" : " | ",
-		cells_breakdown.c_str());
+	 * windows are open simultaneously.
+	 *
+	 * Phase 3 hardening tail: rebuilds still fire on every scene-tree edit,
+	 * which can be busy during normal mixing; gate the summary behind
+	 * Detailed logs so steady-state operation does not spam the log. */
+	amv_log_detailed(LOG_INFO, "[%s(%s)] VU meters rebuilt: cells=%d sources=%d track_bit=0x%x%s%s",
+			 inst_name.empty() ? "?" : inst_name.c_str(), short_uuid.empty() ? "?" : short_uuid.c_str(),
+			 cells_with_meters, total_attached, current_track_bit_, cells_breakdown.empty() ? "" : " | ",
+			 cells_breakdown.c_str());
 
 	/* Aggregated MAX_DEPTH warning (one line per rebuild listing every
 	 * affected cell) — keeps signal-to-noise high when a deeply nested

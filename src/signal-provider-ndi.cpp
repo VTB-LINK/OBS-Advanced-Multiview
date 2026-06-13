@@ -25,6 +25,7 @@ License: GPL-2.0-or-later
 */
 
 #include "signal-provider.hpp"
+#include "amv-logging.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -134,8 +135,8 @@ public:
 		 * prefers_unbuffered_async() and applied uniformly by the
 		 * multiview runtime after create. */
 
-		obs_log(LOG_INFO, "[signal-provider/ndi] created private source '%s' ndi_source_name='%s'",
-			desired_name.c_str(), ndi_name);
+		amv_log_detailed(LOG_INFO, "[signal-provider/ndi] created private source '%s' ndi_source_name='%s'",
+				 desired_name.c_str(), ndi_name);
 
 		OBSSource wrapper(raw);
 		obs_source_release(raw);

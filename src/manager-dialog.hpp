@@ -121,6 +121,7 @@ private:
 	QDoubleSpinBox *spin_re_resolve_fps_;
 	QLabel *lbl_re_resolve_effective_;
 	QCheckBox *chk_safe_area_enabled_;
+	QCheckBox *chk_detailed_logs_;
 
 	void update_re_resolve_effective_label();
 

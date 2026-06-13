@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "manager-dialog.hpp"
+#include "amv-logging.hpp"
 #include "cell-display-settings-dialog.hpp"
 #include "signal-lost-settings-dialog.hpp"
 #include "grid-preview-widget.hpp"
@@ -703,6 +704,17 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 	chk_safe_area_enabled_->setChecked(config_->global_settings().visualSettings.safeArea.enabled);
 	layout->addWidget(chk_safe_area_enabled_);
 
+	/* Phase 3 hardening tail: Detailed logs toggle. Off by default; gates
+	 * high-frequency diagnostic INFO logs ([perf] every 5s, [health] retry,
+	 * [fill] aspect/snap, VU rebuild summaries, provider "created private
+	 * source" success). WARNING / ERROR are not affected. */
+	chk_detailed_logs_ = new QCheckBox(QStringLiteral("Detailed logs (verbose diagnostics)"), tab);
+	chk_detailed_logs_->setChecked(config_->global_settings().detailedLogs);
+	chk_detailed_logs_->setToolTip(QStringLiteral(
+		"Log per-cell render FPS, health retries, aspect/snap, VU rebuilds, and provider creates.\n"
+		"Warnings and errors are always logged regardless of this setting."));
+	layout->addWidget(chk_detailed_logs_);
+
 	/* Visual Settings button */
 	layout->addSpacing(12);
 	auto *vs_label = new QLabel(QStringLiteral("Visual Settings (Global Defaults)"), tab);
@@ -750,10 +762,17 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 		config_->global_settings().reResolveInheritObs = chk_re_resolve_inherit_->isChecked();
 		config_->global_settings().reResolveCustomFps = spin_re_resolve_fps_->value();
 		config_->global_settings().visualSettings.safeArea.enabled = chk_safe_area_enabled_->isChecked();
+		config_->global_settings().detailedLogs = chk_detailed_logs_->isChecked();
+		/* Mirror the toggle into the process-wide atomic immediately so the
+		 * effect is visible the moment the user clicks Apply, not only after
+		 * the next config load. */
+		amv::set_detailed_logs_enabled(config_->global_settings().detailedLogs);
 		config_->save();
-		obs_log(LOG_INFO, "global settings saved (gutter=%d, reResolve=%s %.2f fps, safeArea=%s)",
+		obs_log(LOG_INFO,
+			"global settings saved (gutter=%d, reResolve=%s %.2f fps, safeArea=%s, detailedLogs=%s)",
 			spin_default_gutter_->value(), chk_re_resolve_inherit_->isChecked() ? "inherit" : "custom",
-			spin_re_resolve_fps_->value(), chk_safe_area_enabled_->isChecked() ? "on" : "off");
+			spin_re_resolve_fps_->value(), chk_safe_area_enabled_->isChecked() ? "on" : "off",
+			chk_detailed_logs_->isChecked() ? "on" : "off");
 		update_re_resolve_effective_label();
 		notify_multiview_layout_changed();
 		notify_multiview_visual_settings_changed();

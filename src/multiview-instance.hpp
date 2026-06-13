@@ -506,6 +506,16 @@ struct GlobalSettings {
 	 * an Override entry resolve to this struct. */
 	LostSignalSettings lostSignal;
 
+	/* Phase 3 hardening tail: "Detailed logs" toggle. When false (default),
+	 * high-frequency diagnostic INFO logs ([perf] every 5s, [health] retry
+	 * chatter, [fill] aspect/snap, VU rebuild summaries, provider "created
+	 * private source" success lines) are suppressed. WARNING / ERROR are
+	 * always emitted regardless. The runtime mirror of this flag lives in
+	 * amv-logging.cpp as a process-wide atomic; ConfigManager pushes the
+	 * value there on load and the Manager Settings tab pushes it on Apply
+	 * so static-context provider code can read it cheaply. */
+	bool detailedLogs = false;
+
 	obs_data_t *to_obs_data() const;
 	static GlobalSettings from_obs_data(obs_data_t *data);
 };
