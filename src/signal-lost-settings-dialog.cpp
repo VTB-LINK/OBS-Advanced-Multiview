@@ -306,7 +306,21 @@ void SignalLostSettingsDialog::build_ui()
 	spin_manual_cooldown_ = new QSpinBox(grp_backoff);
 	spin_manual_cooldown_->setRange(0, 60000);
 	spin_manual_cooldown_->setSuffix(QStringLiteral(" ms"));
-	form_backoff->addRow(QStringLiteral("Manual reconnect cooldown"), spin_manual_cooldown_);
+	/* Phase 3 hardening tail: the legacy label "Manual reconnect cooldown"
+	 * suggested this only throttled Reconnect Now clicks, but the
+	 * supervisor uses the same value to pace its automatic retry ladder
+	 * (cheap media_restart attempts and full source recreate alike).
+	 * Tooltip makes the dual scope explicit; persisted JSON key stays
+	 * `manualReconnectCooldownMs` for backwards compatibility. */
+	spin_manual_cooldown_->setToolTip(QStringLiteral(
+		"Minimum time between recovery attempts for this cell.\n"
+		"\n"
+		"Applies to both:\n"
+		"  - the automatic supervisor (cheap media_restart and full source recreate), and\n"
+		"  - the manual Reconnect Now action.\n"
+		"\n"
+		"Lower values retry sooner. Higher values reduce log noise and bandwidth for known-bad sources."));
+	form_backoff->addRow(QStringLiteral("Retry cooldown"), spin_manual_cooldown_);
 	root->addWidget(grp_backoff);
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
