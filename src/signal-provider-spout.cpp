@@ -39,7 +39,9 @@ License: GPL-2.0-or-later
 #include <plugin-support.h>
 
 #include <algorithm>
+#include <chrono>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace {
@@ -63,6 +65,12 @@ constexpr int kCompositeModeOpaque = 1;
 constexpr int kCompositeModeAlpha = 2;
 constexpr int kCompositeModeDefault = 3;
 constexpr int kCompositeModePremultiplied = 4;
+
+/* Forward declarations: spout_discovery_scan and its 1Hz cache live
+ * below the SpoutProvider class but the class needs them for
+ * probe_health. */
+std::vector<std::string> spout_discovery_scan();
+std::vector<std::string> spout_discovery_scan_cached();
 
 class SpoutProvider : public ISignalProvider {
 public:
@@ -143,10 +151,75 @@ public:
 		return wrapper;
 	}
 
-	/* probe_health: default impl (width/height + 5s grace) is exactly
-	 * right for Spout. obs-spout2 sets width/height = 0 when the named
-	 * sender is absent or the first-available scan returns empty;
-	 * supervisor flips Lost on that. */
+	/* probe_health override: the default ISignalProvider impl (width
+	 * + height + 5s grace) is insufficient for Spout because obs-spout2
+	 * caches the last successful sender's width/height fields and
+	 * returns them from get_width/get_height even after the sender has
+	 * gone away. Worse, in usefirstavailablesender mode obs-spout2
+	 * silently re-binds to whatever sender is up first, so the cell
+	 * keeps painting valid frames — from a different source than the
+	 * user picked.
+	 *
+	 * The robust check is to ask our discovery probe (the same one the
+	 * SourcePicker / EditSource forms use) whether the cell's wanted
+	 * sender is currently registered on this machine, then combine
+	 * that with the standard width/height + grace check. */
+	HealthReport probe_health(obs_source_t *src, uint64_t age_ns) const override
+	{
+		HealthReport r;
+		if (!src)
+			return r;
+		r.width = obs_source_get_width(src);
+		r.height = obs_source_get_height(src);
+
+		/* Pull the cell's persisted sender choice straight from the
+		 * live private source so we don't have to plumb SignalConfig
+		 * through the supervisor. obs_source_get_settings returns an
+		 * incremented ref. */
+		std::string wanted;
+		obs_data_t *cur = obs_source_get_settings(src);
+		if (cur) {
+			const char *s = obs_data_get_string(cur, kKeySenderList);
+			if (s)
+				wanted.assign(s);
+			obs_data_release(cur);
+		}
+		if (wanted.empty())
+			wanted = kUseFirstAvailableSender;
+
+		/* Cached so the 1 Hz supervisor doesn't bombard obs-spout2's
+		 * property scan; the cache TTL is 1 s so the supervisor's
+		 * verdict tracks reality within a single tick. */
+		const auto avail = spout_discovery_scan_cached();
+		bool sender_present = false;
+		if (wanted == kUseFirstAvailableSender) {
+			sender_present = !avail.empty();
+		} else {
+			sender_present = std::find(avail.begin(), avail.end(), wanted) != avail.end();
+		}
+
+		constexpr uint64_t kGraceNs = 5ULL * 1000 * 1000 * 1000;
+		if (sender_present && r.width > 0 && r.height > 0) {
+			r.code = HealthCode::Active;
+		} else if (age_ns < kGraceNs) {
+			/* Cold start: discovery probe and the cell's own
+			 * receiver both need a beat to come up. Don't escalate
+			 * to Lost yet. */
+			r.code = HealthCode::Opening;
+		} else {
+			r.code = HealthCode::Lost;
+			if (!sender_present) {
+				if (wanted == kUseFirstAvailableSender)
+					r.reason = "No Spout senders on this machine";
+				else
+					r.reason = "Spout sender '" + wanted + "' not present";
+			} else {
+				r.reason = "Spout sender present but receiver has no frame";
+			}
+		}
+		return r;
+	}
+
 	bool supports_media_restart() const override { return false; }
 	bool benefits_from_recreate() const override { return false; }
 	bool prefers_unbuffered_async(const SignalConfig &) const override { return true; }
@@ -221,6 +294,43 @@ std::vector<std::string> spout_discovery_scan()
 	std::sort(out.begin(), out.end());
 	out.erase(std::unique(out.begin(), out.end()), out.end());
 	return out;
+}
+
+/* 1 Hz cached wrapper for the health supervisor. The supervisor probes
+ * every external cell at ~1 Hz, so without a cache a multiview with N
+ * Spout cells would trigger N obs_source_properties scans per tick.
+ * The cache TTL is intentionally short (1000 ms) so a sender that
+ * appears or disappears is reflected within one supervisor cycle.
+ *
+ * UI Refresh button does NOT go through this cache — it calls
+ * spout_discovery_scan() directly via signal_provider_spout_discover_senders(),
+ * so a manual click always sees the freshest enumeration. */
+std::vector<std::string> spout_discovery_scan_cached()
+{
+	using clock = std::chrono::steady_clock;
+	static std::mutex cache_mutex;
+	static std::vector<std::string> cached;
+	static clock::time_point last_scan;
+	static bool seeded = false;
+
+	const auto now = clock::now();
+	{
+		std::lock_guard<std::mutex> lock(cache_mutex);
+		if (seeded && (now - last_scan) < std::chrono::milliseconds(1000))
+			return cached;
+	}
+
+	/* Run the actual scan outside the cache lock so concurrent
+	 * callers don't serialize behind a slow GetSenderCount call. The
+	 * spout_discovery_scan itself is mutex-protected internally for
+	 * the long-lived probe pointer, so this is safe. */
+	auto fresh = spout_discovery_scan();
+
+	std::lock_guard<std::mutex> lock(cache_mutex);
+	cached = std::move(fresh);
+	last_scan = now;
+	seeded = true;
+	return cached;
 }
 
 void spout_discovery_shutdown()

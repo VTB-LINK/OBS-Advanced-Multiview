@@ -861,8 +861,12 @@ SpoutSenderForm::SpoutSenderForm(QWidget *parent) : QWidget(parent)
 void SpoutSenderForm::apply_first_available_visibility()
 {
 	const bool first_avail = chk_first_available_->isChecked();
+	/* Disable the discovered list so the user can't accidentally
+	 * select a specific sender while first-available is on, but keep
+	 * the Refresh button enabled \u2014 the user may still want to re-scan
+	 * the list to confirm which senders are currently present before
+	 * deciding to switch off first-available. */
 	discovered_list_->setEnabled(!first_avail);
-	refresh_btn_->setEnabled(!first_avail);
 }
 
 void SpoutSenderForm::refresh_discovery()
