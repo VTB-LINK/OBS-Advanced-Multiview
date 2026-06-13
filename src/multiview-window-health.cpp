@@ -217,8 +217,8 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 		cs.next_retry_ns = now_ns + cooldown_ns;
 		cs.retry_attempt++;
 		obs_log(LOG_INFO, "%s[health] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s')",
-			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type), cs.retry_attempt,
-			cs.last_error_reason.c_str());
+			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type),
+			cs.retry_attempt, cs.last_error_reason.c_str());
 
 		/* Queue refresh_cell onto the Qt main thread \u2014 it must NOT
 		 * run while we hold source_mutex_. By the time the timer

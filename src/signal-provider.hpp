@@ -231,6 +231,37 @@ public:
 		(void)cfg;
 		return false;
 	}
+
+	/* Phase 3 / M6.6 H.3: shared helper for create_private_source.
+	 *
+	 * All four external providers (FFmpeg, NDI, Spout, VLC) need to
+	 * deep-copy the user's persisted providerSettings into a fresh
+	 * obs_data_t so subsequent default re-assertions / hard-locks
+	 * don't leak back into the persisted SignalConfig. The cheapest
+	 * deep copy that doesn't drag in obs_data_apply's default-
+	 * propagation behavior is a JSON round-trip:
+	 *
+	 *   obs_data_get_json(src) -> obs_data_create_from_json -> obs_data_apply
+	 *
+	 * This helper centralizes that idiom. Returns a +1 obs_data_t
+	 * (callers must obs_data_release). Always returns a non-null
+	 * pointer so callers don't need to null-check; an empty src
+	 * just yields an empty obs_data_t. */
+	static obs_data_t *deep_copy_provider_settings(obs_data_t *src)
+	{
+		obs_data_t *out = obs_data_create();
+		if (!src)
+			return out;
+		const char *json = obs_data_get_json(src);
+		if (!json || !*json)
+			return out;
+		obs_data_t *copy = obs_data_create_from_json(json);
+		if (copy) {
+			obs_data_apply(out, copy);
+			obs_data_release(copy);
+		}
+		return out;
+	}
 };
 
 /* Registry singleton. */

@@ -1842,19 +1842,18 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				SignalRuntimeState display_state;
 				const auto beh = cs.effective_lost.externalLostBehavior;
 				const auto &eff = cs.effective_lost;
-				const bool image_configured =
-					(beh == ExternalLostBehavior::RetryWithFallback &&
-					 eff.fallbackType == std::string("image") && !eff.fallbackName.empty()) ||
-					(beh == ExternalLostBehavior::SignalLostImage &&
-					 !eff.signalLostImagePath.empty());
+				const bool image_configured = (beh == ExternalLostBehavior::RetryWithFallback &&
+							       eff.fallbackType == std::string("image") &&
+							       !eff.fallbackName.empty()) ||
+							      (beh == ExternalLostBehavior::SignalLostImage &&
+							       !eff.signalLostImagePath.empty());
 				if (isFallback) {
 					display_state = SignalRuntimeState::FallbackActive;
 				} else if (cs.fallback_latched && supervisor_state != SignalRuntimeState::Active) {
 					switch (beh) {
 					case ExternalLostBehavior::RetryWithFallback:
-						display_state = image_configured
-									? SignalRuntimeState::FallbackActive
-									: SignalRuntimeState::Lost;
+						display_state = image_configured ? SignalRuntimeState::FallbackActive
+										 : SignalRuntimeState::Lost;
 						break;
 					case ExternalLostBehavior::SignalLostOverlay:
 					case ExternalLostBehavior::SignalLostImage:

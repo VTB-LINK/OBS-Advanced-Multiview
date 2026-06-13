@@ -131,20 +131,9 @@ public:
 			return OBSSource();
 		}
 
-		/* Deep-copy via JSON round-trip so our default re-assertions
-		 * don't leak back into the user's persisted SignalConfig.
-		 * Same pattern as the FFmpeg / NDI / Spout providers. */
-		obs_data_t *settings = obs_data_create();
-		{
-			const char *json = obs_data_get_json(src_settings);
-			if (json && *json) {
-				obs_data_t *copy = obs_data_create_from_json(json);
-				if (copy) {
-					obs_data_apply(settings, copy);
-					obs_data_release(copy);
-				}
-			}
-		}
+		/* Deep-copy via the shared helper so our default re-assertions
+		 * don't leak back into the user's persisted SignalConfig. */
+		obs_data_t *settings = ISignalProvider::deep_copy_provider_settings(src_settings);
 
 		/* Re-assert vlcs_defaults() values when the form dropped a
 		 * key for compactness. Matches obs-studio plugins/vlc-video

@@ -106,20 +106,9 @@ public:
 			obs_log(LOG_INFO, "[signal-provider/spout] no sender selected, defaulting to first-available");
 		}
 
-		/* Deep-copy the user settings via JSON round-trip so our
-		 * defaults don't leak back into the persisted config. Same
-		 * pattern as FFmpeg / NDI providers. */
-		obs_data_t *settings = obs_data_create();
-		if (src) {
-			const char *json = obs_data_get_json(src);
-			if (json && *json) {
-				obs_data_t *copy = obs_data_create_from_json(json);
-				if (copy) {
-					obs_data_apply(settings, copy);
-					obs_data_release(copy);
-				}
-			}
-		}
+		/* Deep-copy via the shared helper so our defaults don't leak
+		 * back into the persisted config. */
+		obs_data_t *settings = ISignalProvider::deep_copy_provider_settings(src);
 		/* Always re-assert sender_name so a missing-key config still
 		 * resolves to first-available. */
 		obs_data_set_string(settings, kKeySenderList, sender_name);

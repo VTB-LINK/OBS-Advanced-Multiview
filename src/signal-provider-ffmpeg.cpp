@@ -99,22 +99,8 @@ public:
 		 * re-assert the M6.1 defaults for any key the form doesn't fill,
 		 * then HARD-LOCK the two activation-safety keys regardless of
 		 * what's in providerSettings. The locks are explained in
-		 * provider-settings-forms.hpp.
-		 *
-		 * obs_data_create_from_json + obs_data_get_json gives a deep
-		 * copy without dragging in obs_data_apply (which would write
-		 * defaults back into the user's persisted object). */
-		obs_data_t *settings = obs_data_create();
-		if (src_settings) {
-			const char *json = obs_data_get_json(src_settings);
-			if (json && *json) {
-				obs_data_t *copy = obs_data_create_from_json(json);
-				if (copy) {
-					obs_data_apply(settings, copy);
-					obs_data_release(copy);
-				}
-			}
-		}
+		 * provider-settings-forms.hpp. */
+		obs_data_t *settings = ISignalProvider::deep_copy_provider_settings(src_settings);
 
 		/* Defaults that the form may have omitted (set_or_default_*
 		 * deliberately drops default values to keep persisted JSON

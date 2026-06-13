@@ -87,20 +87,10 @@ public:
 			return OBSSource();
 		}
 
-		/* Deep-copy the user's settings via JSON round-trip so our
-		 * defaults don't leak back into the persisted config. Same
-		 * pattern as the FFmpeg provider. */
-		obs_data_t *settings = obs_data_create();
-		if (src) {
-			const char *json = obs_data_get_json(src);
-			if (json && *json) {
-				obs_data_t *copy = obs_data_create_from_json(json);
-				if (copy) {
-					obs_data_apply(settings, copy);
-					obs_data_release(copy);
-				}
-			}
-		}
+		/* Deep-copy the user's settings so our defaults don't leak
+		 * back into the persisted config. Same pattern as the other
+		 * external providers (helper on ISignalProvider). */
+		obs_data_t *settings = ISignalProvider::deep_copy_provider_settings(src);
 
 		/* Re-apply DistroAV's own defaults for keys the user didn't
 		 * set. DistroAV's get_defaults runs at create time anyway, but
