@@ -22,7 +22,7 @@
 - ~~**Per-cell trackMode**：需 Phase 2.5 单独决策。~~ **已决策**（Phase 2.5）：不做 per-cell trackMode override；Cell scope 下 Track Source / Manual Track 控件已禁用；字段保留以便未来无破坏扩展。
 - **完整 OBS Mixer 复刻**：**明确不做**。VU meter 定位是监看辅助而非混音器。
 - **5.1 / 7.1 多声道独立 meter**：**低优先级**，当前不做。
-- **外部信号（NDI / Spout / 媒体流）音频 meter**：属于 Phase 3（M6）外部流接入范围。
+- **外部信号（NDI / Spout / 媒体流）音频 meter**：~~属于 Phase 3（M6）外部流接入范围。~~ **已完成**（M6.0 + M6.6）：FFmpeg / NDI / VLC 外部 cell 默认 metering 自己的私有源，与 trackMode 正交（内部 cell 仍走 streaming track）；Spout 无音频仍是 silence。
 
 ## 外部信号（Phase 3 / M6）
 
@@ -36,7 +36,7 @@
   - **线程模型**：接收循环线程归属，与现有 supervisor 1Hz health-check 的协调。
   - **延迟与备播策略**：是否复用 NDI/Spout 的 discovery-driven SIGNAL LOST 语义，或需要 WebRTC 专属 reconnect timing。
   - **音频路径**：是否复用 rebuild_volmeters 既有外部 cell 通路；多通道 / opus 转译策略。
-- ~~**Signal Lost / 断流策略**：重试、备播、彩条等断开行为尚未实现（属 Phase 3 / M5）。~~ **M5 内部源部分已完成**（[docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md)）：Black / PlaceholderImage / ClearCell + Fallback (PGM/PRVW/Scene/Source/Image) + Reconnect Now + 动态生效。**外部源**（NDI/Spout/FFmpeg/VLC）的 SignalLost / RetryWithFallback / Reconnecting overlay 留给 M6。
+- ~~**Signal Lost / 断流策略**：重试、备播、彩条等断开行为尚未实现（属 Phase 3 / M5）。~~ **已全部完成**（[docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md)）：M5 内部源 Black / PlaceholderImage / ClearCell + Fallback (PGM/PRVW/Scene/Source/Image) + Reconnect Now + 动态生效；M6 外部源（NDI/Spout/FFmpeg/VLC）sticky display state 下的 SignalLost / RetryWithFallback / Reconnecting / Paused / FallbackActive overlay 均已接通。
 
 ## Signal Lost / Phase 3 / M5 范围内的边界
 
