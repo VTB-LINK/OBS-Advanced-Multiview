@@ -287,9 +287,8 @@ private:
 		 * source change, provider recreate, window close and OBS exit
 		 * use the same teardown path. */
 		SignalProviderType provider_type = SignalProviderType::Unknown;
-		OBSSource private_source;            /* external private OBS source */
-		uint64_t provider_settings_hash = 0; /* fingerprint of last applied settings */
-		uint64_t last_health_ns = 0;         /* monotonic time of last health observation */
+		OBSSource private_source;    /* external private OBS source */
+		uint64_t last_health_ns = 0; /* monotonic time of last health observation */
 		uint32_t last_dimensions_w = 0;
 		uint32_t last_dimensions_h = 0;
 		std::string last_error_reason; /* one-shot human-readable reason */
@@ -610,6 +609,16 @@ private:
 	void collect_active_source_pointers(std::vector<void *> &out, uint32_t track_bit);
 	/* Queued rebuild request from non-Qt thread (e.g. audio_mixers signal). */
 	std::atomic<bool> volmeters_rebuild_requested_{false};
+
+	/* Phase 3 / M6.6 hardening: coalesce rebuild_lost_signal_images posts.
+	 * The supervisor runs on the render thread and observes per-cell health
+	 * transitions. Several external cells failing simultaneously (e.g. a
+	 * shared NDI source going down) would otherwise post one
+	 * QTimer::singleShot rebuild per cell per frame, flooding the Qt queue.
+	 * We exchange this flag to true at post time and reset to false at the
+	 * top of the queued lambda; if a second post arrives before the first
+	 * lambda runs, exchange returns true and the redundant post is skipped. */
+	std::atomic<bool> lost_images_rebuild_pending_{false};
 
 	/* ---------- PGM / PRVW cell highlight borders (OBS-native style) ----------
 	 *

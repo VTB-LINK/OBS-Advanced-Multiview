@@ -351,7 +351,6 @@ bool MultiviewWindow::refresh_cell(int row, int col)
 		cs.last_reconnect_ns = 0;
 		cs.retry_attempt = 0;
 		cs.provider_type = SignalProviderType::Unknown;
-		cs.provider_settings_hash = 0;
 		cs.last_error_reason.clear();
 
 		/* Look up the (possibly new) assignment for this cell. */
@@ -476,6 +475,15 @@ bool MultiviewWindow::refresh_cell(int row, int col)
 					cs.media_restart_attempts = 0;
 					cs.next_retry_ns = 0;
 					cs.last_health_ns = 0;
+					/* Phase 3 / M6.6 H.5 hardening: clear sticky
+					 * fallback latch on every fresh cell binding so a
+					 * previously-failed cell that the user just re-edited
+					 * to a working URL doesn't keep painting the fallback
+					 * until the supervisor's first probe lands. The latch
+					 * exists to mask retry flicker, not to outlive the
+					 * source it was tracking. */
+					cs.fallback_latched = false;
+					cs.last_health_state = SignalRuntimeState::Empty;
 					/* Phase 3 / M6.6 fix: do NOT optimistically
 					 * set cs.state to Active here. The new source
 					 * hasn't been probed yet \u2014 ffmpeg/vlc may take
@@ -1259,6 +1267,11 @@ void MultiviewWindow::update_source_refs()
 				cs.connecting_since_ns = 0;
 				cs.lost_since_ns = 0;
 				cs.media_restart_attempts = 0;
+				/* Phase 3 / M6.6 H.5 hardening: clear sticky fallback
+				 * latch on full refresh too. Same rationale as the
+				 * single-cell refresh_cell path above. */
+				cs.fallback_latched = false;
+				cs.last_health_state = SignalRuntimeState::Empty;
 				cs.state = SignalRuntimeState::Connecting;
 				cs.last_active_ns = cs.source_created_ns;
 				cs.last_health_ns = 0;
@@ -1336,7 +1349,6 @@ void MultiviewWindow::release_source_refs()
 				cs.private_source = nullptr;
 			}
 			cs.provider_type = SignalProviderType::Unknown;
-			cs.provider_settings_hash = 0;
 			cs.last_error_reason.clear();
 		}
 		cell_sources_.clear();
@@ -1907,7 +1919,18 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				const bool external_cell = cs.provider_type != SignalProviderType::Unknown &&
 							   !signal_provider_is_internal(cs.provider_type);
 				if (external_cell) {
-					QTimer::singleShot(0, this, [this]() { rebuild_lost_signal_images(); });
+					/* Phase 3 / M6.6 hardening: coalesce posts.
+					 * If an earlier transition already queued a
+					 * rebuild that hasn't run yet, skip this one;
+					 * a single rebuild covers all transitions
+					 * observed up to the moment the lambda runs. */
+					if (!lost_images_rebuild_pending_.exchange(true, std::memory_order_acq_rel)) {
+						QTimer::singleShot(0, this, [this]() {
+							lost_images_rebuild_pending_.store(false,
+											   std::memory_order_release);
+							rebuild_lost_signal_images();
+						});
+					}
 				}
 			}
 			if (newState == SignalRuntimeState::Active) {

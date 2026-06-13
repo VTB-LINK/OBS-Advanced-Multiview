@@ -199,7 +199,8 @@ void MultiviewWindow::rebuild_lost_signal_images()
 		gs_image_file_init(&li.imgFile, op.newPath.c_str());
 		li.loaded = li.imgFile.loaded;
 		if (!li.loaded)
-			obs_log(LOG_WARNING, "failed to load lost-signal image: %s", op.newPath.c_str());
+			obs_log(LOG_WARNING, "%sfailed to load lost-signal image: %s", log_prefix().c_str(),
+				op.newPath.c_str());
 		loaded.push_back(std::move(li));
 	}
 

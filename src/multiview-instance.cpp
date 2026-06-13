@@ -411,6 +411,10 @@ BackgroundSettings BackgroundSettings::from_obs_data(obs_data_t *data)
 	s.labelRegionFill = obs_data_get_bool(data, "labelRegionFill");
 	s.imageEnabled = obs_data_get_bool(data, "imageEnabled");
 	s.imagePath = obs_data_get_string(data, "imagePath");
+	/* Phase 3 / M6.6 H.5 hardening: clamp path length, same idiom as
+	 * LabelSettings::fontFamily and LostSignalSettings paths. */
+	if (s.imagePath.size() > 4096)
+		s.imagePath.resize(4096);
 	s.imageFitMode = image_fit_mode_from_str(obs_data_get_string(data, "imageFitMode"));
 	return s;
 }
@@ -660,6 +664,9 @@ OverlaySettings OverlaySettings::from_obs_data(obs_data_t *data)
 		return s;
 	s.enabled = obs_data_get_bool(data, "enabled");
 	s.imagePath = obs_data_get_string(data, "imagePath");
+	/* Phase 3 / M6.6 H.5 hardening: clamp path length. */
+	if (s.imagePath.size() > 4096)
+		s.imagePath.resize(4096);
 	s.opacity = obs_data_get_double(data, "opacity");
 	if (!obs_data_has_user_value(data, "opacity"))
 		s.opacity = 1.0;
@@ -767,6 +774,20 @@ LostSignalSettings LostSignalSettings::from_obs_data(obs_data_t *data)
 	s.placeholderImagePath = obs_data_get_string(data, "placeholderImagePath");
 	s.signalLostImagePath = obs_data_get_string(data, "signalLostImagePath");
 
+	/* Phase 3 / M6.6 H.5 hardening: clamp path strings to a reasonable
+	 * upper bound so a hand-edited config can't blow up the renderer's
+	 * gs_image_file loader with a multi-MB filename. PATH_MAX on Windows
+	 * is 260 by default, but Win32 long-path support extends it to 32767.
+	 * We pick 4096 as a generous compromise: large enough for any real
+	 * path the user might pick (including UNC + Unicode), small enough
+	 * that bad data is bounded. Same idiom as LabelSettings::fontFamily
+	 * clamp from Phase 2 hardening. */
+	constexpr size_t kMaxPathBytes = 4096;
+	if (s.placeholderImagePath.size() > kMaxPathBytes)
+		s.placeholderImagePath.resize(kMaxPathBytes);
+	if (s.signalLostImagePath.size() > kMaxPathBytes)
+		s.signalLostImagePath.resize(kMaxPathBytes);
+
 	/* Fit modes: missing / unknown values fall back to enum default
 	 * (Stretch) via image_fit_mode_from_str() — consistent with how
 	 * BackgroundSettings handles the same key on legacy configs. */
@@ -789,6 +810,14 @@ LostSignalSettings LostSignalSettings::from_obs_data(obs_data_t *data)
 		s.fallbackType.clear();
 	}
 	s.fallbackName = obs_data_get_string(data, "fallbackName");
+
+	/* Phase 3 / M6.6 H.5 hardening: clamp fallbackName length too. When
+	 * fallbackType == "image" this is an absolute path (same renderer as
+	 * placeholderImagePath); for "scene"/"source" it's an OBS source name
+	 * (which OBS itself caps in practice but our config could carry
+	 * arbitrary length). Same 4096 cap as the image-path fields above. */
+	if (s.fallbackName.size() > 4096)
+		s.fallbackName.resize(4096);
 
 	if (obs_data_has_user_value(data, "retryInitialMs"))
 		s.retryInitialMs = (int)obs_data_get_int(data, "retryInitialMs");
