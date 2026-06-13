@@ -476,7 +476,20 @@ bool MultiviewWindow::refresh_cell(int row, int col)
 					cs.media_restart_attempts = 0;
 					cs.next_retry_ns = 0;
 					cs.last_health_ns = 0;
-					cs.state = SignalRuntimeState::Active;
+					/* Phase 3 / M6.6 fix: do NOT optimistically
+					 * set cs.state to Active here. The new source
+					 * hasn't been probed yet \u2014 ffmpeg/vlc may take
+					 * 100ms-3s to open the URL (or, in the retry-
+					 * after-Lost case, may immediately fail again).
+					 * Setting Active here causes a one-frame flash:
+					 * compute_wanted_lost_image_path would treat
+					 * Active as "draw the source video, no fallback
+					 * image", but the source has no frames to draw,
+					 * resulting in a black hole until the supervisor
+					 * tick (~1s) flips back to Lost. Use Connecting
+					 * instead so the lost-image renderer continues
+					 * painting the user's fallback image until the\n\t\t\t\t\t * source actually produces frames. */
+					cs.state = SignalRuntimeState::Connecting;
 					cs.last_active_ns = cs.source_created_ns;
 					cs.last_error_reason.clear();
 				} else {
@@ -1231,14 +1244,22 @@ void MultiviewWindow::update_source_refs()
 				/* Phase 3 / M6 step 10: stamp the source's birth
 				 * time so the supervisor's age_ns is accurate from
 				 * tick 1 (its 5 s Opening grace is measured from
-				 * source_created_ns). Initial state stays Active
-				 * with last_active_ns set so the first probe a
-				 * second later can update truthfully. */
+				 * source_created_ns).
+				 *
+				 * Phase 3 / M6.6 fix: do NOT optimistically set
+				 * cs.state to Active here. The new source hasn't
+				 * produced a frame yet; if the supervisor's first
+				 * probe is delayed by up to 1s, the lost-image
+				 * renderer would treat the cell as Active and stop
+				 * painting the user's fallback image, producing a
+				 * one-frame black flash on every recreate cycle.
+				 * Connecting is the correct initial state \u2014 the
+				 * supervisor flips it to Active when frames arrive. */
 				cs.source_created_ns = os_gettime_ns();
 				cs.connecting_since_ns = 0;
 				cs.lost_since_ns = 0;
 				cs.media_restart_attempts = 0;
-				cs.state = SignalRuntimeState::Active;
+				cs.state = SignalRuntimeState::Connecting;
 				cs.last_active_ns = cs.source_created_ns;
 				cs.last_health_ns = 0;
 				cs.last_error_reason.clear();
@@ -1605,16 +1626,129 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				isPrvwFallback = false;
 			}
 
+			/* Phase 3 / M6.6: probe external-provider health up-front so
+			 * the drop-src and state-classification blocks below can
+			 * both consume *this frame's* verdict. The original
+			 * structure deferred the probe to the state-classification
+			 * block, which made drop-src work off the previous frame's
+			 * verdict (cs.last_health_state). That stale verdict caused
+			 * a one-frame fallback flash on recovery: drop-src fired
+			 * because last_health_state==Connecting, fallback was
+			 * substituted, then the probe ran and reported Active \u2014
+			 * but the frame had already been painted with fallback. */
+			SignalRuntimeState current_supervisor_state = cs.last_health_state;
+			bool current_supervisor_state_known = false;
+			if (cs.provider_type != SignalProviderType::Unknown &&
+			    !signal_provider_is_internal(cs.provider_type)) {
+				const uint64_t now_health_ns_pre = os_gettime_ns();
+				const uint64_t kProbeIntervalNs_pre = 1'000'000'000ULL;
+				if (now_health_ns_pre - cs.last_health_ns >= kProbeIntervalNs_pre) {
+					cell_sources_[i].last_health_ns = now_health_ns_pre;
+					current_supervisor_state = tick_external_cell_health(
+						i, cell.gridRow, cell.gridCol, now_health_ns_pre);
+				} else {
+					current_supervisor_state =
+						(cs.last_health_state == SignalRuntimeState::Empty && src)
+							? SignalRuntimeState::Connecting
+							: cs.last_health_state;
+				}
+				cell_sources_[i].last_health_state = current_supervisor_state;
+				current_supervisor_state_known = true;
+
+				/* Phase 3 / M6.6: sticky fallback latch.
+				 *
+				 * Without this latch, every supervisor recreate
+				 * cycle (Lost -> RetryScheduled -> Connecting ->
+				 * Lost -> ...) would briefly drop the fallback
+				 * during the Connecting window: the freshly
+				 * recreated source reports OPENING for a few
+				 * hundred ms before ffmpeg/vlc realize the URL is
+				 * still bad and report ENDED again. While
+				 * Connecting is technically "unhealthy" and IS in
+				 * the drop-src set, the visual effect of cycling
+				 * fallback off and on every retry feels broken to
+				 * users.
+				 *
+				 * Latch: once Lost/Error/RetryScheduled is seen,
+				 * we stay in fallback until Active. Connecting is
+				 * not enough to clear \u2014 a real recovery flips to
+				 * Active immediately when the first frame arrives. */
+				if (current_supervisor_state == SignalRuntimeState::Lost ||
+				    current_supervisor_state == SignalRuntimeState::Error ||
+				    current_supervisor_state == SignalRuntimeState::RetryScheduled) {
+					cell_sources_[i].fallback_latched = true;
+				} else if (current_supervisor_state == SignalRuntimeState::Active) {
+					cell_sources_[i].fallback_latched = false;
+				}
+				/* Connecting / Paused / Empty: leave the latch
+				 * unchanged. */
+			}
+
+			/* Phase 3 / M6.6: extend M5 fallback to external providers.
+			 *
+			 * External cells own a `private_source` that stays alive
+			 * across SIGNAL LOST (NDI receivers and Spout receivers
+			 * recover automatically when the sender returns; tearing
+			 * down on every loss would just churn sockets / shared
+			 * textures). That means src != nullptr even when the
+			 * cell is showing a black frame, so the existing
+			 * `if (!src && ...)` fallback gate below never fires.
+			 *
+			 * Solution: when the supervisor's most recent verdict is
+			 * unhealthy (Lost / Error / Connecting / RetryScheduled)
+			 * AND the user configured RetryWithFallback, drop the
+			 * src ref here so the unified fallback resolver can
+			 * substitute the user's chosen PGM / PRVW / Scene /
+			 * Source. The supervisor still owns recovery; this only
+			 * changes what the cell paints in the meantime.
+			 *
+			 * The probe_health override per provider already covers
+			 * the "src alive but no frames" case for NDI / Spout
+			 * (zero-dim + 5 s grace) and for FFmpeg / VLC (media
+			 * state machine), so cs.state is the authoritative
+			 * signal here. We deliberately do NOT also gate on
+			 * obs_source_get_width()==0 because that would cause
+			 * the fallback to flicker during normal startup before
+			 * the first frame arrives. */
+			if (src && cs.provider_type != SignalProviderType::Unknown &&
+			    !signal_provider_is_internal(cs.provider_type)) {
+				const ExternalLostBehavior beh = cs.effective_lost.externalLostBehavior;
+				const bool wants_fallback = (beh == ExternalLostBehavior::RetryWithFallback &&
+							     !cs.effective_lost.fallbackType.empty());
+				/* Use the sticky fallback_latched flag instead of
+				 * the raw supervisor verdict: once Lost, stay in
+				 * fallback until Active recovers. Connecting alone
+				 * (which fires every recreate) does not clear the
+				 * latch, so the user sees a continuous fallback
+				 * during the entire retry cycle instead of
+				 * fallback-off-fallback-off flicker. */
+				if (wants_fallback && cs.fallback_latched) {
+					src = nullptr;
+					srcHolder = nullptr;
+				}
+			}
+
 			/* Phase 3 / M5.4: apply Lost-Signal fallback when the primary
 			 * source is missing or just got pruned above. Image / placeholder
 			 * variants need their own texture loader (deferred to the same
 			 * round that wires up bg_images_-style four-stage loading); only
 			 * OBS-source fallbacks (pgm/prvw/scene/source) are wired here.
 			 *
-			 * Skipped for cs.pending_clear cells — those are about to be
+			 * Skipped for cs.pending_clear cells \u2014 those are about to be
 			 * cleared by the queued main-thread mutation, so showing any
-			 * fallback would just flicker for one frame before going Empty. */
-			if (!src && !cs.type.empty() && !cs.pending_clear) {
+			 * fallback would just flicker for one frame before going Empty.
+			 *
+			 * Eligibility:
+			 *   - internal cells: any cell with a configured type (the
+			 *     classic M5 path: PGM/PRVW are never null but a removed
+			 *     scene/source can null out src above);
+			 *   - external cells: handled by the dedicated drop-src
+			 *     block above; once src is null here the same fallback
+			 *     resolver runs uniformly. */
+			const bool fallback_eligible = (!cs.type.empty()) ||
+						       (cs.provider_type != SignalProviderType::Unknown &&
+							!signal_provider_is_internal(cs.provider_type));
+			if (!src && fallback_eligible && !cs.pending_clear) {
 				const LostSignalSettings &eff = cs.effective_lost;
 				const std::string &ft = eff.fallbackType;
 				if (ft == "pgm") {
@@ -1663,37 +1797,78 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				newState = SignalRuntimeState::Empty;
 			} else if (cs.provider_type != SignalProviderType::Unknown &&
 				   !signal_provider_is_internal(cs.provider_type)) {
-				/* Phase 3 / M6 step 10: external-provider cell health.
+				/* Phase 3 / M6.6: the supervisor probe ran earlier this
+				 * frame (see current_supervisor_state above) so the
+				 * fallback substitution and this state classification
+				 * both consume the same fresh verdict. If for any reason
+				 * the probe didn't run (provider_type became Unknown
+				 * mid-frame, etc.), fall back to the sticky last verdict. */
+				const SignalRuntimeState supervisor_state = current_supervisor_state_known
+										    ? current_supervisor_state
+										    : cs.last_health_state;
+				/* Phase 3 / M6.6: sticky display state during retry.
 				 *
-				 * The supervisor (multiview-window-health.cpp) probes
-				 * provider health at ~1 Hz and returns the authoritative
-				 * SignalRuntimeState for the cell. Between probes we
-				 * keep cs.state (sticky), which produces a smooth
-				 * overlay without per-frame flicker on transitions.
+				 * The supervisor cycles every external cell through
+				 * Lost -> RetryScheduled -> Connecting -> Lost
+				 * during a failing retry loop (URL unreachable,
+				 * sender absent). Mapping that raw verdict to the
+				 * status overlay 1-for-1 produced visible flicker:
+				 * SIGNAL LOST -> CONNECTING flash -> SIGNAL LOST
+				 * every retry attempt.
 				 *
-				 * The 1 Hz throttle also bounds the cost of probe_health
-				 * across large grids (10x10 = 100 cells -> 100 OBS API
-				 * calls per second, negligible). */
-				const uint64_t now_health_ns = os_gettime_ns();
-				const uint64_t kProbeIntervalNs = 1'000'000'000ULL;
-				if (now_health_ns - cs.last_health_ns >= kProbeIntervalNs) {
-					cell_sources_[i].last_health_ns = now_health_ns;
-					newState =
-						tick_external_cell_health(i, cell.gridRow, cell.gridCol, now_health_ns);
+				 * Sticky policy: once the user-visible failure is
+				 * latched, hold ONE chosen overlay until the
+				 * supervisor really reports Active. The choice of
+				 * overlay is driven by the user's ExternalLostBehavior:
+				 *
+				 *   - SignalLostOverlay / SignalLostImage:
+				 *       hold SIGNAL LOST (red band). The user
+				 *       explicitly asked to see the lost state.
+				 *   - RetryWithFallback:
+				 *       hold FallbackActive (yellow FALLBACK band).
+				 *       Implicitly when isFallback (source-type
+				 *       fallback resolved), or when image fallback
+				 *       is configured (image renderer paints the
+				 *       art, status reads FALLBACK).
+				 *   - RetryOnly:
+				 *       hold Connecting (blue CONNECTING... band).
+				 *       No fallback configured \u2014 the only useful
+				 *       hint is that retry is in progress.
+				 *
+				 * The sticky window starts at the first Lost / Error
+				 * / RetryScheduled verdict and ends the frame the
+				 * supervisor returns Active (when the source truly
+				 * has frames). */
+				SignalRuntimeState display_state;
+				const auto beh = cs.effective_lost.externalLostBehavior;
+				const auto &eff = cs.effective_lost;
+				const bool image_configured =
+					(beh == ExternalLostBehavior::RetryWithFallback &&
+					 eff.fallbackType == std::string("image") && !eff.fallbackName.empty()) ||
+					(beh == ExternalLostBehavior::SignalLostImage &&
+					 !eff.signalLostImagePath.empty());
+				if (isFallback) {
+					display_state = SignalRuntimeState::FallbackActive;
+				} else if (cs.fallback_latched && supervisor_state != SignalRuntimeState::Active) {
+					switch (beh) {
+					case ExternalLostBehavior::RetryWithFallback:
+						display_state = image_configured
+									? SignalRuntimeState::FallbackActive
+									: SignalRuntimeState::Lost;
+						break;
+					case ExternalLostBehavior::SignalLostOverlay:
+					case ExternalLostBehavior::SignalLostImage:
+						display_state = SignalRuntimeState::Lost;
+						break;
+					case ExternalLostBehavior::RetryOnly:
+					default:
+						display_state = SignalRuntimeState::Connecting;
+						break;
+					}
 				} else {
-					/* Between probes: trust the supervisor's last
-					 * verdict. We deliberately do NOT use `src` as
-					 * an Active proxy here \u2014 ffmpeg_source can keep
-					 * its last frame and stale width/height around for
-					 * a long time after the network drops, so a Lost /
-					 * Connecting verdict from the last probe must
-					 * persist instead of being overwritten by `src`
-					 * still resolving. The supervisor will re-evaluate
-					 * within at most kProbeIntervalNs. */
-					newState = (cs.state == SignalRuntimeState::Empty && src)
-							   ? SignalRuntimeState::Active
-							   : cs.state;
+					display_state = supervisor_state;
 				}
+				newState = display_state;
 			} else if (cs.type.empty()) {
 				newState = SignalRuntimeState::Empty;
 			} else if (isFallback) {
@@ -1717,6 +1892,24 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				if (was_active != now_active)
 					volmeters_rebuild_requested_.store(true, std::memory_order_release);
 				cell_sources_[i].state = newState;
+
+				/* Phase 3 / M6.6: external cell state transitions
+				 * (Active -> Lost / Lost -> Active) change which
+				 * lost-image path compute_wanted_lost_image_path
+				 * returns for this cell. The image loader pipeline
+				 * lives on the Qt main thread and is normally
+				 * triggered by source-removed signals or settings
+				 * mutations \u2014 supervisor verdict transitions are
+				 * silent on those channels. Kick rebuild_lost_signal_images
+				 * via QTimer::singleShot so the loader picks up the
+				 * new fallback / signal-lost path before the next
+				 * frame paints. Internal cells get this rebuild via
+				 * the source_remove signal handler already. */
+				const bool external_cell = cs.provider_type != SignalProviderType::Unknown &&
+							   !signal_provider_is_internal(cs.provider_type);
+				if (external_cell) {
+					QTimer::singleShot(0, this, [this]() { rebuild_lost_signal_images(); });
+				}
 			}
 			if (newState == SignalRuntimeState::Active) {
 				cell_sources_[i].last_active_ns = os_gettime_ns();
@@ -1843,9 +2036,9 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				if (cell_sources_[i].fill_log_hash != h) {
 					cell_sources_[i].fill_log_hash = h;
 					obs_log(LOG_INFO,
-						"[fill] cell (%d,%d) provider=%s src=%ux%u (%.4f) cell=%dx%d "
+						"%s[fill] cell (%d,%d) provider=%s src=%ux%u (%.4f) cell=%dx%d "
 						"content=%dx%d (%.4f) vr=%dx%d snap=%s",
-						cell.gridRow, cell.gridCol,
+						log_prefix().c_str(), cell.gridRow, cell.gridCol,
 						signal_provider_to_string(cell_sources_[i].provider_type), srcW, srcH,
 						srcAspect, cell.w, cell.h, contentW, contentH, contentAspect, vrW, vrH,
 						snapped ? "yes" : "no");

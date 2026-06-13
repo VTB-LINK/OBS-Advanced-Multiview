@@ -229,8 +229,16 @@ public:
 			r.code = HealthCode::Error;
 			r.reason = "ffmpeg error";
 			break;
-		case OBS_MEDIA_STATE_STOPPED:
 		case OBS_MEDIA_STATE_PAUSED:
+			/* User pressed Play/Pause via the cell context menu (or
+			 * obs_source_media_play_pause from anywhere else). This
+			 * is a user-initiated state, not a failure — don't
+			 * escalate to Lost or kick a restart. The cell keeps the
+			 * last decoded frame visible. */
+			r.code = HealthCode::Paused;
+			r.reason = "paused";
+			break;
+		case OBS_MEDIA_STATE_STOPPED:
 		case OBS_MEDIA_STATE_NONE:
 		default:
 			if (age_ns < 5ULL * 1000 * 1000 * 1000)

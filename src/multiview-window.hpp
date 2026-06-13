@@ -220,6 +220,9 @@ private:
 	 *   Lost            : reserved for external providers (M6).
 	 *   RetryScheduled  : reserved for backoff timer integration (M5.3+).
 	 *   FallbackActive  : reserved for fallback engagement (M5.4).
+	 *   Paused          : user-paused media playback (M6.6); not an error,
+	 *                     just suppresses SIGNAL LOST overlay and shows
+	 *                     a softer "PAUSED" hint.
 	 *   Error           : provider/source unavailable; non-recoverable. */
 	enum class SignalRuntimeState {
 		Empty,
@@ -230,6 +233,7 @@ private:
 		Lost,
 		RetryScheduled,
 		FallbackActive,
+		Paused,
 		Error,
 	};
 
@@ -290,6 +294,31 @@ private:
 		uint32_t last_dimensions_h = 0;
 		std::string last_error_reason; /* one-shot human-readable reason */
 		uint64_t next_retry_ns = 0;    /* monotonic time of next allowed reconnect attempt */
+
+		/* Phase 3 / M6.6: snapshot of the supervisor's last health
+		 * verdict, kept separate from the public `state` field above.
+		 * `state` is the *display* state and may be overridden to
+		 * FallbackActive when the user configured RetryWithFallback
+		 * and the cell is currently painting a fallback source. The
+		 * fallback substitution decision must consult the supervisor's
+		 * raw verdict (not the display state) to avoid a feedback
+		 * loop where FallbackActive itself triggers another fallback
+		 * substitution next frame, hiding the supervisor's eventual
+		 * Active recovery. */
+		SignalRuntimeState last_health_state = SignalRuntimeState::Empty;
+
+		/* Phase 3 / M6.6: sticky "fallback engaged" latch. Set true the
+		 * first frame the supervisor verdict goes unhealthy
+		 * (Lost / Error / RetryScheduled). Cleared only when the
+		 * supervisor next returns Active. Used to keep the user-
+		 * configured fallback (PGM / Scene / Source / static image)
+		 * painted continuously across recreate cycles, avoiding the
+		 * "fallback flashes off for one frame each retry" effect when
+		 * the freshly-recreated source momentarily reports Connecting
+		 * before the next probe escalates back to Lost. The user's
+		 * stated requirement: only stop showing the fallback once the
+		 * cell is truly back online. */
+		bool fallback_latched = false;
 
 		/* Phase 3 / M6 step 10: external health supervisor bookkeeping.
 		 *
@@ -407,6 +436,7 @@ private:
 		Reconnecting,
 		Fallback,
 		ProviderMissing,
+		Paused,
 	};
 	StatusTextEntry status_missing_source_;
 	StatusTextEntry status_missing_scene_;
@@ -414,6 +444,7 @@ private:
 	StatusTextEntry status_reconnecting_;     /* M5.3 / M6 */
 	StatusTextEntry status_fallback_;         /* M5.4 */
 	StatusTextEntry status_provider_missing_; /* M6.2 host-plugin missing */
+	StatusTextEntry status_paused_;           /* M6.6 user-paused media */
 	void ensure_status_text_source(StatusTextEntry &entry, const char *text);
 	void release_status_text_sources();
 	StatusOverlayKind status_overlay_kind_for_state(SignalRuntimeState state, const std::string &cellType,
@@ -477,6 +508,14 @@ private:
 	void release_lost_signal_images();
 	void render_lost_signal_image(int cellIndex, int contentX, int contentY, int contentW, int contentH);
 	std::string compute_wanted_lost_image_path(int cellIndex);
+
+	/* Phase 3 / M6.6: log helper. Returns "[<inst-name>(<uuid8>)] " so
+	 * obs_log lines can be matched back to the originating multiview
+	 * instance even when several windows are open. Resolved each call so
+	 * instance renames take effect immediately. Cheap: only invoked from
+	 * log paths that already throttle (perf 5s, fill once-per-tuple,
+	 * health on transitions). */
+	std::string log_prefix() const;
 
 	/* Safe area vertex buffers (normalized 0-1 coords, shared across cells) */
 	gs_vertbuffer_t *safe_action_vb_ = nullptr;       /* Action Safe 3.5% */

@@ -17,6 +17,24 @@ License: GPL-2.0-or-later
 #include <algorithm>
 #include <string>
 
+/* Phase 3 / M6.6: log prefix helper. Returns "[<inst-name>(<uuid8>)] " so
+ * obs_log lines can be matched back to the originating multiview instance
+ * even when several windows are open in parallel. Resolved each call so
+ * instance renames take effect immediately; the lookup is a single
+ * config_->find_instance(uuid_) which is cheap. */
+std::string MultiviewWindow::log_prefix() const
+{
+	const std::string short_uuid = uuid_.size() > 8 ? uuid_.substr(0, 8) : uuid_;
+	MultiviewInstance *inst = config_ ? config_->find_instance(uuid_) : nullptr;
+	const std::string &name = inst ? inst->name : std::string();
+	std::string out = "[";
+	out += name.empty() ? "?" : name;
+	out += "(";
+	out += short_uuid.empty() ? "?" : short_uuid;
+	out += ")] ";
+	return out;
+}
+
 /* Same startRegion/endRegion idiom used elsewhere; duplicated for unit-local
  * inlining. (gs_projection_push/gs_viewport_push are cheap but inlining keeps
  * the per-cell branch in render_status_overlay() flat.) */
@@ -154,6 +172,9 @@ void MultiviewWindow::release_status_text_sources()
 	status_provider_missing_.source = nullptr;
 	status_provider_missing_.width = 0;
 	status_provider_missing_.height = 0;
+	status_paused_.source = nullptr;
+	status_paused_.width = 0;
+	status_paused_.height = 0;
 }
 
 MultiviewWindow::StatusOverlayKind MultiviewWindow::status_overlay_kind_for_state(SignalRuntimeState state,
@@ -192,6 +213,8 @@ MultiviewWindow::StatusOverlayKind MultiviewWindow::status_overlay_kind_for_stat
 		return StatusOverlayKind::Reconnecting;
 	case SignalRuntimeState::FallbackActive:
 		return StatusOverlayKind::Fallback;
+	case SignalRuntimeState::Paused:
+		return StatusOverlayKind::Paused;
 	default:
 		return StatusOverlayKind::None;
 	}
@@ -249,8 +272,15 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 	case StatusOverlayKind::Reconnecting:
 		/* Phase 3 / M6 step 10: external-cell health supervisor put
 		 * the cell in Connecting / RetryScheduled. Blue band so it's
-		 * distinct from MISSING (grey) and SIGNAL LOST (red). */
-		text = "RECONNECTING";
+		 * distinct from MISSING (grey) and SIGNAL LOST (red).
+		 *
+		 * Same overlay covers both initial connection (cell just
+		 * created, source still resolving its URL / opening codec)
+		 * and post-Lost retry escalation. Wording is "CONNECTING..."
+		 * for both cases since the supervisor doesn't distinguish
+		 * them and "RECONNECTING" reads awkwardly during the very
+		 * first attempt. */
+		text = "CONNECTING...";
 		bandColor = 0xC0204060; /* deep blue, ~75% opacity */
 		entry = &status_reconnecting_;
 		break;
@@ -270,6 +300,15 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		text = "PROVIDER MISSING";
 		bandColor = 0xC0401060; /* deep purple, ~75% opacity */
 		entry = &status_provider_missing_;
+		break;
+	case StatusOverlayKind::Paused:
+		/* Phase 3 / M6.6: user pressed Play/Pause from the cell
+		 * context menu (obs_source_media_play_pause). Not a failure;
+		 * the cell paints the last decoded frame. Soft cyan band so it
+		 * reads as informational rather than an error state. */
+		text = "PAUSED";
+		bandColor = 0xC0205060; /* desaturated teal, ~75% opacity */
+		entry = &status_paused_;
 		break;
 	default:
 		return;

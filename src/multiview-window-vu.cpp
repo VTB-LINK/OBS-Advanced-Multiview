@@ -363,13 +363,11 @@ void MultiviewWindow::rebuild_volmeters()
 	 * track-filtered enumeration uses the up-to-date mask. */
 	current_track_bit_ = compute_active_track_bit();
 
-	/* Phase 3 / M6 step 8: snapshot the instance-level trackMode so each
-	 * cell's external-provider branch can decide whether to attach the
-	 * direct private-source meter (Auto / ExternalSource) or skip VU on
-	 * external cells (AutoFollowStreaming / Manual). */
-	MultiviewInstance *inst_for_vm = config_ ? config_->find_instance(uuid_) : nullptr;
-	const VuMeterTrackMode vm_mode = inst_for_vm ? inst_for_vm->visualSettings.vuMeter.trackMode
-						     : VuMeterTrackMode::AutoFollowStreaming;
+	/* Phase 3 / M6.6: external cells now always meter their own private
+	 * source (trackMode is the internal-cell filter only \u2014 see comment
+	 * in the per-cell loop below). The instance-level trackMode is only
+	 * read by the internal-cell branch via `vm.trackMode`; we no longer
+	 * need a snapshot here. */
 
 	size_t count = cell_sources_.size();
 	cell_volmeters_.resize(count, nullptr);
@@ -416,8 +414,14 @@ void MultiviewWindow::rebuild_volmeters()
 		 * than an error. We do not attach a volmeter for Spout cells \u2014 the
 		 * UI VU bar simply stays silent at -inf dB. */
 		if (cs.provider_type != SignalProviderType::Unknown && !signal_provider_is_internal(cs.provider_type)) {
-			if (vm_mode != VuMeterTrackMode::Auto && vm_mode != VuMeterTrackMode::ExternalSource)
-				continue;
+			/* Phase 3 / M6.6 fix: trackMode is the *internal* track
+			 * filter (which OBS streaming/manual track internal cells
+			 * follow). External cells use their own private audio
+			 * path with no notion of streaming tracks, so trackMode
+			 * is orthogonal for them. The previous gate skipped
+			 * external cells under AutoFollowStreaming / Manual which
+			 * matches the legacy default and silently broke external
+			 * VU. */
 			if (cs.provider_type == SignalProviderType::Spout)
 				continue;
 			obs_source_t *priv = cs.private_source.Get();

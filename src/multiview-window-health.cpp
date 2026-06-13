@@ -111,9 +111,9 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 								     : (now_ns - cs.last_perf_log_ns);
 		const double elapsed_sec = (double)elapsed_ns / 1e9;
 		const double render_fps = (double)cs.render_calls / elapsed_sec;
-		obs_log(LOG_INFO, "[perf] cell (%d,%d) provider=%s render_fps=%.1f frame=%ux%u health=%d state=%d",
-			cellRow, cellCol, signal_provider_to_string(cs.provider_type), render_fps, cs.last_dimensions_w,
-			cs.last_dimensions_h, (int)report.code, (int)cs.state);
+		obs_log(LOG_INFO, "%s[perf] cell (%d,%d) provider=%s render_fps=%.1f frame=%ux%u health=%d state=%d",
+			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type), render_fps,
+			cs.last_dimensions_w, cs.last_dimensions_h, (int)report.code, (int)cs.state);
 		cs.render_calls = 0;
 		cs.last_perf_log_ns = now_ns;
 	}
@@ -128,6 +128,18 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 		cs.media_restart_attempts = 0;
 		cs.retry_attempt = 0;
 		return SignalRuntimeState::Active;
+
+	case ISignalProvider::HealthCode::Paused:
+		/* User pressed Play/Pause from the cell context menu. Not a
+		 * failure: don't escalate, don't auto-restart, don't run the
+		 * fallback substitution. Reset the same counters Active
+		 * resets so resuming playback starts from a clean slate. */
+		cs.last_active_ns = now_ns;
+		cs.connecting_since_ns = 0;
+		cs.lost_since_ns = 0;
+		cs.media_restart_attempts = 0;
+		cs.retry_attempt = 0;
+		return SignalRuntimeState::Paused;
 
 	case ISignalProvider::HealthCode::Opening: {
 		/* Stamp the start of the Connecting phase on first entry. */
@@ -152,9 +164,9 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 			cs.media_restart_attempts++;
 			cs.next_retry_ns = now_ns + kMediaRestartCooldownNs;
 			cs.last_reconnect_ns = now_ns;
-			obs_log(LOG_INFO, "[health] cell (%d,%d) media_restart #%d on '%s' (reason='%s')", cellRow,
-				cellCol, cs.media_restart_attempts, signal_provider_to_string(cs.provider_type),
-				cs.last_error_reason.c_str());
+			obs_log(LOG_INFO, "%s[health] cell (%d,%d) media_restart #%d on '%s' (reason='%s')",
+				log_prefix().c_str(), cellRow, cellCol, cs.media_restart_attempts,
+				signal_provider_to_string(cs.provider_type), cs.last_error_reason.c_str());
 			return SignalRuntimeState::Connecting;
 		}
 
@@ -165,24 +177,22 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 		if (cs.lost_since_ns == 0)
 			cs.lost_since_ns = now_ns;
 
-		/* User-configured ExternalLostBehavior gates recreate. The
-		 * supervisor implements:
+		/* Phase 3 / M6.6: auto-recreate is now provider-only, not
+		 * behavior-gated. Earlier the supervisor refused to recreate
+		 * when the user picked SignalLostOverlay or SignalLostImage,
+		 * the rationale being "user explicitly wants to stare at the
+		 * overlay/image". But that left FFmpeg/VLC cells permanently
+		 * stuck the moment they hit ENDED with those modes \u2014 even
+		 * though NDI/Spout cells recovered automatically (their host
+		 * plugins reconnect internally). User-visible inconsistency.
 		 *
-		 *   SignalLostOverlay  -> never auto-recreate (user chose to
-		 *                         see the overlay forever).
-		 *   RetryOnly /        -> auto-recreate at the user's cooldown
-		 *   RetryWithFallback     interval, but only when the provider
-		 *                         advertises benefits_from_recreate().
-		 *   SignalLostImage    -> never auto-recreate (the user wants
-		 *                         the static image to stay visible).
-		 *
+		 * Now: all behaviors trigger retry; the choice only controls
+		 * *what overlay is shown* during the unhealthy window
+		 * (handled in the render-thread state classifier, not here).
 		 * Providers that don't benefit from recreate (NDI / Spout)
-		 * sit in Lost and recover when their host plugin observes
-		 * the source return; the supervisor stays out of the way. */
-		const ExternalLostBehavior beh = cs.effective_lost.externalLostBehavior;
-		const bool recreate_eligible =
-			provider->benefits_from_recreate() &&
-			(beh == ExternalLostBehavior::RetryOnly || beh == ExternalLostBehavior::RetryWithFallback);
+		 * still skip \u2014 recreating their receiver doesn't help; they
+		 * recover when the host plugin observes the sender return. */
+		const bool recreate_eligible = provider->benefits_from_recreate();
 		if (!recreate_eligible)
 			return SignalRuntimeState::Lost;
 
@@ -206,8 +216,8 @@ MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(i
 
 		cs.next_retry_ns = now_ns + cooldown_ns;
 		cs.retry_attempt++;
-		obs_log(LOG_INFO, "[health] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s')",
-			cellRow, cellCol, signal_provider_to_string(cs.provider_type), cs.retry_attempt,
+		obs_log(LOG_INFO, "%s[health] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s')",
+			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type), cs.retry_attempt,
 			cs.last_error_reason.c_str());
 
 		/* Queue refresh_cell onto the Qt main thread \u2014 it must NOT

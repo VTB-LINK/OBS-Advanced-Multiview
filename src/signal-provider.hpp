@@ -136,6 +136,9 @@ public:
 		Unknown, /* not probed yet / no signal */
 		Active,  /* producing valid frames */
 		Opening, /* attempting to open / waiting first frame / buffering */
+		Paused,  /* user-initiated pause (FFmpeg/VLC media_play_pause);
+		            not an error, do not escalate to Lost or attempt
+		            auto-restart. Cell keeps showing the last frame. */
 		Lost,    /* was producing, no longer; expected recoverable */
 		Error,   /* unrecoverable from current state without recreate */
 	};

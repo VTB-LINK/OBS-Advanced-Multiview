@@ -50,9 +50,33 @@ std::string MultiviewWindow::compute_wanted_lost_image_path(int cellIndex)
 		return std::string();
 
 	/* Cells whose source resolves (Active / FallbackActive on an OBS
-	 * source) draw the source video directly — no image. */
-	if (cs.state == SignalRuntimeState::Active || cs.state == SignalRuntimeState::FallbackActive)
+	 * source) draw the source video directly — no image.
+	 *
+	 * Phase 3 / M6.6 nuance: external cells now also map to
+	 * FallbackActive when the user configured an *image* fallback and
+	 * the unhealthy latch is engaged. In that case we DO need to draw
+	 * the image. The distinction below: internal-cell or external-cell
+	 * with a source-type fallback (PGM/Scene/Source) → src is the
+	 * fallback source and the image renderer must stay silent; external-
+	 * cell with image fallback → src is null, image renderer paints
+	 * the user's art. We disambiguate by inspecting the configured
+	 * fallback type rather than just the state code.
+	 *
+	 * Paused cells also keep painting the last decoded frame, so the
+	 * lost-signal image must NOT replace it; otherwise pressing pause
+	 * on a media cell would briefly swap the frozen frame for a
+	 * static graphic which is exactly the surprise we're avoiding. */
+	if (cs.state == SignalRuntimeState::Active || cs.state == SignalRuntimeState::Paused)
 		return std::string();
+	if (cs.state == SignalRuntimeState::FallbackActive) {
+		const auto &fb_eff = cs.effective_lost;
+		const bool image_fallback_active =
+			is_external_cell && fb_eff.externalLostBehavior == ExternalLostBehavior::RetryWithFallback &&
+			fb_eff.fallbackType == std::string("image") && !fb_eff.fallbackName.empty();
+		if (!image_fallback_active)
+			return std::string();
+		/* fall through to the image lookup below */
+	}
 
 	const LostSignalSettings &eff = cs.effective_lost;
 

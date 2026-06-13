@@ -219,8 +219,15 @@ public:
 			r.code = HealthCode::Error;
 			r.reason = "vlc error";
 			break;
-		case OBS_MEDIA_STATE_STOPPED:
 		case OBS_MEDIA_STATE_PAUSED:
+			/* User pressed Play/Pause via the cell context menu.
+			 * Treat as a benign user-initiated state, not a Lost
+			 * (which would attempt restart and reset the playlist
+			 * position). The cell keeps the last decoded frame. */
+			r.code = HealthCode::Paused;
+			r.reason = "paused";
+			break;
+		case OBS_MEDIA_STATE_STOPPED:
 		case OBS_MEDIA_STATE_NONE:
 		default:
 			if (age_ns < 5ULL * 1000 * 1000 * 1000)
