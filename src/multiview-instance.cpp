@@ -397,7 +397,9 @@ static SafeAreaAnchorMode safe_area_anchor_mode_from_str(const char *s)
 {
 	if (s && strcmp(s, "cell") == 0)
 		return SafeAreaAnchorMode::Cell;
-	return SafeAreaAnchorMode::Signal;
+	if (s && strcmp(s, "signal") == 0)
+		return SafeAreaAnchorMode::Signal;
+	return SafeAreaAnchorMode::Cell;
 }
 
 /* ========== BackgroundSettings ========== */
@@ -420,11 +422,13 @@ BackgroundSettings BackgroundSettings::from_obs_data(obs_data_t *data)
 	BackgroundSettings s;
 	if (!data)
 		return s;
-	s.colorEnabled = obs_data_get_bool(data, "colorEnabled");
+	if (obs_data_has_user_value(data, "colorEnabled"))
+		s.colorEnabled = obs_data_get_bool(data, "colorEnabled");
 	s.color = (uint32_t)obs_data_get_int(data, "color");
 	if (!obs_data_has_user_value(data, "color"))
 		s.color = 0xFF000000;
-	s.fillMode = bg_fill_mode_from_str(obs_data_get_string(data, "fillMode"));
+	if (obs_data_has_user_value(data, "fillMode"))
+		s.fillMode = bg_fill_mode_from_str(obs_data_get_string(data, "fillMode"));
 	s.labelRegionFill = obs_data_get_bool(data, "labelRegionFill");
 	s.imageEnabled = obs_data_get_bool(data, "imageEnabled");
 	s.imagePath = obs_data_get_string(data, "imagePath");
@@ -472,13 +476,16 @@ LabelSettings LabelSettings::from_obs_data(obs_data_t *data)
 		s.fontSize = 14;
 	if (s.fontSize > 200)
 		s.fontSize = 200;
-	s.fontScaleMode = font_scale_mode_from_str(obs_data_get_string(data, "fontScaleMode"));
+	if (obs_data_has_user_value(data, "fontScaleMode"))
+		s.fontScaleMode = font_scale_mode_from_str(obs_data_get_string(data, "fontScaleMode"));
 	s.minFontSize = (int)obs_data_get_int(data, "minFontSize");
 	if (s.minFontSize < 1)
 		s.minFontSize = 8;
 	if (s.minFontSize > 200)
 		s.minFontSize = 200;
 	s.maxFontSize = (int)obs_data_get_int(data, "maxFontSize");
+	if (!obs_data_has_user_value(data, "maxFontSize"))
+		s.maxFontSize = 80;
 	if (s.maxFontSize < s.minFontSize)
 		s.maxFontSize = s.minFontSize;
 	if (s.maxFontSize > 400)
@@ -488,7 +495,7 @@ LabelSettings LabelSettings::from_obs_data(obs_data_t *data)
 		s.textColor = 0xFFFFFFFF;
 	s.backgroundOpacity = obs_data_get_double(data, "backgroundOpacity");
 	if (!obs_data_has_user_value(data, "backgroundOpacity"))
-		s.backgroundOpacity = 0.6;
+		s.backgroundOpacity = 0.2;
 	if (s.backgroundOpacity < 0.0)
 		s.backgroundOpacity = 0.0;
 	if (s.backgroundOpacity > 1.0)
@@ -527,10 +534,10 @@ SafeAreaSettings SafeAreaSettings::from_obs_data(obs_data_t *data)
 	s.anchorMode = safe_area_anchor_mode_from_str(obs_data_get_string(data, "anchorMode"));
 	s.color = (uint32_t)obs_data_get_int(data, "color");
 	if (!obs_data_has_user_value(data, "color"))
-		s.color = 0xFFFFFFFF;
+		s.color = 0xFFD0D0D0;
 	s.opacity = obs_data_get_double(data, "opacity");
 	if (!obs_data_has_user_value(data, "opacity"))
-		s.opacity = 0.5;
+		s.opacity = 1.0;
 	if (s.opacity < 0.0)
 		s.opacity = 0.0;
 	if (s.opacity > 1.0)
@@ -576,16 +583,20 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 	VuMeterSettings s;
 	if (!data)
 		return s;
-	s.enabled = obs_data_get_bool(data, "enabled");
-	s.position = vu_meter_position_from_str(obs_data_get_string(data, "position"));
+	if (obs_data_has_user_value(data, "enabled"))
+		s.enabled = obs_data_get_bool(data, "enabled");
+	if (obs_data_has_user_value(data, "position"))
+		s.position = vu_meter_position_from_str(obs_data_get_string(data, "position"));
 	s.opacity = obs_data_get_double(data, "opacity");
 	if (!obs_data_has_user_value(data, "opacity"))
-		s.opacity = 0.8;
+		s.opacity = 0.75;
 	if (s.opacity < 0.0)
 		s.opacity = 0.0;
 	if (s.opacity > 1.0)
 		s.opacity = 1.0;
 	s.width = (int)obs_data_get_int(data, "width");
+	if (!obs_data_has_user_value(data, "width"))
+		s.width = 24;
 	if (s.width < 1)
 		s.width = 8;
 	if (s.width > 64)
@@ -659,7 +670,8 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 		s.scaleShowLabels = obs_data_get_bool(data, "scaleShowLabels");
 	if (obs_data_has_user_value(data, "scaleColor"))
 		s.scaleColor = (uint32_t)obs_data_get_int(data, "scaleColor");
-	s.scaleSide = vu_meter_scale_side_from_str(obs_data_get_string(data, "scaleSide"));
+	if (obs_data_has_user_value(data, "scaleSide"))
+		s.scaleSide = vu_meter_scale_side_from_str(obs_data_get_string(data, "scaleSide"));
 	return s;
 }
 
@@ -694,7 +706,8 @@ OverlaySettings OverlaySettings::from_obs_data(obs_data_t *data)
 	if (s.opacity > 1.0)
 		s.opacity = 1.0;
 	s.fitMode = overlay_fit_mode_from_str(obs_data_get_string(data, "fitMode"));
-	s.anchorMode = overlay_anchor_mode_from_str(obs_data_get_string(data, "anchorMode"));
+	if (obs_data_has_user_value(data, "anchorMode"))
+		s.anchorMode = overlay_anchor_mode_from_str(obs_data_get_string(data, "anchorMode"));
 	return s;
 }
 
@@ -1777,7 +1790,11 @@ obs_data_t *GlobalSettings::to_obs_data() const
 GlobalSettings GlobalSettings::from_obs_data(obs_data_t *data)
 {
 	GlobalSettings gs;
+	if (!data)
+		return gs;
 	gs.defaultGutterPx = (int)obs_data_get_int(data, "defaultGutterPx");
+	if (!obs_data_has_user_value(data, "defaultGutterPx"))
+		gs.defaultGutterPx = 7;
 	if (gs.defaultGutterPx < 0)
 		gs.defaultGutterPx = 0;
 	if (gs.defaultGutterPx > 50)

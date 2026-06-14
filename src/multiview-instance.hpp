@@ -82,9 +82,9 @@ enum class BackgroundFillMode { FillSignalOnly, FillEntireCell };
 /* ========== Visual Settings Group Structs ========== */
 
 struct BackgroundSettings {
-	bool colorEnabled = false;
+	bool colorEnabled = true;
 	uint32_t color = 0xFF000000; /* ARGB black */
-	BackgroundFillMode fillMode = BackgroundFillMode::FillSignalOnly;
+	BackgroundFillMode fillMode = BackgroundFillMode::FillEntireCell;
 	bool labelRegionFill = false; /* Below mode: fill label row with bgColor */
 	bool imageEnabled = false;
 	std::string imagePath;
@@ -101,7 +101,7 @@ struct LabelSettings {
 	int fontSize = 14;
 	FontScaleMode fontScaleMode = FontScaleMode::ScaleWithCell;
 	int minFontSize = 8;
-	int maxFontSize = 48;
+	int maxFontSize = 80;
 	uint32_t textColor = 0xFFFFFFFF; /* ARGB white */
 	double backgroundOpacity = 0.2;
 	bool backgroundRounded = false;
@@ -114,7 +114,7 @@ struct LabelSettings {
 struct SafeAreaSettings {
 	bool enabled = false;
 	SafeAreaPreset preset = SafeAreaPreset::EBU_R95;
-	SafeAreaAnchorMode anchorMode = SafeAreaAnchorMode::Signal;
+	SafeAreaAnchorMode anchorMode = SafeAreaAnchorMode::Cell;
 	uint32_t color = 0xFFD0D0D0; /* ARGB light grey - matches OBS native OUTLINE_COLOR */
 	double opacity = 1.0;
 
@@ -123,10 +123,10 @@ struct SafeAreaSettings {
 };
 
 struct VuMeterSettings {
-	bool enabled = false;
-	VuMeterPosition position = VuMeterPosition::Right;
-	double opacity = 0.8;
-	int width = 8;
+	bool enabled = true;
+	VuMeterPosition position = VuMeterPosition::Left;
+	double opacity = 0.75;
+	int width = 24;
 	VuMeterStyle style = VuMeterStyle::Bar;
 	VuMeterAnchorMode anchor = VuMeterAnchorMode::Cell;
 	bool flip = false;
@@ -150,14 +150,14 @@ struct VuMeterSettings {
 	bool peakHoldEnabled = true;
 	int peakHoldMs = 1500;                /* 100 ~ 5000 */
 	double peakHoldDecayDbPerSec = 11.76; /* 1.0 ~ 60.0, matches Medium decay */
-	int peakHoldWidthPx = 2;              /* 1 ~ 4 */
+	int peakHoldWidthPx = 3;              /* 1 ~ 4 */
 
 	/* dB Scale / Ticks — Phase 2.5 polish */
-	bool scaleEnabled = false;
+	bool scaleEnabled = true;
 	std::string scaleTicks; /* CSV dB values; empty = default "-60,-40,-20,-9,0" */
 	bool scaleShowLabels = true;
 	uint32_t scaleColor = 0x80FFFFFF; /* ARGB half-transparent white */
-	VuMeterScaleSide scaleSide = VuMeterScaleSide::Auto;
+	VuMeterScaleSide scaleSide = VuMeterScaleSide::Same;
 
 	obs_data_t *to_obs_data() const;
 	static VuMeterSettings from_obs_data(obs_data_t *data);
@@ -168,7 +168,7 @@ struct OverlaySettings {
 	std::string imagePath;
 	double opacity = 1.0;
 	OverlayFitMode fitMode = OverlayFitMode::Fit;
-	OverlayAnchorMode anchorMode = OverlayAnchorMode::Signal;
+	OverlayAnchorMode anchorMode = OverlayAnchorMode::Cell;
 
 	obs_data_t *to_obs_data() const;
 	static OverlaySettings from_obs_data(obs_data_t *data);
@@ -522,7 +522,7 @@ struct LayoutPreset {
 };
 
 struct GlobalSettings {
-	int defaultGutterPx = 4;
+	int defaultGutterPx = 7;
 	bool reResolveInheritObs = true;
 	double reResolveCustomFps = 30.0;
 	GlobalVisualSettings visualSettings;
