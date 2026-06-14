@@ -122,6 +122,7 @@ ManagerDialog::ManagerDialog(ConfigManager *config, QWidget *parent) : QDialog(p
 {
 	setWindowTitle(amv::text("OBSAdvancedMultiview"));
 	setMinimumSize(800, 500);
+	resize(800, 600);
 	setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
 
 	setup_ui();
