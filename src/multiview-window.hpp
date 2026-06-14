@@ -180,6 +180,13 @@ private:
 	void on_change_source(int cellIndex);
 	void on_clear_cell(int cellIndex);
 
+	/* Left-click scene switching: when the resolved (instance ⇐ global)
+	 * SceneClickSwitchSettings.enabled is true and the clicked cell is a
+	 * scene assignment, route the scene to Preview (Studio Mode on) or
+	 * Program (Studio Mode off). Non-scene cells are silently ignored.
+	 * Mirrors the OBS built-in multiview projector left-click. */
+	void handle_scene_click_switch(int cellIndex);
+
 	/* Phase 3 / M6.1+ task 9.1.C: Edit Source for external-provider
 	 * cells. Opens a provider-specific form populated from the cell's
 	 * current SignalConfig; on Save writes the new config back into

@@ -420,6 +420,25 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	gutter_row->addWidget(detail_gutter_effective_);
 	p_layout->addLayout(gutter_row);
 
+	/* --- Scene-click switching row (instance override) --- */
+	auto *scene_click_row = new QHBoxLayout();
+	detail_use_global_scene_click_ =
+		new QCheckBox(QStringLiteral("Inherit scene-click switching from Settings"), page_instance_);
+	scene_click_row->addWidget(detail_use_global_scene_click_);
+	scene_click_row->addStretch();
+	detail_scene_click_enabled_ =
+		new QCheckBox(QStringLiteral("Click scene cells to switch Preview/Program"), page_instance_);
+	detail_scene_click_enabled_->setToolTip(
+		QStringLiteral("Per-instance override of the global scene-click switching toggle.\n"
+			       "Studio Mode: left-clicking a scene cell sets it as Preview.\n"
+			       "Non-Studio Mode: it becomes Program directly.\n"
+			       "Non-scene cells (sources, audio-only, external feeds, PGM/PRVW, empty) are ignored."));
+	scene_click_row->addWidget(detail_scene_click_enabled_);
+	detail_scene_click_effective_ = new QLabel(page_instance_);
+	detail_scene_click_effective_->setStyleSheet(QString("color: %1;").arg(secondary_text_color()));
+	scene_click_row->addWidget(detail_scene_click_effective_);
+	p_layout->addLayout(scene_click_row);
+
 	/* --- Instance Visual Settings button --- */
 	auto *btn_instance_visual = new QPushButton(QStringLiteral("Instance Visual Settings..."), page_instance_);
 	p_layout->addWidget(btn_instance_visual);
@@ -516,6 +535,32 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 		detail_gutter_effective_->setText(QStringLiteral("Effective: %1px").arg(value));
 		config_->save();
 		notify_multiview_layout_changed(current_detail_uuid_);
+	});
+
+	/* Scene-click switching: instance inheritance + override */
+	connect(detail_use_global_scene_click_, &QCheckBox::toggled, this, [this](bool checked) {
+		detail_scene_click_enabled_->setEnabled(!checked);
+		MultiviewInstance *inst = config_->find_instance(current_detail_uuid_);
+		if (!inst)
+			return;
+		inst->useGlobalSceneClickSwitch = checked;
+		bool effEnabled =
+			inst->effective_scene_click_switch(config_->global_settings().sceneClickSwitch).enabled;
+		detail_scene_click_effective_->setText(
+			QStringLiteral("Effective: %1").arg(effEnabled ? QStringLiteral("on") : QStringLiteral("off")));
+		config_->save();
+	});
+
+	connect(detail_scene_click_enabled_, &QCheckBox::toggled, this, [this](bool checked) {
+		MultiviewInstance *inst = config_->find_instance(current_detail_uuid_);
+		if (!inst || inst->useGlobalSceneClickSwitch)
+			return;
+		inst->sceneClickSwitch.enabled = checked;
+		bool effEnabled =
+			inst->effective_scene_click_switch(config_->global_settings().sceneClickSwitch).enabled;
+		detail_scene_click_effective_->setText(
+			QStringLiteral("Effective: %1").arg(effEnabled ? QStringLiteral("on") : QStringLiteral("off")));
+		config_->save();
 	});
 
 	/* Grid rows/cols - auto save */
@@ -719,6 +764,25 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 	auto *vs_label = new QLabel(QStringLiteral("Immediate Settings"), tab);
 	vs_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
 	layout->addWidget(vs_label);
+
+	/* Scene-click switch toggle (immediate save). Mirrors OBS built-in
+	 * MultiviewMouseSwitch: when on, left-clicking a scene cell calls
+	 * obs_frontend_set_current_scene which routes to PRVW under Studio Mode
+	 * or to PGM otherwise. Non-scene cells are silently ignored. */
+	chk_scene_click_switch_ =
+		new QCheckBox(QStringLiteral("Click scene cells to switch Preview/Program (Studio Mode aware)"), tab);
+	chk_scene_click_switch_->setChecked(config_->global_settings().sceneClickSwitch.enabled);
+	chk_scene_click_switch_->setToolTip(QStringLiteral(
+		"When enabled, left-clicking a cell whose assignment is a scene switches the OBS scene.\n"
+		"In Studio Mode the scene goes to Preview; otherwise it goes to Program.\n"
+		"Non-scene cells (sources, audio-only, external feeds, PGM/PRVW, empty) ignore left clicks."));
+	layout->addWidget(chk_scene_click_switch_);
+
+	connect(chk_scene_click_switch_, &QCheckBox::toggled, this, [this](bool checked) {
+		config_->global_settings().sceneClickSwitch.enabled = checked;
+		config_->save();
+		obs_log(LOG_INFO, "scene click switch %s (global)", checked ? "enabled" : "disabled");
+	});
 
 	auto *btn_global_visual = new QPushButton(QStringLiteral("Edit Global Visual Settings..."), tab);
 	layout->addWidget(btn_global_visual);
@@ -1057,6 +1121,21 @@ void ManagerDialog::show_instance_detail(const std::string &uuid)
 
 	detail_use_global_gutter_->blockSignals(false);
 	detail_gutter_spin_->blockSignals(false);
+
+	/* Scene-click switching */
+	detail_use_global_scene_click_->blockSignals(true);
+	detail_scene_click_enabled_->blockSignals(true);
+	detail_use_global_scene_click_->setChecked(inst->useGlobalSceneClickSwitch);
+	detail_scene_click_enabled_->setChecked(inst->sceneClickSwitch.enabled);
+	detail_scene_click_enabled_->setEnabled(!inst->useGlobalSceneClickSwitch);
+	{
+		bool effEnabled =
+			inst->effective_scene_click_switch(config_->global_settings().sceneClickSwitch).enabled;
+		detail_scene_click_effective_->setText(
+			QStringLiteral("Effective: %1").arg(effEnabled ? QStringLiteral("on") : QStringLiteral("off")));
+	}
+	detail_use_global_scene_click_->blockSignals(false);
+	detail_scene_click_enabled_->blockSignals(false);
 
 	/* Grid editor */
 	grid_edit_layout_ = inst->layout;

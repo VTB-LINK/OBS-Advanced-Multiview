@@ -52,7 +52,8 @@ static QSize GetPixelSize(QWidget *w)
 }
 void MultiviewWindow::mousePressEvent(QMouseEvent *event)
 {
-	if (event->button() == Qt::RightButton) {
+	const Qt::MouseButton btn = event->button();
+	if (btn == Qt::RightButton || btn == Qt::LeftButton) {
 		/* Hit test to determine which cell was clicked */
 		QSize pixelSize = GetPixelSize(this);
 		float ratio = (float)pixelSize.width() / (float)width();
@@ -87,7 +88,15 @@ void MultiviewWindow::mousePressEvent(QMouseEvent *event)
 		if (hit && hit->type == HitType::Cell)
 			cellIndex = hit->cellIndex;
 
-		show_context_menu(event->globalPosition().toPoint(), cellIndex);
+		if (btn == Qt::RightButton) {
+			show_context_menu(event->globalPosition().toPoint(), cellIndex);
+		} else {
+			/* Left click: only act on a hit cell. handle_scene_click_switch
+			 * itself silently ignores non-scene cells, missing sources,
+			 * and the disabled-by-config case. */
+			if (cellIndex >= 0)
+				handle_scene_click_switch(cellIndex);
+		}
 	}
 
 	QWidget::mousePressEvent(event);
@@ -763,4 +772,60 @@ void MultiviewWindow::on_toggle_always_on_top()
 	show();
 	create_display();
 #endif
+}
+
+/* ---- Left-click scene switching ----
+ *
+ * Mirrors the OBS built-in multiview projector left-click semantics:
+ * Studio Mode on  → set the scene as Preview (no transition)
+ * Studio Mode off → set the scene as Program directly
+ *
+ * Implementation notes:
+ *   - We resolve `cs.weak_ref` rather than re-look up the source by name,
+ *     because the cell already binds the OBS source on assignment and on
+ *     each lazy re-resolve. That avoids a redundant
+ *     obs_get_source_by_name() lookup and matches the existing context
+ *     menu code path for "Open Source Properties".
+ *   - We deliberately do NOT use obs_frontend_set_current_scene() in
+ *     Studio Mode: that API runs TransitionToScene (i.e. push to PGM
+ *     with transition), which is the OBS multiview *double-click*
+ *     behavior, not single click. obs_frontend_set_current_preview_scene
+ *     is the correct match for single-click parity.
+ *   - Non-scene cells (source / external / pgm / prvw / empty) silently
+ *     no-op so left-click does not feel "swallowed" but also does not
+ *     guess at what the user meant. The plan reserved a future warning
+ *     UX for misclicks; this hook ships without it. */
+void MultiviewWindow::handle_scene_click_switch(int cellIndex)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+	const SceneClickSwitchSettings effective =
+		inst->effective_scene_click_switch(config_->global_settings().sceneClickSwitch);
+	if (!effective.enabled)
+		return;
+
+	OBSSourceAutoRelease scene;
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+		if (cellIndex < 0 || cellIndex >= (int)cell_sources_.size())
+			return;
+		const auto &cs = cell_sources_[cellIndex];
+		if (cs.type != "scene")
+			return;
+		scene = OBSGetStrongRef(cs.weak_ref);
+	}
+	if (!scene)
+		return;
+	/* Defensive: a scene cell's weak_ref should always point at a scene,
+	 * but a renamed-then-recreated source could in theory swap types under
+	 * a stale weak_ref. Skip silently rather than mis-route a video source
+	 * into the scene change pipeline. */
+	if (!obs_source_is_scene(scene))
+		return;
+
+	if (obs_frontend_preview_program_mode_active())
+		obs_frontend_set_current_preview_scene(scene);
+	else
+		obs_frontend_set_current_scene(scene);
 }

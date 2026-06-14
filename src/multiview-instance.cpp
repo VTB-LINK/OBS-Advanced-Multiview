@@ -912,6 +912,27 @@ LostSignalSettings resolve_effective_lost_signal(const LostSignalSettings &globa
 	return global;
 }
 
+/* ========== SceneClickSwitchSettings ========== */
+
+obs_data_t *SceneClickSwitchSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_bool(data, "enabled", enabled);
+	return data;
+}
+
+SceneClickSwitchSettings SceneClickSwitchSettings::from_obs_data(obs_data_t *data)
+{
+	SceneClickSwitchSettings s;
+	if (!data)
+		return s;
+	/* Default true (parity with OBS built-in MultiviewMouseSwitch) when key
+	 * is absent on legacy configs. */
+	if (obs_data_has_user_value(data, "enabled"))
+		s.enabled = obs_data_get_bool(data, "enabled");
+	return s;
+}
+
 /* ========== GlobalVisualSettings ========== */
 
 obs_data_t *GlobalVisualSettings::to_obs_data() const
@@ -1549,6 +1570,11 @@ obs_data_t *MultiviewInstance::to_obs_data() const
 	if (!folder.empty())
 		obs_data_set_string(data, "folder", folder.c_str());
 	obs_data_set_bool(data, "useGlobalGutter", useGlobalGutter);
+	obs_data_set_bool(data, "useGlobalSceneClickSwitch", useGlobalSceneClickSwitch);
+
+	obs_data_t *scs = sceneClickSwitch.to_obs_data();
+	obs_data_set_obj(data, "sceneClickSwitch", scs);
+	obs_data_release(scs);
 
 	obs_data_t *layoutData = layout.to_obs_data();
 	obs_data_set_obj(data, "layout", layoutData);
@@ -1620,6 +1646,18 @@ MultiviewInstance MultiviewInstance::from_obs_data(obs_data_t *data)
 		inst.useGlobalGutter = obs_data_get_bool(data, "useGlobalGutter");
 	else
 		inst.useGlobalGutter = true;
+
+	/* Scene-click switching: default to inherit when key absent on legacy
+	 * configs so existing instances pick up the global default. */
+	if (obs_data_has_user_value(data, "useGlobalSceneClickSwitch"))
+		inst.useGlobalSceneClickSwitch = obs_data_get_bool(data, "useGlobalSceneClickSwitch");
+	else
+		inst.useGlobalSceneClickSwitch = true;
+
+	obs_data_t *scs = obs_data_get_obj(data, "sceneClickSwitch");
+	inst.sceneClickSwitch = SceneClickSwitchSettings::from_obs_data(scs);
+	if (scs)
+		obs_data_release(scs);
 
 	obs_data_t *layoutData = obs_data_get_obj(data, "layout");
 	if (layoutData) {
@@ -1704,6 +1742,12 @@ int MultiviewInstance::effective_gutter(int globalGutter) const
 	return useGlobalGutter ? globalGutter : layout.gutterPx;
 }
 
+SceneClickSwitchSettings
+MultiviewInstance::effective_scene_click_switch(const SceneClickSwitchSettings &globalDefault) const
+{
+	return useGlobalSceneClickSwitch ? globalDefault : sceneClickSwitch;
+}
+
 MultiviewInstance MultiviewInstance::clone_instance(const std::string &newName) const
 {
 	MultiviewInstance cloned = *this;
@@ -1780,6 +1824,11 @@ obs_data_t *GlobalSettings::to_obs_data() const
 	obs_data_set_obj(data, "lostSignal", ls);
 	obs_data_release(ls);
 
+	/* Project-wide scene-click switching default. */
+	obs_data_t *scs = sceneClickSwitch.to_obs_data();
+	obs_data_set_obj(data, "sceneClickSwitch", scs);
+	obs_data_release(scs);
+
 	/* Phase 3 hardening tail: persist the Detailed logs toggle so a
 	 * fresh OBS startup respects whatever the user picked last session. */
 	obs_data_set_bool(data, "detailedLogs", detailedLogs);
@@ -1822,6 +1871,13 @@ GlobalSettings GlobalSettings::from_obs_data(obs_data_t *data)
 	gs.lostSignal = LostSignalSettings::from_obs_data(ls);
 	if (ls)
 		obs_data_release(ls);
+
+	/* Scene-click switching default: absent key resolves to enabled=true so
+	 * upgrades from older configs match the OBS built-in default. */
+	obs_data_t *scs = obs_data_get_obj(data, "sceneClickSwitch");
+	gs.sceneClickSwitch = SceneClickSwitchSettings::from_obs_data(scs);
+	if (scs)
+		obs_data_release(scs);
 
 	/* Phase 3 hardening tail: Detailed logs toggle. Default false when
 	 * the key is absent so existing configs do not silently flip on. */

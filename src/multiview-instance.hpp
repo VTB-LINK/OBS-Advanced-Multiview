@@ -480,6 +480,22 @@ struct CellLostSignalSettings {
  * cell == nullptr || cell->mode == Inherit ⇒ returns the global default. */
 LostSignalSettings resolve_effective_lost_signal(const LostSignalSettings &global, const CellLostSignalSettings *cell);
 
+/* Scene-click switching behavior settings.
+ *
+ * Mirrors OBS built-in multiview's MultiviewMouseSwitch toggle: when
+ * enabled, left-clicking a cell whose CellAssignment is a scene calls
+ * obs_frontend_set_current_scene(scene). OBS frontend routes that call to
+ * Preview when Studio Mode is on, or directly to Program otherwise — same
+ * semantics as the upstream multiview projector. Non-scene cells
+ * (source/audio-only/external/PGM/PRVW/empty) silently ignore left clicks
+ * regardless of this flag. */
+struct SceneClickSwitchSettings {
+	bool enabled = true;
+
+	obs_data_t *to_obs_data() const;
+	static SceneClickSwitchSettings from_obs_data(obs_data_t *data);
+};
+
 struct MultiviewInstance {
 	std::string uuid;
 	std::string name;
@@ -497,7 +513,17 @@ struct MultiviewInstance {
 	bool layoutDirty = false;
 	bool signalDirty = false;
 
+	/* Scene-click switching: when true the instance inherits the global
+	 * SceneClickSwitchSettings; otherwise sceneClickSwitch is the override.
+	 * Mirrors the useGlobalGutter pattern. */
+	bool useGlobalSceneClickSwitch = true;
+	SceneClickSwitchSettings sceneClickSwitch;
+
 	int effective_gutter(int globalGutter) const;
+
+	/* Returns the effective scene-click switch settings, applying inheritance
+	 * from the supplied global default when useGlobalSceneClickSwitch == true. */
+	SceneClickSwitchSettings effective_scene_click_switch(const SceneClickSwitchSettings &globalDefault) const;
 
 	/* Find cell visual settings for given coordinate, or nullptr */
 	const CellVisualSettings *find_cell_visual(int row, int col) const;
@@ -530,6 +556,10 @@ struct GlobalSettings {
 	/* Phase 3 / M5: project-wide default Lost Signal behavior. Cells without
 	 * an Override entry resolve to this struct. */
 	LostSignalSettings lostSignal;
+
+	/* Project-wide default scene-click switching behavior. Instances inherit
+	 * this unless useGlobalSceneClickSwitch is false. */
+	SceneClickSwitchSettings sceneClickSwitch;
 
 	/* Phase 3 hardening tail: "Detailed logs" toggle. When false (default),
 	 * high-frequency diagnostic INFO logs ([perf] every 5s, [health] retry

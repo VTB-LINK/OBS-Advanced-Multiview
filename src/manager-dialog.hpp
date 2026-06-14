@@ -104,6 +104,11 @@ private:
 	QSpinBox *detail_gutter_spin_;
 	QLabel *detail_gutter_effective_;
 
+	/* Scene-click switch section (instance) */
+	QCheckBox *detail_use_global_scene_click_;
+	QCheckBox *detail_scene_click_enabled_;
+	QLabel *detail_scene_click_effective_;
+
 	/* Grid editor (inline) */
 	QSpinBox *grid_rows_spin_;
 	QSpinBox *grid_cols_spin_;
@@ -121,6 +126,9 @@ private:
 	QDoubleSpinBox *spin_re_resolve_fps_;
 	QLabel *lbl_re_resolve_effective_;
 	QCheckBox *chk_detailed_logs_;
+
+	/* Scene-click switch (global, immediate save) */
+	QCheckBox *chk_scene_click_switch_;
 
 	void update_re_resolve_effective_label();
 
