@@ -2306,9 +2306,10 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 			render_lost_signal_image(i, cellX, cellY, cell.w, cell.h);
 		}
 
-		/* Render safe area guides (anchored to SignalRect, after video, before overlay) */
-		if (hasSignalRect)
-			render_safe_area(i, vrX, vrY, vrW, vrH);
+		/* Render safe area guides after video, before overlay. Anchor is
+		 * configurable per resolved SafeAreaSettings (Cell or Signal). */
+		render_safe_area(i, cellX, cellY, cell.w, cell.h, hasSignalRect ? vrX : 0, hasSignalRect ? vrY : 0,
+				 hasSignalRect ? vrW : 0, hasSignalRect ? vrH : 0);
 
 		/* (PGM/PRVW highlight borders are rendered in two post-loop passes
 		 * below so PGM (red) always paints on top of PRVW (green) even when

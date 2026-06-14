@@ -248,10 +248,15 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	int drawW = (int)((float)labelW * scaleFactor);
 	int drawH = targetH;
 
-	/* Clamp label width to cell width */
-	if (drawW > cell.w) {
-		float clamp = (float)cell.w / (float)drawW;
-		drawW = cell.w;
+	const int margin = std::min(std::max(0, ls.margin), std::max(0, (cell.w - 1) / 2));
+	const int maxTextW = std::max(1, cell.w - margin * 2);
+
+	/* Clamp label width to cell width, accounting for configured label
+	 * padding so Margin has a visible effect without forcing the label
+	 * background outside the cell. */
+	if (drawW > maxTextW) {
+		float clamp = (float)maxTextW / (float)drawW;
+		drawW = maxTextW;
 		drawH = (int)((float)drawH * clamp);
 		scaleFactor *= clamp;
 	}
@@ -262,8 +267,8 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 	int thickness = (int)((double)cell.h * 3.0 / 270.0 + 0.5);
 	if (thickness < 1)
 		thickness = 1;
-	int bgH = drawH + thickness * 2;
-	int bgW = drawW;
+	int bgH = drawH + thickness * 2 + margin * 2;
+	int bgW = drawW + margin * 2;
 
 	/* Calculate position */
 	int bgX, bgY;
@@ -302,8 +307,8 @@ void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX,
 
 	/* Render text source centered within background box
 	 * (text at y-offset = thickness, same width as bg since spaces provide h-padding) */
-	int textX = bgX;
-	int textY = bgY + thickness;
+	int textX = bgX + margin;
+	int textY = bgY + thickness + margin;
 	startRegion(textX, textY, drawW, drawH, 0.0f, (float)labelW, 0.0f, (float)labelH);
 	obs_source_video_render(labelSrc);
 	endRegion();

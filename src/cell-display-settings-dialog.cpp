@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "cell-display-settings-dialog.hpp"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QColorDialog>
 #include <QDialogButtonBox>
 #include <QFileDialog>
@@ -240,6 +241,21 @@ void CellDisplaySettingsDialog::set_cell_position(int row, int col)
 	if (mode_ == Mode::Cell) {
 		setWindowTitle(QStringLiteral("Cell Display Settings [%1, %2]").arg(row).arg(col));
 	}
+}
+
+void CellDisplaySettingsDialog::set_external_cell(bool external)
+{
+	is_external_cell_ = external;
+	if (cmb_vu_track_mode_ && mode_ == Mode::Cell) {
+		int externalIdx = cmb_vu_track_mode_->findData((int)VuMeterTrackMode::ExternalSource);
+		if (external && externalIdx < 0) {
+			cmb_vu_track_mode_->addItem(QStringLiteral("External Source"),
+						    (int)VuMeterTrackMode::ExternalSource);
+		} else if (!external && externalIdx >= 0) {
+			cmb_vu_track_mode_->removeItem(externalIdx);
+		}
+	}
+	update_vu_meter_control_states();
 }
 
 /* ---- UI Setup ---- */
@@ -468,6 +484,18 @@ QGroupBox *CellDisplaySettingsDialog::create_label_group()
 	HOOK_SPIN(spin_label_margin_);
 	HOOK_CHECK(chk_bg_label_fill_);
 
+	connect(cmb_label_display_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		[this](int) { update_label_control_states(); });
+	connect(cmb_label_scale_mode_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		[this](int) { update_label_control_states(); });
+
+	/* Not implemented in the renderer yet. Keep the persisted field for
+	 * compatibility, but do not present it as editable behavior. */
+	chk_label_bg_rounded_->setEnabled(false);
+	chk_label_bg_rounded_->setToolTip(
+		QStringLiteral("Rounded label backgrounds are reserved for a future update."));
+	update_label_control_states();
+
 	return grp_label_;
 }
 
@@ -497,6 +525,11 @@ QGroupBox *CellDisplaySettingsDialog::create_safe_area_group()
 	chk_safe_area_enabled_ = new QCheckBox(grp_safe_area_);
 	form->addRow(QStringLiteral("Enabled:"), chk_safe_area_enabled_);
 
+	cmb_safe_area_anchor_ = new QComboBox(grp_safe_area_);
+	cmb_safe_area_anchor_->addItem(QStringLiteral("Cell"), (int)SafeAreaAnchorMode::Cell);
+	cmb_safe_area_anchor_->addItem(QStringLiteral("Signal"), (int)SafeAreaAnchorMode::Signal);
+	form->addRow(QStringLiteral("Anchor:"), cmb_safe_area_anchor_);
+
 	edit_safe_area_color_ = new QLineEdit(QStringLiteral("#D0D0D0"), grp_safe_area_);
 	form->addRow(QStringLiteral("Color:"),
 		     build_color_picker(edit_safe_area_color_, grp_safe_area_, QStringLiteral("Safe Area Color")));
@@ -510,6 +543,7 @@ QGroupBox *CellDisplaySettingsDialog::create_safe_area_group()
 	layout->addLayout(form);
 
 	HOOK_CHECK(chk_safe_area_enabled_);
+	HOOK_COMBO(cmb_safe_area_anchor_);
 	HOOK_EDIT(edit_safe_area_color_);
 	HOOK_DSPIN(spin_safe_area_opacity_);
 
@@ -542,29 +576,13 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	chk_vu_enabled_ = new QCheckBox(grp_vu_meter_);
 	form->addRow(QStringLiteral("Enabled:"), chk_vu_enabled_);
 
-	/* Track selection: which mixer track determines source visibility +
-	 * audio routing for the meter.
-	 *
-	 * v1 modes (Phase 2.5) — kept for backward compat:
-	 *   AutoFollowStreaming: follows OBS Settings → Output → Streaming
-	 *     Audio Track (lowest set bit of the streaming mixer mask).
-	 *   Manual: pins to manualTrackIndex (Track 1..6) regardless of
-	 *     streaming config.
-	 *
-	 * M6 additions (Phase 3 / step 8):
-	 *   Auto: internal cells behave like AutoFollowStreaming; external
-	 *     provider cells (M6.1+) meter their own private source.
-	 *   ExternalSource: external provider cells force-meter their private
-	 *     source; internal cells fall back to AutoFollowStreaming so a
-	 *     window with both kinds of cells does not lose internal meters. */
+	/* Track selection for internal OBS cells. External-provider cells meter
+	 * their private source directly; the cell-scoped dialog inserts and locks
+	 * External Source only when editing an external cell. */
 	cmb_vu_track_mode_ = new QComboBox(grp_vu_meter_);
 	cmb_vu_track_mode_->addItem(QStringLiteral("Auto-follow Streaming"),
 				    (int)VuMeterTrackMode::AutoFollowStreaming);
 	cmb_vu_track_mode_->addItem(QStringLiteral("Manual"), (int)VuMeterTrackMode::Manual);
-	cmb_vu_track_mode_->addItem(QStringLiteral("Auto (M6: external cells use their own source)"),
-				    (int)VuMeterTrackMode::Auto);
-	cmb_vu_track_mode_->addItem(QStringLiteral("External Source (force external meter)"),
-				    (int)VuMeterTrackMode::ExternalSource);
 	form->addRow(QStringLiteral("Track Source:"), cmb_vu_track_mode_);
 
 	spin_vu_manual_track_ = new QSpinBox(grp_vu_meter_);
@@ -574,10 +592,8 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 
 	/* Manual track spinbox is only meaningful when mode == Manual.
 	 * Gray out otherwise to clarify the inactive field. */
-	connect(cmb_vu_track_mode_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
-		bool manual = cmb_vu_track_mode_->currentData().toInt() == (int)VuMeterTrackMode::Manual;
-		spin_vu_manual_track_->setEnabled(manual);
-	});
+	connect(cmb_vu_track_mode_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		[this](int) { update_vu_meter_control_states(); });
 
 	cmb_vu_position_ = new QComboBox(grp_vu_meter_);
 	cmb_vu_position_->addItem(QStringLiteral("Left"), (int)VuMeterPosition::Left);
@@ -886,22 +902,56 @@ void CellDisplaySettingsDialog::update_inheritance_visibility()
 			lbl_highlight_cell_note_->setEnabled(true); /* keep note readable */
 	}
 
-	/* Cell scope: trackMode is instance-level (per-cell override deferred).
-	 * Disable Track Source and Manual Track controls in Cell mode. */
-	if (mode_ == Mode::Cell) {
-		if (cmb_vu_track_mode_)
-			cmb_vu_track_mode_->setEnabled(false);
-		if (spin_vu_manual_track_)
-			spin_vu_manual_track_->setEnabled(false);
-	}
-
 	/* Cross-control rule: manual track spinbox is only meaningful when
 	 * trackMode == Manual. toggle_group above unconditionally enables all
 	 * children of the override group, so re-apply this narrower rule. */
-	if (cmb_vu_track_mode_ && spin_vu_manual_track_ && cmb_vu_track_mode_->isEnabled()) {
-		bool manual = cmb_vu_track_mode_->currentData().toInt() == (int)VuMeterTrackMode::Manual;
-		spin_vu_manual_track_->setEnabled(manual);
+	update_vu_meter_control_states();
+	update_label_control_states();
+}
+
+void CellDisplaySettingsDialog::update_vu_meter_control_states()
+{
+	if (!cmb_vu_track_mode_ || !spin_vu_manual_track_)
+		return;
+
+	if (mode_ == Mode::Cell) {
+		if (is_external_cell_) {
+			int externalIdx = cmb_vu_track_mode_->findData((int)VuMeterTrackMode::ExternalSource);
+			if (externalIdx >= 0)
+				cmb_vu_track_mode_->setCurrentIndex(externalIdx);
+		}
+		cmb_vu_track_mode_->setEnabled(false);
+		spin_vu_manual_track_->setEnabled(false);
+		return;
 	}
+
+	cmb_vu_track_mode_->setEnabled(true);
+	const bool manual = cmb_vu_track_mode_->currentData().toInt() == (int)VuMeterTrackMode::Manual;
+	spin_vu_manual_track_->setEnabled(manual);
+}
+
+void CellDisplaySettingsDialog::update_label_control_states()
+{
+	if (!cmb_label_display_ || !cmb_label_position_ || !cmb_label_scale_mode_ || !spin_label_font_size_ ||
+	    !spin_label_min_font_ || !spin_label_max_font_ || !chk_bg_label_fill_)
+		return;
+
+	const auto display = (LabelDisplayMode)cmb_label_display_->currentData().toInt();
+	const auto scaleMode = (FontScaleMode)cmb_label_scale_mode_->currentData().toInt();
+	const bool labelVisible = display != LabelDisplayMode::None;
+	const bool overlayMode = display == LabelDisplayMode::Overlay;
+	const bool belowMode = display == LabelDisplayMode::Below;
+	const bool fixedMode = scaleMode == FontScaleMode::Fixed;
+	const bool scaleWithCell = scaleMode == FontScaleMode::ScaleWithCell;
+
+	cmb_label_position_->setEnabled(labelVisible && overlayMode);
+	spin_label_font_size_->setEnabled(labelVisible && fixedMode);
+	spin_label_min_font_->setEnabled(labelVisible && scaleWithCell);
+	spin_label_max_font_->setEnabled(labelVisible && scaleWithCell);
+	chk_bg_label_fill_->setEnabled(labelVisible && belowMode);
+
+	if (chk_label_bg_rounded_)
+		chk_label_bg_rounded_->setEnabled(false);
 }
 
 /* ---- Get/Set: Global ---- */
@@ -929,17 +979,25 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	spin_label_bg_opacity_->setValue(gs.label.backgroundOpacity);
 	chk_label_bg_rounded_->setChecked(gs.label.backgroundRounded);
 	spin_label_margin_->setValue(gs.label.margin);
+	update_label_control_states();
 
 	/* Safe Area */
 	chk_safe_area_enabled_->setChecked(gs.safeArea.enabled);
+	cmb_safe_area_anchor_->setCurrentIndex(cmb_safe_area_anchor_->findData((int)gs.safeArea.anchorMode));
 	edit_safe_area_color_->setText(color_to_hex(gs.safeArea.color));
 	spin_safe_area_opacity_->setValue(gs.safeArea.opacity);
 
 	/* VU Meter */
 	chk_vu_enabled_->setChecked(gs.vuMeter.enabled);
-	cmb_vu_track_mode_->setCurrentIndex(cmb_vu_track_mode_->findData((int)gs.vuMeter.trackMode));
+	{
+		int idx = cmb_vu_track_mode_->findData((int)gs.vuMeter.trackMode);
+		if (idx < 0)
+			idx = cmb_vu_track_mode_->findData((int)VuMeterTrackMode::AutoFollowStreaming);
+		if (idx >= 0)
+			cmb_vu_track_mode_->setCurrentIndex(idx);
+	}
 	spin_vu_manual_track_->setValue(gs.vuMeter.manualTrackIndex);
-	spin_vu_manual_track_->setEnabled(gs.vuMeter.trackMode == VuMeterTrackMode::Manual);
+	update_vu_meter_control_states();
 	cmb_vu_position_->setCurrentIndex(cmb_vu_position_->findData((int)gs.vuMeter.position));
 	cmb_vu_anchor_->setCurrentIndex((int)gs.vuMeter.anchor);
 	spin_vu_width_->setValue(gs.vuMeter.width);
@@ -1007,6 +1065,7 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 
 	/* Safe Area */
 	gs.safeArea.enabled = chk_safe_area_enabled_->isChecked();
+	gs.safeArea.anchorMode = (SafeAreaAnchorMode)cmb_safe_area_anchor_->currentData().toInt();
 	gs.safeArea.color = hex_to_color(edit_safe_area_color_->text(), 0xFFD0D0D0);
 	gs.safeArea.opacity = spin_safe_area_opacity_->value();
 
@@ -1087,15 +1146,23 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	spin_label_bg_opacity_->setValue(is.label.backgroundOpacity);
 	chk_label_bg_rounded_->setChecked(is.label.backgroundRounded);
 	spin_label_margin_->setValue(is.label.margin);
+	update_label_control_states();
 
 	chk_safe_area_enabled_->setChecked(is.safeArea.enabled);
+	cmb_safe_area_anchor_->setCurrentIndex(cmb_safe_area_anchor_->findData((int)is.safeArea.anchorMode));
 	edit_safe_area_color_->setText(color_to_hex(is.safeArea.color));
 	spin_safe_area_opacity_->setValue(is.safeArea.opacity);
 
 	chk_vu_enabled_->setChecked(is.vuMeter.enabled);
-	cmb_vu_track_mode_->setCurrentIndex(cmb_vu_track_mode_->findData((int)is.vuMeter.trackMode));
+	{
+		int idx = cmb_vu_track_mode_->findData((int)is.vuMeter.trackMode);
+		if (idx < 0)
+			idx = cmb_vu_track_mode_->findData((int)VuMeterTrackMode::AutoFollowStreaming);
+		if (idx >= 0)
+			cmb_vu_track_mode_->setCurrentIndex(idx);
+	}
 	spin_vu_manual_track_->setValue(is.vuMeter.manualTrackIndex);
-	spin_vu_manual_track_->setEnabled(is.vuMeter.trackMode == VuMeterTrackMode::Manual);
+	update_vu_meter_control_states();
 	cmb_vu_position_->setCurrentIndex(cmb_vu_position_->findData((int)is.vuMeter.position));
 	cmb_vu_anchor_->setCurrentIndex((int)is.vuMeter.anchor);
 	spin_vu_width_->setValue(is.vuMeter.width);
@@ -1176,6 +1243,7 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 
 	/* Safe Area */
 	is.safeArea.enabled = chk_safe_area_enabled_->isChecked();
+	is.safeArea.anchorMode = (SafeAreaAnchorMode)cmb_safe_area_anchor_->currentData().toInt();
 	is.safeArea.color = hex_to_color(edit_safe_area_color_->text(), 0xFFD0D0D0);
 	is.safeArea.opacity = spin_safe_area_opacity_->value();
 
@@ -1258,15 +1326,23 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 	spin_label_bg_opacity_->setValue(cs.label.backgroundOpacity);
 	chk_label_bg_rounded_->setChecked(cs.label.backgroundRounded);
 	spin_label_margin_->setValue(cs.label.margin);
+	update_label_control_states();
 
 	chk_safe_area_enabled_->setChecked(cs.safeArea.enabled);
+	cmb_safe_area_anchor_->setCurrentIndex(cmb_safe_area_anchor_->findData((int)cs.safeArea.anchorMode));
 	edit_safe_area_color_->setText(color_to_hex(cs.safeArea.color));
 	spin_safe_area_opacity_->setValue(cs.safeArea.opacity);
 
 	chk_vu_enabled_->setChecked(cs.vuMeter.enabled);
-	cmb_vu_track_mode_->setCurrentIndex(cmb_vu_track_mode_->findData((int)cs.vuMeter.trackMode));
+	{
+		int idx = cmb_vu_track_mode_->findData((int)cs.vuMeter.trackMode);
+		if (idx < 0)
+			idx = cmb_vu_track_mode_->findData((int)VuMeterTrackMode::AutoFollowStreaming);
+		if (idx >= 0)
+			cmb_vu_track_mode_->setCurrentIndex(idx);
+	}
 	spin_vu_manual_track_->setValue(cs.vuMeter.manualTrackIndex);
-	spin_vu_manual_track_->setEnabled(cs.vuMeter.trackMode == VuMeterTrackMode::Manual);
+	update_vu_meter_control_states();
 	cmb_vu_position_->setCurrentIndex(cmb_vu_position_->findData((int)cs.vuMeter.position));
 	cmb_vu_anchor_->setCurrentIndex((int)cs.vuMeter.anchor);
 	spin_vu_width_->setValue(cs.vuMeter.width);
@@ -1352,6 +1428,7 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 
 	/* Safe Area */
 	cs.safeArea.enabled = chk_safe_area_enabled_->isChecked();
+	cs.safeArea.anchorMode = (SafeAreaAnchorMode)cmb_safe_area_anchor_->currentData().toInt();
 	cs.safeArea.color = hex_to_color(edit_safe_area_color_->text(), 0xFFD0D0D0);
 	cs.safeArea.opacity = spin_safe_area_opacity_->value();
 
@@ -1411,15 +1488,23 @@ void CellDisplaySettingsDialog::on_copy()
 	if (data) {
 		const char *json = obs_data_get_json(data);
 		s_clipboard_ = QByteArray(json);
+		if (auto *clipboard = QApplication::clipboard())
+			clipboard->setText(QString::fromUtf8(s_clipboard_));
 		obs_data_release(data);
 	}
 }
 
 void CellDisplaySettingsDialog::on_paste()
 {
-	if (s_clipboard_.isEmpty())
+	QByteArray payload = s_clipboard_;
+	if (auto *clipboard = QApplication::clipboard()) {
+		const QByteArray systemText = clipboard->text().toUtf8();
+		if (!systemText.trimmed().isEmpty())
+			payload = systemText;
+	}
+	if (payload.isEmpty())
 		return;
-	obs_data_t *data = obs_data_create_from_json(s_clipboard_.constData());
+	obs_data_t *data = obs_data_create_from_json(payload.constData());
 	if (!data)
 		return;
 	switch (mode_) {

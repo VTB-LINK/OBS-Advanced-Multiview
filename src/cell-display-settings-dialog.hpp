@@ -54,6 +54,7 @@ public:
 
 	/* Cell row/col, for display purposes */
 	void set_cell_position(int row, int col);
+	void set_external_cell(bool external);
 
 signals:
 	void settings_changed();
@@ -67,10 +68,13 @@ private:
 	QGroupBox *create_overlay_group();
 	QGroupBox *create_highlight_group();
 	void update_inheritance_visibility();
+	void update_label_control_states();
+	void update_vu_meter_control_states();
 
 	Mode mode_;
 	int cell_row_ = -1;
 	int cell_col_ = -1;
+	bool is_external_cell_ = false;
 	bool dirty_ = false;
 
 	/* Inheritance combos (only for Instance/Cell mode) */
@@ -108,6 +112,7 @@ private:
 	/* Safe Area group */
 	QGroupBox *grp_safe_area_ = nullptr;
 	QCheckBox *chk_safe_area_enabled_ = nullptr;
+	QComboBox *cmb_safe_area_anchor_ = nullptr;
 	QLineEdit *edit_safe_area_color_ = nullptr;
 	QDoubleSpinBox *spin_safe_area_opacity_ = nullptr;
 

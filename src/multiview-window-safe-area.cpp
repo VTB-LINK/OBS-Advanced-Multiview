@@ -111,7 +111,8 @@ void MultiviewWindow::release_safe_area_vbs()
 	safe_area_vb_init_ = false;
 }
 
-void MultiviewWindow::render_safe_area(int cellIndex, int vrX, int vrY, int vrW, int vrH)
+void MultiviewWindow::render_safe_area(int cellIndex, int cellX, int cellY, int cellW, int cellH, int vrX, int vrY,
+				       int vrW, int vrH)
 {
 	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())
 		return;
@@ -120,7 +121,13 @@ void MultiviewWindow::render_safe_area(int cellIndex, int vrX, int vrY, int vrW,
 	if (!sa.enabled)
 		return;
 
-	if (vrW <= 0 || vrH <= 0)
+	const bool useCellAnchor = sa.anchorMode == SafeAreaAnchorMode::Cell;
+	const int anchorX = useCellAnchor ? cellX : vrX;
+	const int anchorY = useCellAnchor ? cellY : vrY;
+	const int anchorW = useCellAnchor ? cellW : vrW;
+	const int anchorH = useCellAnchor ? cellH : vrH;
+
+	if (anchorW <= 0 || anchorH <= 0)
 		return;
 
 	/* Lazily init vertex buffers (we're already in graphics context during render) */
@@ -134,7 +141,7 @@ void MultiviewWindow::render_safe_area(int cellIndex, int vrX, int vrY, int vrW,
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
 
-	/* Helper lambda: render a vertex buffer scaled to SignalRect */
+	/* Helper lambda: render a vertex buffer scaled to the configured anchor rect. */
 	auto renderVB = [&](gs_vertbuffer_t *vb) {
 		if (!vb)
 			return;
@@ -142,9 +149,8 @@ void MultiviewWindow::render_safe_area(int cellIndex, int vrX, int vrY, int vrW,
 		gs_load_vertexbuffer(vb);
 
 		gs_matrix_push();
-		/* Translate to signal rect origin, then scale normalized coords to signal size */
-		gs_matrix_translate3f((float)vrX, (float)vrY, 0.0f);
-		gs_matrix_scale3f((float)vrW, (float)vrH, 1.0f);
+		gs_matrix_translate3f((float)anchorX, (float)anchorY, 0.0f);
+		gs_matrix_scale3f((float)anchorW, (float)anchorH, 1.0f);
 
 		gs_effect_set_color(colorParam, saColor);
 		while (gs_effect_loop(solid, "Solid"))

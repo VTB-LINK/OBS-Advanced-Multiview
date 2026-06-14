@@ -75,6 +75,8 @@ enum class OverlayFitMode { Fit, Stretch };
 
 enum class OverlayAnchorMode { Cell, Signal };
 
+enum class SafeAreaAnchorMode { Cell, Signal };
+
 enum class BackgroundFillMode { FillSignalOnly, FillEntireCell };
 
 /* ========== Visual Settings Group Structs ========== */
@@ -112,6 +114,7 @@ struct LabelSettings {
 struct SafeAreaSettings {
 	bool enabled = false;
 	SafeAreaPreset preset = SafeAreaPreset::EBU_R95;
+	SafeAreaAnchorMode anchorMode = SafeAreaAnchorMode::Signal;
 	uint32_t color = 0xFFD0D0D0; /* ARGB light grey - matches OBS native OUTLINE_COLOR */
 	double opacity = 1.0;
 

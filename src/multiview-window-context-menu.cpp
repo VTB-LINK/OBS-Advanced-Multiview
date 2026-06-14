@@ -227,6 +227,14 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 
 			CellDisplaySettingsDialog dlg(CellDisplaySettingsDialog::Mode::Cell, this);
 			dlg.set_cell_position(row, col);
+			{
+				std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+				if (cellIndex >= 0 && cellIndex < (int)cell_sources_.size()) {
+					const auto &cs = cell_sources_[cellIndex];
+					dlg.set_external_cell(cs.provider_type != SignalProviderType::Unknown &&
+							      !signal_provider_is_internal(cs.provider_type));
+				}
+			}
 			dlg.set_cell_settings(*cvs);
 			if (dlg.exec() == QDialog::Accepted) {
 				CellVisualSettings result = dlg.get_cell_settings();

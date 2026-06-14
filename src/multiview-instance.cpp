@@ -383,6 +383,23 @@ static OverlayAnchorMode overlay_anchor_mode_from_str(const char *s)
 	return OverlayAnchorMode::Signal;
 }
 
+static const char *safe_area_anchor_mode_to_str(SafeAreaAnchorMode m)
+{
+	switch (m) {
+	case SafeAreaAnchorMode::Cell:
+		return "cell";
+	default:
+		return "signal";
+	}
+}
+
+static SafeAreaAnchorMode safe_area_anchor_mode_from_str(const char *s)
+{
+	if (s && strcmp(s, "cell") == 0)
+		return SafeAreaAnchorMode::Cell;
+	return SafeAreaAnchorMode::Signal;
+}
+
 /* ========== BackgroundSettings ========== */
 
 obs_data_t *BackgroundSettings::to_obs_data() const
@@ -494,6 +511,7 @@ obs_data_t *SafeAreaSettings::to_obs_data() const
 	obs_data_t *data = obs_data_create();
 	obs_data_set_bool(data, "enabled", enabled);
 	obs_data_set_string(data, "preset", safe_area_preset_to_str(preset));
+	obs_data_set_string(data, "anchorMode", safe_area_anchor_mode_to_str(anchorMode));
 	obs_data_set_int(data, "color", (long long)color);
 	obs_data_set_double(data, "opacity", opacity);
 	return data;
@@ -506,6 +524,7 @@ SafeAreaSettings SafeAreaSettings::from_obs_data(obs_data_t *data)
 		return s;
 	s.enabled = obs_data_get_bool(data, "enabled");
 	s.preset = safe_area_preset_from_str(obs_data_get_string(data, "preset"));
+	s.anchorMode = safe_area_anchor_mode_from_str(obs_data_get_string(data, "anchorMode"));
 	s.color = (uint32_t)obs_data_get_int(data, "color");
 	if (!obs_data_has_user_value(data, "color"))
 		s.color = 0xFFFFFFFF;

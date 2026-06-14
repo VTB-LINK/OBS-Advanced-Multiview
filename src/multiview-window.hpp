@@ -543,7 +543,8 @@ private:
 	bool safe_area_vb_init_ = false;
 	void init_safe_area_vbs();
 	void release_safe_area_vbs();
-	void render_safe_area(int cellIndex, int vrX, int vrY, int vrW, int vrH);
+	void render_safe_area(int cellIndex, int cellX, int cellY, int cellW, int cellH, int vrX, int vrY, int vrW,
+			      int vrH);
 
 	/* VU Meter per-cell audio metering */
 	struct SingleVolmeter {
