@@ -45,6 +45,8 @@ public:
 	~ManagerDialog() override;
 
 	void refresh_instance_list();
+	void show_instances_tab_for_uuid(const std::string &uuid);
+	void show_settings_tab();
 
 protected:
 	bool eventFilter(QObject *obj, QEvent *event) override;

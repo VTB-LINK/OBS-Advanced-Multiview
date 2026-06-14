@@ -193,6 +193,20 @@ void ManagerDialog::setup_ui()
 	main_layout->addWidget(tab_widget_);
 }
 
+void ManagerDialog::show_instances_tab_for_uuid(const std::string &uuid)
+{
+	refresh_instance_list();
+	tab_widget_->setCurrentIndex(0);
+	select_instance_by_uuid(uuid);
+	show_instance_detail(uuid);
+	update_button_states();
+}
+
+void ManagerDialog::show_settings_tab()
+{
+	tab_widget_->setCurrentIndex(1);
+}
+
 void ManagerDialog::setup_instances_tab(QWidget *tab)
 {
 	auto *layout = new QHBoxLayout(tab);

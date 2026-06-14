@@ -677,6 +677,8 @@ private:
 void open_multiview_window(const std::string &uuid);
 void close_multiview_window(const std::string &uuid);
 void open_manager_dialog();
+void open_manager_dialog_for_instance(const std::string &uuid);
+void open_manager_dialog_settings();
 void notify_multiview_layout_changed(const std::string &uuid = "");
 void notify_multiview_name_changed(const std::string &uuid);
 void notify_multiview_visual_settings_changed(const std::string &uuid = "");

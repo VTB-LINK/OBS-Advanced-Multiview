@@ -734,12 +734,12 @@ void MultiviewWindow::on_save_assignments()
 
 void MultiviewWindow::on_edit_grid()
 {
-	open_manager_dialog();
+	open_manager_dialog_for_instance(uuid_);
 }
 
 void MultiviewWindow::on_global_settings()
 {
-	open_manager_dialog();
+	open_manager_dialog_settings();
 }
 
 void MultiviewWindow::on_toggle_fullscreen()

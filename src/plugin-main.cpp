@@ -26,8 +26,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "multiview-window.hpp"
 #include "signal-provider.hpp"
 
+#include <QGuiApplication>
 #include <QMainWindow>
 #include <QPointer>
+#include <QScreen>
 #include <QTimer>
 #include <atomic>
 #include <map>
@@ -59,24 +61,78 @@ static bool init_config_path()
 	return true;
 }
 
-static void on_tools_menu_clicked(void *)
+static ManagerDialog *ensure_manager_dialog()
 {
-	if (manager_dialog) {
-		manager_dialog->show();
-		manager_dialog->raise();
-		manager_dialog->activateWindow();
-		return;
-	}
+	if (manager_dialog)
+		return manager_dialog;
 
 	QMainWindow *main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 
 	manager_dialog = new ManagerDialog(config_manager, main_window);
-	manager_dialog->show();
+	return manager_dialog;
+}
+
+static void reset_manager_dialog_geometry(ManagerDialog *dialog)
+{
+	Qt::WindowStates state = dialog->windowState();
+	state &= ~Qt::WindowMinimized;
+	state &= ~Qt::WindowMaximized;
+	state &= ~Qt::WindowFullScreen;
+	dialog->setWindowState(state);
+
+	QSize defaultSize = dialog->sizeHint().expandedTo(dialog->minimumSize());
+	dialog->resize(defaultSize);
+
+	QWidget *parent = dialog->parentWidget();
+	QRect anchor = parent ? parent->geometry() : QRect();
+	if (!anchor.isValid()) {
+		QScreen *screen = dialog->screen();
+		if (!screen)
+			screen = QGuiApplication::primaryScreen();
+		if (screen)
+			anchor = screen->availableGeometry();
+	}
+	if (anchor.isValid()) {
+		QPoint pos = anchor.center() - QPoint(defaultSize.width() / 2, defaultSize.height() / 2);
+		dialog->move(pos);
+	}
+}
+
+static void present_manager_dialog(ManagerDialog *dialog, bool resetGeometry)
+{
+	if (resetGeometry)
+		reset_manager_dialog_geometry(dialog);
+
+	if (resetGeometry || dialog->isMinimized())
+		dialog->showNormal();
+	else
+		dialog->show();
+	dialog->raise();
+	dialog->activateWindow();
+}
+
+static void on_tools_menu_clicked(void *)
+{
+	present_manager_dialog(ensure_manager_dialog(), false);
 }
 
 void open_manager_dialog()
 {
-	on_tools_menu_clicked(nullptr);
+	present_manager_dialog(ensure_manager_dialog(), true);
+}
+
+void open_manager_dialog_for_instance(const std::string &uuid)
+{
+	ManagerDialog *dialog = ensure_manager_dialog();
+	dialog->show_instances_tab_for_uuid(uuid);
+	present_manager_dialog(dialog, true);
+}
+
+void open_manager_dialog_settings()
+{
+	ManagerDialog *dialog = ensure_manager_dialog();
+	dialog->show_settings_tab();
+	present_manager_dialog(dialog, true);
 }
 
 void open_multiview_window(const std::string &uuid)
