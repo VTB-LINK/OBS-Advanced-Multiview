@@ -270,19 +270,19 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 	StatusTextEntry *entry = nullptr;
 	const char *text = nullptr;
 	QByteArray textBytes;
-	auto set_text_key = [&](const char *key) {
-		textBytes = amv::text(key).toUtf8();
+	auto set_text_key = [&](const char *key, const char *fallback) {
+		textBytes = amv::text_or(key, fallback).toUtf8();
 		text = textBytes.constData();
 	};
 	uint32_t bandColor = 0xC0202020; /* default: 75% black */
 	switch (kind) {
 	case StatusOverlayKind::MissingSource:
-		set_text_key("AMVPlugin.Status.MissingSource");
+		set_text_key("AMVPlugin.Status.MissingSource", "MISSING SOURCE");
 		bandColor = 0xC0601020; /* same red family as SIGNAL LOST */
 		entry = &status_missing_source_;
 		break;
 	case StatusOverlayKind::MissingScene:
-		set_text_key("AMVPlugin.Status.MissingScene");
+		set_text_key("AMVPlugin.Status.MissingScene", "MISSING SCENE");
 		bandColor = 0xC0601020;
 		entry = &status_missing_scene_;
 		break;
@@ -292,7 +292,7 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		 * configured source, surface that with a translucent yellow band
 		 * so the user can tell at a glance the cell is on a fallback,
 		 * not the real assignment. */
-		set_text_key("AMVPlugin.Status.Fallback");
+		set_text_key("AMVPlugin.Status.Fallback", "FALLBACK");
 		bandColor = 0xC0806000; /* warm amber, ~75% opacity */
 		entry = &status_fallback_;
 		break;
@@ -307,7 +307,7 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		 * for both cases since the supervisor doesn't distinguish
 		 * them and "RECONNECTING" reads awkwardly during the very
 		 * first attempt. */
-		set_text_key("AMVPlugin.Status.Connecting");
+		set_text_key("AMVPlugin.Status.Connecting", "CONNECTING...");
 		bandColor = 0xC0204060; /* deep blue, ~75% opacity */
 		entry = &status_reconnecting_;
 		break;
@@ -315,7 +315,7 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		/* Phase 3 / M6 step 10: external cell escalated to Lost / Error.
 		 * Red band signals the user the source is gone and may not
 		 * recover without intervention (Reconnect Now / Edit Source). */
-		set_text_key("AMVPlugin.Status.SignalLost");
+		set_text_key("AMVPlugin.Status.SignalLost", "SIGNAL LOST");
 		bandColor = 0xC0601020; /* dark red, ~75% opacity */
 		entry = &status_signal_lost_;
 		break;
@@ -324,7 +324,7 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		 * not installed or failed to load. Distinct purple band so the
 		 * user knows the fix is to install the missing plugin, not to
 		 * troubleshoot the network / source. */
-		set_text_key("AMVPlugin.Status.ProviderMissing");
+		set_text_key("AMVPlugin.Status.ProviderMissing", "PROVIDER MISSING");
 		bandColor = 0xC0401060; /* deep purple, ~75% opacity */
 		entry = &status_provider_missing_;
 		break;
@@ -333,12 +333,12 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		 * context menu (obs_source_media_play_pause). Not a failure;
 		 * the cell paints the last decoded frame. Soft cyan band so it
 		 * reads as informational rather than an error state. */
-		set_text_key("AMVPlugin.Status.Paused");
+		set_text_key("AMVPlugin.Status.Paused", "PAUSED");
 		bandColor = 0xC0205060; /* desaturated teal, ~75% opacity */
 		entry = &status_paused_;
 		break;
 	case StatusOverlayKind::AudioOnly:
-		set_text_key("AMVPlugin.Status.AudioOnly");
+		set_text_key("AMVPlugin.Status.AudioOnly", "AUDIO ONLY");
 		bandColor = 0xC0204060; /* same blue family as CONNECTING... */
 		entry = &status_audio_only_;
 		break;

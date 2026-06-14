@@ -19,12 +19,29 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <obs-module.h>
+#include <plugin-support.h>
 
 #include <QString>
 
+#include <cstring>
+
 namespace amv {
+inline QString text_or(const char *key, const char *fallback)
+{
+	if (!key || !*key)
+		return fallback ? QString::fromUtf8(fallback) : QString();
+
+	const char *translated = obs_module_text(key);
+	if (!translated || !*translated || std::strcmp(translated, key) == 0) {
+		obs_log(LOG_WARNING, "missing locale key: %s", key);
+		return QString::fromUtf8(fallback && *fallback ? fallback : key);
+	}
+
+	return QString::fromUtf8(translated);
+}
+
 inline QString text(const char *key)
 {
-	return QString::fromUtf8(obs_module_text(key));
+	return text_or(key, key);
 }
 } // namespace amv

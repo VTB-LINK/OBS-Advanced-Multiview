@@ -31,6 +31,87 @@ $OBS_EXE_PATH = "C:\Downloads\OBS-Studio-32.1.2-Windows-x64\bin\64bit\obs64.exe"
 # 获取项目根目录（脚本在 docs/setup，需要往上两级）
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
+if (-not (Test-Path (Join-Path $ProjectRoot "CMakeLists.txt")) -or
+    -not (Test-Path (Join-Path $ProjectRoot "buildspec.json"))) {
+    Write-Host "✗ 无法定位项目根目录：$ProjectRoot" -ForegroundColor Red
+    Write-Host "请从仓库内的 docs/setup/deploy-plugin.ps1 运行此脚本。" -ForegroundColor Yellow
+    exit 1
+}
+
+function Get-LocaleKeys {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return @()
+    }
+
+    return Select-String -Path $Path -Pattern '^([^=]+)=' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+}
+
+function Test-LocaleFile {
+    param([string]$Path)
+
+    $keys = @(Get-LocaleKeys $Path)
+    $duplicates = $keys | Group-Object | Where-Object { $_.Count -gt 1 }
+    if ($duplicates.Count -gt 0) {
+        Write-Host "✗ locale 文件存在重复 key：$Path" -ForegroundColor Red
+        foreach ($d in $duplicates) {
+            Write-Host "  $($d.Name) ($($d.Count)x)" -ForegroundColor Yellow
+        }
+        return $false
+    }
+
+    return $true
+}
+
+function Test-LocaleParity {
+    param([string]$LocaleDir)
+
+    if (-not (Test-Path $LocaleDir)) {
+        return $true
+    }
+
+    $enPath = Join-Path $LocaleDir "en-US.ini"
+    if (-not (Test-Path $enPath)) {
+        Write-Host "✗ 缺少基准 locale 文件：$enPath" -ForegroundColor Red
+        return $false
+    }
+
+    if (-not (Test-LocaleFile $enPath)) {
+        return $false
+    }
+
+    $enKeys = @(Get-LocaleKeys $enPath | Sort-Object -Unique)
+    foreach ($localeFile in Get-ChildItem $LocaleDir -Filter "*.ini") {
+        if ($localeFile.Name -eq "en-US.ini") {
+            continue
+        }
+
+        if (-not (Test-LocaleFile $localeFile.FullName)) {
+            return $false
+        }
+
+        $otherKeys = @(Get-LocaleKeys $localeFile.FullName | Sort-Object -Unique)
+        $missing = @(Compare-Object $enKeys $otherKeys | Where-Object { $_.SideIndicator -eq '<=' } | ForEach-Object { $_.InputObject })
+        $extra = @(Compare-Object $enKeys $otherKeys | Where-Object { $_.SideIndicator -eq '=>' } | ForEach-Object { $_.InputObject })
+
+        if ($missing.Count -gt 0 -or $extra.Count -gt 0) {
+            Write-Host "✗ locale key 集合不一致：$($localeFile.Name)" -ForegroundColor Red
+            if ($missing.Count -gt 0) {
+                Write-Host "  缺少 key:" -ForegroundColor Yellow
+                $missing | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+            }
+            if ($extra.Count -gt 0) {
+                Write-Host "  多余 key:" -ForegroundColor Yellow
+                $extra | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+            }
+            return $false
+        }
+    }
+
+    return $true
+}
+
 # 从 buildspec.json 读取插件名称
 $BuildSpecPath = Join-Path $ProjectRoot "buildspec.json"
 if (Test-Path $BuildSpecPath) {
@@ -77,6 +158,14 @@ if (-not (Test-Path $PluginDll)) {
     exit 1
 }
 
+$RepoDataSource = Join-Path $ProjectRoot "data"
+$RepoLocaleDir = Join-Path $RepoDataSource "locale"
+if (-not (Test-LocaleParity $RepoLocaleDir)) {
+    Write-Host "" 
+    Write-Host "请修复 data/locale 下的 key 后再部署。" -ForegroundColor Yellow
+    exit 1
+}
+
 try {
     foreach ($ObsPluginDir in $DeployTargets) {
         # 确保目标目录存在
@@ -90,17 +179,34 @@ try {
         Write-Host "  From: $PluginDll" -ForegroundColor Gray
         Write-Host "  To:   $ObsPluginDir" -ForegroundColor Gray
 
-        # 部署 data 文件（locale 等）
-        $DataSource = Join-Path $ProjectRoot "build_x64\rundir\$BuildConfig\$PluginName"
+        # 部署 data 文件（locale 等）。
+        #
+        # 先复制 CMake 生成的 rundir 数据，再用仓库 data/ 覆盖一次。
+        # 这样只修改 locale 文件后，不需要重新构建也可以直接运行本脚本
+        # 部署最新翻译；DLL 仍然来自指定构建配置。
+        $BuiltDataSource = Join-Path $ProjectRoot "build_x64\rundir\$BuildConfig\$PluginName"
         # OBS data 目录：与 obs-plugins 同级的 data/obs-plugins/<plugin-name>/
         $ObsDataDir = Join-Path (Split-Path (Split-Path $ObsPluginDir)) "data\obs-plugins\$PluginName"
-        if (Test-Path $DataSource) {
+        if ((Test-Path $BuiltDataSource) -or (Test-Path $RepoDataSource)) {
             if (-not (Test-Path $ObsDataDir)) {
                 New-Item -Path $ObsDataDir -ItemType Directory -Force | Out-Null
             }
-            Copy-Item "$DataSource\*" -Destination $ObsDataDir -Recurse -Force
+
+            if (Test-Path $BuiltDataSource) {
+                Copy-Item "$BuiltDataSource\*" -Destination $ObsDataDir -Recurse -Force
+                Write-Host "✓ 插件构建数据部署成功！" -ForegroundColor Green
+                Write-Host "  From: $BuiltDataSource" -ForegroundColor Gray
+                Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
+            }
+
+            if (Test-Path $RepoDataSource) {
+                Copy-Item "$RepoDataSource\*" -Destination $ObsDataDir -Recurse -Force
+                Write-Host "✓ 插件源码数据部署成功！" -ForegroundColor Green
+                Write-Host "  From: $RepoDataSource" -ForegroundColor Gray
+                Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
+            }
+
             Write-Host "✓ 插件数据部署成功！" -ForegroundColor Green
-            Write-Host "  From: $DataSource" -ForegroundColor Gray
             Write-Host "  To:   $ObsDataDir" -ForegroundColor Gray
         }
         else {

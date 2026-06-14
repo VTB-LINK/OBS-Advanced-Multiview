@@ -43,7 +43,23 @@ runs:
 
         if [[ '${{ inputs.codesign }}' == 'true' ]] build_args+=(--codesign)
 
-        .github/scripts/build-macos ${build_args}
+        local buildspec_backup
+        buildspec_backup="$(mktemp)"
+        cp buildspec.json "${buildspec_backup}"
+        local full_version cmake_version
+        full_version="$(jq -r '.version' buildspec.json)"
+        cmake_version="${full_version%%[-+]*}"
+        if [[ "${cmake_version}" != "${full_version}" ]]; then
+          jq --arg version "${cmake_version}" '.version = $version' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+        fi
+
+        {
+          .github/scripts/build-macos ${build_args}
+        } always {
+          cp "${buildspec_backup}" buildspec.json
+          rm -f "${buildspec_backup}"
+        }
 
     - name: Install Dependencies 🛍️
       if: runner.os == 'Linux'
@@ -71,7 +87,23 @@ runs:
         )
         if (( ${+RUNNER_DEBUG} )) build_args+=(--debug)
 
-        .github/scripts/build-ubuntu ${build_args}
+        local buildspec_backup
+        buildspec_backup="$(mktemp)"
+        cp buildspec.json "${buildspec_backup}"
+        local full_version cmake_version
+        full_version="$(jq -r '.version' buildspec.json)"
+        cmake_version="${full_version%%[-+]*}"
+        if [[ "${cmake_version}" != "${full_version}" ]]; then
+          jq --arg version "${cmake_version}" '.version = $version' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+        fi
+
+        {
+          .github/scripts/build-ubuntu ${build_args}
+        } always {
+          cp "${buildspec_backup}" buildspec.json
+          rm -f "${buildspec_backup}"
+        }
 
     - name: Run Windows Build
       if: runner.os == 'Windows'
@@ -87,7 +119,21 @@ runs:
           Configuration = '${{ inputs.config }}'
         }
 
-        .github/scripts/Build-Windows.ps1 @BuildArgs
+        $BuildSpecPath = 'buildspec.json'
+        $BuildSpecBackup = Get-Content -Path $BuildSpecPath -Raw
+        try {
+          $BuildSpec = $BuildSpecBackup | ConvertFrom-Json
+          $FullVersion = [string]$BuildSpec.version
+          $CMakeVersion = $FullVersion -replace '[-+].*$', ''
+          if ( $CMakeVersion -ne $FullVersion ) {
+            $BuildSpec.version = $CMakeVersion
+            $BuildSpec | ConvertTo-Json -Depth 20 | Set-Content -Path $BuildSpecPath -Encoding UTF8
+          }
+
+          .github/scripts/Build-Windows.ps1 @BuildArgs
+        } finally {
+          Set-Content -Path $BuildSpecPath -Value $BuildSpecBackup -NoNewline -Encoding UTF8
+        }
 
     - name: Create Summary 📊
       if: contains(fromJSON('["Linux", "macOS"]'),runner.os)
