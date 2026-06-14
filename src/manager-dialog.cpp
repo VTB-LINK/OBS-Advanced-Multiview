@@ -653,6 +653,10 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 	auto *layout = new QVBoxLayout(tab);
 	layout->setContentsMargins(12, 12, 12, 12);
 
+	auto *apply_label = new QLabel(QStringLiteral("Settings Requiring Apply"), tab);
+	apply_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
+	layout->addWidget(apply_label);
+
 	auto *gutter_row = new QHBoxLayout();
 	gutter_row->addWidget(new QLabel(QStringLiteral("Default Gutter (px):"), tab));
 	spin_default_gutter_ = new QSpinBox(tab);
@@ -695,29 +699,24 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 	connect(spin_re_resolve_fps_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
 		[this](double) { update_re_resolve_effective_label(); });
 
-	/* Safe Area section */
-	layout->addSpacing(8);
-	auto *safe_area_label = new QLabel(QStringLiteral("Safe Area (Global Default)"), tab);
-	safe_area_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
-	layout->addWidget(safe_area_label);
-	chk_safe_area_enabled_ = new QCheckBox(QStringLiteral("Show safe area guides"), tab);
-	chk_safe_area_enabled_->setChecked(config_->global_settings().visualSettings.safeArea.enabled);
-	layout->addWidget(chk_safe_area_enabled_);
+	auto *gs_apply = new QPushButton(QStringLiteral("Apply"), tab);
+	layout->addWidget(gs_apply);
 
-	/* Phase 3 hardening tail: Detailed logs toggle. Off by default; gates
-	 * high-frequency diagnostic INFO logs ([perf] every 5s, [health] retry,
-	 * [fill] aspect/snap, VU rebuild summaries, provider "created private
-	 * source" success). WARNING / ERROR are not affected. */
-	chk_detailed_logs_ = new QCheckBox(QStringLiteral("Detailed logs (verbose diagnostics)"), tab);
-	chk_detailed_logs_->setChecked(config_->global_settings().detailedLogs);
-	chk_detailed_logs_->setToolTip(QStringLiteral(
-		"Log per-cell render FPS, health retries, aspect/snap, VU rebuilds, and provider creates.\n"
-		"Warnings and errors are always logged regardless of this setting."));
-	layout->addWidget(chk_detailed_logs_);
+	connect(gs_apply, &QPushButton::clicked, this, [this]() {
+		config_->global_settings().defaultGutterPx = spin_default_gutter_->value();
+		config_->global_settings().reResolveInheritObs = chk_re_resolve_inherit_->isChecked();
+		config_->global_settings().reResolveCustomFps = spin_re_resolve_fps_->value();
+		config_->save();
+		obs_log(LOG_INFO, "global settings saved (gutter=%d, reResolve=%s %.2f fps)",
+			spin_default_gutter_->value(), chk_re_resolve_inherit_->isChecked() ? "inherit" : "custom",
+			spin_re_resolve_fps_->value());
+		update_re_resolve_effective_label();
+		notify_multiview_layout_changed();
+	});
 
 	/* Visual Settings button */
 	layout->addSpacing(12);
-	auto *vs_label = new QLabel(QStringLiteral("Visual Settings (Global Defaults)"), tab);
+	auto *vs_label = new QLabel(QStringLiteral("Immediate Settings"), tab);
 	vs_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
 	layout->addWidget(vs_label);
 
@@ -729,8 +728,6 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 		dlg.set_global_settings(config_->global_settings().visualSettings);
 		if (dlg.exec() == QDialog::Accepted) {
 			config_->global_settings().visualSettings = dlg.get_global_settings();
-			/* Sync safe area checkbox with dialog result */
-			chk_safe_area_enabled_->setChecked(config_->global_settings().visualSettings.safeArea.enabled);
 			config_->save();
 			notify_multiview_visual_settings_changed();
 		}
@@ -753,30 +750,29 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 		}
 	});
 
-	auto *gs_apply = new QPushButton(QStringLiteral("Apply"), tab);
-	layout->addWidget(gs_apply);
-	layout->addStretch();
+	/* Phase 3 hardening tail: Detailed logs toggle. Off by default; gates
+	 * high-frequency diagnostic INFO logs ([perf] every 5s, [health] retry,
+	 * [fill] aspect/snap, VU rebuild summaries, provider "created private
+	 * source" success). WARNING / ERROR are not affected. */
+	layout->addSpacing(12);
+	auto *diagnostics_label = new QLabel(QStringLiteral("Diagnostics"), tab);
+	diagnostics_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
+	layout->addWidget(diagnostics_label);
+	chk_detailed_logs_ = new QCheckBox(QStringLiteral("Detailed logs (verbose diagnostics)"), tab);
+	chk_detailed_logs_->setChecked(config_->global_settings().detailedLogs);
+	chk_detailed_logs_->setToolTip(QStringLiteral(
+		"Log per-cell render FPS, health retries, aspect/snap, VU rebuilds, and provider creates.\n"
+		"Warnings and errors are always logged regardless of this setting."));
+	layout->addWidget(chk_detailed_logs_);
 
-	connect(gs_apply, &QPushButton::clicked, this, [this]() {
-		config_->global_settings().defaultGutterPx = spin_default_gutter_->value();
-		config_->global_settings().reResolveInheritObs = chk_re_resolve_inherit_->isChecked();
-		config_->global_settings().reResolveCustomFps = spin_re_resolve_fps_->value();
-		config_->global_settings().visualSettings.safeArea.enabled = chk_safe_area_enabled_->isChecked();
-		config_->global_settings().detailedLogs = chk_detailed_logs_->isChecked();
-		/* Mirror the toggle into the process-wide atomic immediately so the
-		 * effect is visible the moment the user clicks Apply, not only after
-		 * the next config load. */
-		amv::set_detailed_logs_enabled(config_->global_settings().detailedLogs);
+	connect(chk_detailed_logs_, &QCheckBox::toggled, this, [this](bool checked) {
+		config_->global_settings().detailedLogs = checked;
+		amv::set_detailed_logs_enabled(checked);
 		config_->save();
-		obs_log(LOG_INFO,
-			"global settings saved (gutter=%d, reResolve=%s %.2f fps, safeArea=%s, detailedLogs=%s)",
-			spin_default_gutter_->value(), chk_re_resolve_inherit_->isChecked() ? "inherit" : "custom",
-			spin_re_resolve_fps_->value(), chk_safe_area_enabled_->isChecked() ? "on" : "off",
-			chk_detailed_logs_->isChecked() ? "on" : "off");
-		update_re_resolve_effective_label();
-		notify_multiview_layout_changed();
-		notify_multiview_visual_settings_changed();
+		obs_log(LOG_INFO, "detailed logs %s", checked ? "enabled" : "disabled");
 	});
+
+	layout->addStretch();
 }
 
 void ManagerDialog::update_re_resolve_effective_label()
