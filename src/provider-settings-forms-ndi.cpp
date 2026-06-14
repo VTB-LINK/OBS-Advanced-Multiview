@@ -12,6 +12,7 @@ License: GPL-2.0-or-later
 */
 
 #include "provider-settings-forms.hpp"
+#include "amv-i18n.hpp"
 #include "provider-settings-forms-common.hpp"
 
 #include <QFormLayout>
@@ -80,21 +81,17 @@ NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
 	root->setContentsMargins(0, 0, 0, 0);
 	root->setSpacing(8);
 
-	auto *list_label = new QLabel(QStringLiteral("Discovered NDI sources on the network:"), this);
+	auto *list_label = new QLabel(amv::text("AMVPlugin.Provider.NDI.Discovered"), this);
 	root->addWidget(list_label);
 
 	discovered_list_ = new QListWidget(this);
 	discovered_list_->setSelectionMode(QAbstractItemView::SingleSelection);
-	discovered_list_->setToolTip(
-		QStringLiteral("DistroAV scans the LAN once when this dialog opens. Click Refresh to scan again. "
-			       "If no sources appear, ensure your NDI sender is running on the same network."));
+	discovered_list_->setToolTip(amv::text("AMVPlugin.Provider.NDI.DiscoveredTooltip"));
 	root->addWidget(discovered_list_, 1);
 
 	auto *refresh_row = new QHBoxLayout();
-	refresh_btn_ = new QPushButton(QStringLiteral("Refresh"), this);
-	refresh_btn_->setToolTip(
-		QStringLiteral("Re-scan for NDI sources. Discovery uses DistroAV's NDIFinder which caches "
-			       "results for 5 seconds; clicking Refresh more often than that is harmless."));
+	refresh_btn_ = new QPushButton(amv::text("AMVPlugin.Common.Refresh"), this);
+	refresh_btn_->setToolTip(amv::text("AMVPlugin.Provider.NDI.RefreshTooltip"));
 	refresh_row->addWidget(refresh_btn_);
 	refresh_row->addStretch(1);
 	root->addLayout(refresh_row);
@@ -102,87 +99,72 @@ NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
 	auto *form = new QFormLayout();
 
 	manual_name_edit_ = new QLineEdit(this);
-	manual_name_edit_->setPlaceholderText(QStringLiteral("e.g. MACHINE (Source Name)"));
-	manual_name_edit_->setToolTip(
-		QStringLiteral("Fallback for sources DistroAV's discovery hasn't found yet (firewall, routing issue, "
-			       "or sender just started). Manual name overrides the list selection."));
-	form->addRow(QStringLiteral("Manual name:"), manual_name_edit_);
+	manual_name_edit_->setPlaceholderText(amv::text("AMVPlugin.Provider.NDI.ManualNamePlaceholder"));
+	manual_name_edit_->setToolTip(amv::text("AMVPlugin.Provider.NDI.ManualNameTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.ManualName"), manual_name_edit_);
 
-	resolved_label_ = new QLabel(QStringLiteral("(no source selected)"), this);
+	resolved_label_ = new QLabel(amv::text("AMVPlugin.Provider.NDI.NoSourceSelected"), this);
 	resolved_label_->setStyleSheet(QStringLiteral("color: #888;"));
-	form->addRow(QStringLiteral("Will bind to:"), resolved_label_);
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.WillBindTo"), resolved_label_);
 
 	cmb_behavior_ = new QComboBox(this);
-	cmb_behavior_->addItem(QStringLiteral("Keep active (always receive)"), kNdiBehaviorKeepActive);
-	cmb_behavior_->addItem(QStringLiteral("Pause when not visible (blank on resume)"), kNdiBehaviorStopBlank);
-	cmb_behavior_->addItem(QStringLiteral("Pause when not visible (keep last frame)"), kNdiBehaviorStopLastFrame);
-	cmb_behavior_->setToolTip(QStringLiteral(
-		"What DistroAV does with the receiver when the source is not visible. For Multiview cells "
-		"this rarely matters \u2014 the cell is always 'visible' for monitoring purposes."));
-	form->addRow(QStringLiteral("Behavior:"), cmb_behavior_);
+	cmb_behavior_->addItem(amv::text("AMVPlugin.Provider.NDI.Behavior.KeepActive"), kNdiBehaviorKeepActive);
+	cmb_behavior_->addItem(amv::text("AMVPlugin.Provider.NDI.Behavior.PauseBlank"), kNdiBehaviorStopBlank);
+	cmb_behavior_->addItem(amv::text("AMVPlugin.Provider.NDI.Behavior.PauseLastFrame"), kNdiBehaviorStopLastFrame);
+	cmb_behavior_->setToolTip(amv::text("AMVPlugin.Provider.NDI.BehaviorTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.Behavior"), cmb_behavior_);
 
 	cmb_bandwidth_ = new QComboBox(this);
-	cmb_bandwidth_->addItem(QStringLiteral("Highest (full quality)"), kNdiBwHighest);
-	cmb_bandwidth_->addItem(QStringLiteral("Lowest (proxy)"), kNdiBwLowest);
-	cmb_bandwidth_->addItem(QStringLiteral("Audio only"), kNdiBwAudioOnly);
-	cmb_bandwidth_->setToolTip(
-		QStringLiteral("Highest = full-resolution stream. Lowest = DistroAV's built-in proxy stream "
-			       "for monitoring at low bitrate. Audio only = no video frames at all."));
-	form->addRow(QStringLiteral("Bandwidth:"), cmb_bandwidth_);
+	cmb_bandwidth_->addItem(amv::text("AMVPlugin.Provider.NDI.Bandwidth.Highest"), kNdiBwHighest);
+	cmb_bandwidth_->addItem(amv::text("AMVPlugin.Provider.NDI.Bandwidth.Lowest"), kNdiBwLowest);
+	cmb_bandwidth_->addItem(amv::text("AMVPlugin.Provider.NDI.Bandwidth.AudioOnly"), kNdiBwAudioOnly);
+	cmb_bandwidth_->setToolTip(amv::text("AMVPlugin.Provider.NDI.BandwidthTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.Bandwidth"), cmb_bandwidth_);
 
 	cmb_sync_ = new QComboBox(this);
-	cmb_sync_->addItem(QStringLiteral("Source timecode (recommended)"), kNdiSyncNDISourceTimecode);
-	cmb_sync_->addItem(QStringLiteral("NDI timestamp"), kNdiSyncNDITimestamp);
-	cmb_sync_->setToolTip(
-		QStringLiteral("How DistroAV aligns NDI frames to OBS's clock. Source timecode follows the sender's "
-			       "own timecode; NDI timestamp uses NDI library's internal timing."));
-	form->addRow(QStringLiteral("A/V sync:"), cmb_sync_);
+	cmb_sync_->addItem(amv::text("AMVPlugin.Provider.NDI.Sync.SourceTimecode"), kNdiSyncNDISourceTimecode);
+	cmb_sync_->addItem(amv::text("AMVPlugin.Provider.NDI.Sync.NdiTimestamp"), kNdiSyncNDITimestamp);
+	cmb_sync_->setToolTip(amv::text("AMVPlugin.Provider.NDI.SyncTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.Sync"), cmb_sync_);
 
 	cmb_latency_ = new QComboBox(this);
-	cmb_latency_->addItem(QStringLiteral("Normal"), kNdiLatencyNormal);
-	cmb_latency_->addItem(QStringLiteral("Low"), kNdiLatencyLow);
-	cmb_latency_->addItem(QStringLiteral("Lowest"), kNdiLatencyLowest);
-	cmb_latency_->setToolTip(QStringLiteral("Lower latency means less buffering on receive; can stutter "
-						"on a flaky network."));
-	form->addRow(QStringLiteral("Latency:"), cmb_latency_);
+	cmb_latency_->addItem(amv::text("AMVPlugin.Provider.NDI.Latency.Normal"), kNdiLatencyNormal);
+	cmb_latency_->addItem(amv::text("AMVPlugin.Provider.NDI.Latency.Low"), kNdiLatencyLow);
+	cmb_latency_->addItem(amv::text("AMVPlugin.Provider.NDI.Latency.Lowest"), kNdiLatencyLowest);
+	cmb_latency_->setToolTip(amv::text("AMVPlugin.Provider.NDI.LatencyTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.Latency"), cmb_latency_);
 
 	cmb_yuv_range_ = new QComboBox(this);
-	cmb_yuv_range_->addItem(QStringLiteral("Limited (TV)"), kNdiYuvRangePartial);
-	cmb_yuv_range_->addItem(QStringLiteral("Full (PC)"), kNdiYuvRangeFull);
-	cmb_yuv_range_->setToolTip(
-		QStringLiteral("YUV range the sender uses. Override only if the cell looks washed-out or crushed."));
-	form->addRow(QStringLiteral("YUV range:"), cmb_yuv_range_);
+	cmb_yuv_range_->addItem(amv::text("AMVPlugin.Provider.Common.RangeLimited"), kNdiYuvRangePartial);
+	cmb_yuv_range_->addItem(amv::text("AMVPlugin.Provider.Common.RangeFull"), kNdiYuvRangeFull);
+	cmb_yuv_range_->setToolTip(amv::text("AMVPlugin.Provider.NDI.YuvRangeTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.YuvRange"), cmb_yuv_range_);
 
 	cmb_yuv_colorspace_ = new QComboBox(this);
-	cmb_yuv_colorspace_->addItem(QStringLiteral("BT.709 (HD)"), kNdiYuvSpaceBT709);
-	cmb_yuv_colorspace_->addItem(QStringLiteral("BT.601 (SD)"), kNdiYuvSpaceBT601);
-	cmb_yuv_colorspace_->addItem(QStringLiteral("BT.2100 (HDR)"), kNdiYuvSpaceBT2100);
-	cmb_yuv_colorspace_->setToolTip(
-		QStringLiteral("YUV colorspace. Mostly relevant for SD content (BT.601) or HDR content (BT.2100)."));
-	form->addRow(QStringLiteral("YUV colorspace:"), cmb_yuv_colorspace_);
+	cmb_yuv_colorspace_->addItem(amv::text("AMVPlugin.Provider.NDI.Colorspace.BT709"), kNdiYuvSpaceBT709);
+	cmb_yuv_colorspace_->addItem(amv::text("AMVPlugin.Provider.NDI.Colorspace.BT601"), kNdiYuvSpaceBT601);
+	cmb_yuv_colorspace_->addItem(amv::text("AMVPlugin.Provider.NDI.Colorspace.BT2100"), kNdiYuvSpaceBT2100);
+	cmb_yuv_colorspace_->setToolTip(amv::text("AMVPlugin.Provider.NDI.ColorspaceTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.NDI.Colorspace"), cmb_yuv_colorspace_);
 
-	chk_audio_ = new QCheckBox(QStringLiteral("Receive audio"), this);
+	chk_audio_ = new QCheckBox(amv::text("AMVPlugin.Provider.NDI.Audio"), this);
 	chk_audio_->setChecked(true);
-	chk_audio_->setToolTip(QStringLiteral("When off, the cell is video-only."));
+	chk_audio_->setToolTip(amv::text("AMVPlugin.Provider.NDI.AudioTooltip"));
 	form->addRow(QString(), chk_audio_);
 
-	chk_framesync_ = new QCheckBox(QStringLiteral("Frame sync"), this);
+	chk_framesync_ = new QCheckBox(amv::text("AMVPlugin.Provider.NDI.FrameSync"), this);
 	chk_framesync_->setChecked(false);
-	chk_framesync_->setToolTip(
-		QStringLiteral("Resample audio/video to match OBS's frame clock. Helps on senders with "
-			       "drifting timing; adds ~1 frame of latency."));
+	chk_framesync_->setToolTip(amv::text("AMVPlugin.Provider.NDI.FrameSyncTooltip"));
 	form->addRow(QString(), chk_framesync_);
 
-	chk_hw_accel_ = new QCheckBox(QStringLiteral("Hardware acceleration (if available)"), this);
+	chk_hw_accel_ = new QCheckBox(amv::text("AMVPlugin.Provider.NDI.HwAccel"), this);
 	chk_hw_accel_->setChecked(false);
-	chk_hw_accel_->setToolTip(QStringLiteral("Request DistroAV use GPU decoding. Falls back to CPU silently."));
+	chk_hw_accel_->setToolTip(amv::text("AMVPlugin.Provider.NDI.HwAccelTooltip"));
 	form->addRow(QString(), chk_hw_accel_);
 
-	chk_fix_alpha_ = new QCheckBox(QStringLiteral("Fix alpha blending"), this);
+	chk_fix_alpha_ = new QCheckBox(amv::text("AMVPlugin.Provider.NDI.FixAlpha"), this);
 	chk_fix_alpha_->setChecked(false);
-	chk_fix_alpha_->setToolTip(
-		QStringLiteral("DistroAV adds an alpha-fix filter to compensate for senders that produce "
-			       "premultiplied alpha. Leave off unless the cell looks washed-out on edges."));
+	chk_fix_alpha_->setToolTip(amv::text("AMVPlugin.Provider.NDI.FixAlphaTooltip"));
 	form->addRow(QString(), chk_fix_alpha_);
 
 	root->addLayout(form);
@@ -243,7 +225,7 @@ void NdiSourceForm::refresh_discovery()
 		/* Surface an explanatory placeholder so an empty list doesn't
 		 * read as a bug. DistroAV's NDIFinder cache may legitimately
 		 * be empty for the first 5 s on cold start. */
-		auto *item = new QListWidgetItem(QStringLiteral("(scanning... click Refresh again in a few seconds)"));
+		auto *item = new QListWidgetItem(amv::text("AMVPlugin.Provider.NDI.ScanningPlaceholder"));
 		item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
 		QFont f = item->font();
 		f.setItalic(true);
@@ -267,7 +249,7 @@ void NdiSourceForm::update_resolved_name(const QString &name_hint)
 		}
 	}
 	if (resolved.isEmpty())
-		resolved_label_->setText(QStringLiteral("(no source selected)"));
+		resolved_label_->setText(amv::text("AMVPlugin.Provider.NDI.NoSourceSelected"));
 	else
 		resolved_label_->setText(resolved);
 }
@@ -342,7 +324,7 @@ QString NdiSourceForm::invalid_reason() const
 {
 	if (is_valid())
 		return QString();
-	return QStringLiteral("Select a discovered NDI source or enter a manual source name.");
+	return amv::text("AMVPlugin.Provider.NDI.ErrorNoSource");
 }
 
 SignalConfig NdiSourceForm::to_signal_config() const

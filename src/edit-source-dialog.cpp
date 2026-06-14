@@ -6,6 +6,7 @@ License: GPL-2.0-or-later
 */
 
 #include "edit-source-dialog.hpp"
+#include "amv-i18n.hpp"
 #include "provider-settings-forms.hpp"
 #include "signal-provider.hpp"
 
@@ -18,7 +19,7 @@ License: GPL-2.0-or-later
 
 EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : QDialog(parent), provider_(cfg.provider)
 {
-	setWindowTitle(QStringLiteral("Edit Source"));
+	setWindowTitle(amv::text("AMVPlugin.EditSource.Title"));
 	setModal(true);
 	setMinimumSize(420, 480);
 	resize(500, 600);
@@ -30,19 +31,19 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 	QString title;
 	switch (cfg.provider) {
 	case SignalProviderType::Ffmpeg:
-		title = QStringLiteral("FFmpeg media source");
+		title = amv::text("AMVPlugin.EditSource.Heading.FFmpeg");
 		break;
 	case SignalProviderType::Ndi:
-		title = QStringLiteral("NDI source");
+		title = amv::text("AMVPlugin.EditSource.Heading.NDI");
 		break;
 	case SignalProviderType::Spout:
-		title = QStringLiteral("Spout sender");
+		title = amv::text("AMVPlugin.EditSource.Heading.Spout");
 		break;
 	case SignalProviderType::Vlc:
-		title = QStringLiteral("VLC media source");
+		title = amv::text("AMVPlugin.EditSource.Heading.VLC");
 		break;
 	default:
-		title = QStringLiteral("External source");
+		title = amv::text("AMVPlugin.EditSource.Heading.External");
 		break;
 	}
 	auto *heading = new QLabel(title, this);
@@ -69,9 +70,7 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 			provider_available = false;
 			provider_unavailable_reason =
 				QString::fromUtf8(signal_provider_unsupported_platform_reason(cfg.provider));
-			provider_unavailable_guidance = QStringLiteral(
-				"The form below shows the persisted configuration for inspection, but Save is disabled "
-				"because this provider is not supported on the current platform.");
+			provider_unavailable_guidance = amv::text("AMVPlugin.EditSource.ProviderUnsupportedGuidance");
 		} else {
 			const auto *p = SignalProviderRegistry::instance().find(cfg.provider);
 			if (!p || !p->is_available()) {
@@ -82,10 +81,8 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 				}
 				if (provider_unavailable_reason.isEmpty())
 					provider_unavailable_reason =
-						QStringLiteral("Required host plugin not installed.");
-				provider_unavailable_guidance = QStringLiteral(
-					"The form below shows the persisted configuration but Save is disabled until the "
-					"missing host plugin is installed and OBS is restarted.");
+						amv::text("AMVPlugin.EditSource.RequiredPluginMissing");
+				provider_unavailable_guidance = amv::text("AMVPlugin.EditSource.PluginMissingGuidance");
 			}
 		}
 	}
@@ -138,9 +135,7 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 		 * own milestones (M6.3 Spout, M6.4 VLC) will add sibling
 		 * forms. Until then, show a plain message so the user knows
 		 * nothing was saved. */
-		auto *msg = new QLabel(QStringLiteral("Editing this provider's settings is not implemented yet. "
-						      "Use Change Source... to replace the assignment instead."),
-				       this);
+		auto *msg = new QLabel(amv::text("AMVPlugin.EditSource.NotImplemented"), this);
 		msg->setWordWrap(true);
 		root->addWidget(msg);
 	}
@@ -166,25 +161,25 @@ void EditSourceDialog::on_accept()
 {
 	if (provider_ == SignalProviderType::Ffmpeg && ffmpeg_form_) {
 		if (!ffmpeg_form_->is_valid()) {
-			QMessageBox::information(this, QStringLiteral("Media input required"),
+			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.MediaRequired"),
 						 ffmpeg_form_->invalid_reason());
 			return;
 		}
 	} else if (provider_ == SignalProviderType::Ndi && ndi_form_) {
 		if (!ndi_form_->is_valid()) {
-			QMessageBox::information(this, QStringLiteral("NDI source required"),
+			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.NDIRequired"),
 						 ndi_form_->invalid_reason());
 			return;
 		}
 	} else if (provider_ == SignalProviderType::Spout && spout_form_) {
 		if (!spout_form_->is_valid()) {
-			QMessageBox::information(this, QStringLiteral("Spout sender required"),
+			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.SpoutRequired"),
 						 spout_form_->invalid_reason());
 			return;
 		}
 	} else if (provider_ == SignalProviderType::Vlc && vlc_form_) {
 		if (!vlc_form_->is_valid()) {
-			QMessageBox::information(this, QStringLiteral("Playlist required"),
+			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.PlaylistRequired"),
 						 vlc_form_->invalid_reason());
 			return;
 		}

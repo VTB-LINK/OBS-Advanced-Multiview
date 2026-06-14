@@ -57,8 +57,8 @@ private:
 	 * `provider` selects the SignalProviderRegistry entry queried for
 	 * availability; `coming_in` is the milestone label ("M6.1" etc.);
 	 * `description` is the body text shown above the disabled controls. */
-	QWidget *build_external_placeholder(SignalProviderType provider, const char *coming_in,
-					    const char *description);
+	QWidget *build_external_placeholder(SignalProviderType provider, const QString &coming_in,
+					    const QString &description);
 
 	/* Phase 3 / M6.1: real Media tab — user enters an FFmpeg-accepted
 	 * URL and on accept the dialog returns a CellAssignment whose

@@ -11,6 +11,7 @@ License: GPL-2.0-or-later
 */
 
 #include "provider-settings-forms.hpp"
+#include "amv-i18n.hpp"
 #include "provider-settings-forms-common.hpp"
 
 #include <QFormLayout>
@@ -50,26 +51,22 @@ SpoutSenderForm::SpoutSenderForm(QWidget *parent) : QWidget(parent)
 	root->setContentsMargins(0, 0, 0, 0);
 	root->setSpacing(8);
 
-	chk_first_available_ = new QCheckBox(QStringLiteral("Use first available sender"), this);
+	chk_first_available_ = new QCheckBox(amv::text("AMVPlugin.Provider.Spout.FirstAvailable"), this);
 	chk_first_available_->setChecked(true);
-	chk_first_available_->setToolTip(
-		QStringLiteral("Bind to whichever Spout sender registers first. The cell will track sender changes "
-			       "automatically. When off, pick a specific sender from the discovered list below."));
+	chk_first_available_->setToolTip(amv::text("AMVPlugin.Provider.Spout.FirstAvailableTooltip"));
 	root->addWidget(chk_first_available_);
 
-	auto *list_label = new QLabel(QStringLiteral("Discovered Spout senders on this machine:"), this);
+	auto *list_label = new QLabel(amv::text("AMVPlugin.Provider.Spout.Discovered"), this);
 	root->addWidget(list_label);
 
 	discovered_list_ = new QListWidget(this);
 	discovered_list_->setSelectionMode(QAbstractItemView::SingleSelection);
-	discovered_list_->setToolTip(
-		QStringLiteral("obs-spout2 enumerates Spout senders synchronously. Click Refresh to re-scan. "
-			       "If no senders appear, ensure the sender application is running and registered."));
+	discovered_list_->setToolTip(amv::text("AMVPlugin.Provider.Spout.DiscoveredTooltip"));
 	root->addWidget(discovered_list_, 1);
 
 	auto *refresh_row = new QHBoxLayout();
-	refresh_btn_ = new QPushButton(QStringLiteral("Refresh"), this);
-	refresh_btn_->setToolTip(QStringLiteral("Re-scan for Spout senders."));
+	refresh_btn_ = new QPushButton(amv::text("AMVPlugin.Common.Refresh"), this);
+	refresh_btn_->setToolTip(amv::text("AMVPlugin.Provider.Spout.RefreshTooltip"));
 	refresh_row->addWidget(refresh_btn_);
 	refresh_row->addStretch(1);
 	root->addLayout(refresh_row);
@@ -77,23 +74,20 @@ SpoutSenderForm::SpoutSenderForm(QWidget *parent) : QWidget(parent)
 	auto *form = new QFormLayout();
 
 	cmb_composite_mode_ = new QComboBox(this);
-	cmb_composite_mode_->addItem(QStringLiteral("Default"), kSpoutCompositeDefault);
-	cmb_composite_mode_->addItem(QStringLiteral("Opaque"), kSpoutCompositeOpaque);
-	cmb_composite_mode_->addItem(QStringLiteral("Alpha"), kSpoutCompositeAlpha);
-	cmb_composite_mode_->addItem(QStringLiteral("Premultiplied alpha"), kSpoutCompositePremultiplied);
-	cmb_composite_mode_->setToolTip(
-		QStringLiteral("How obs-spout2 composites the received texture. Default is correct for "
-			       "most senders; switch only if alpha looks wrong."));
-	form->addRow(QStringLiteral("Composite mode:"), cmb_composite_mode_);
+	cmb_composite_mode_->addItem(amv::text("AMVPlugin.Provider.Spout.Composite.Default"), kSpoutCompositeDefault);
+	cmb_composite_mode_->addItem(amv::text("AMVPlugin.Provider.Spout.Composite.Opaque"), kSpoutCompositeOpaque);
+	cmb_composite_mode_->addItem(amv::text("AMVPlugin.Provider.Spout.Composite.Alpha"), kSpoutCompositeAlpha);
+	cmb_composite_mode_->addItem(amv::text("AMVPlugin.Provider.Spout.Composite.Premultiplied"),
+				     kSpoutCompositePremultiplied);
+	cmb_composite_mode_->setToolTip(amv::text("AMVPlugin.Provider.Spout.CompositeTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.Spout.CompositeMode"), cmb_composite_mode_);
 
 	cmb_tick_speed_ = new QComboBox(this);
-	cmb_tick_speed_->addItem(QStringLiteral("Crazy (1 ms)"), kSpoutTickCrazy);
-	cmb_tick_speed_->addItem(QStringLiteral("Fast (100 ms)"), kSpoutTickFast);
-	cmb_tick_speed_->addItem(QStringLiteral("Normal (500 ms)"), kSpoutTickNormal);
-	cmb_tick_speed_->addItem(QStringLiteral("Slow (1000 ms)"), kSpoutTickSlow);
-	cmb_tick_speed_->setToolTip(
-		QStringLiteral("How often obs-spout2 polls the Spout receiver for new frames. Faster = lower latency "
-			       "but more CPU; slower = more CPU savings but visible stutter."));
+	cmb_tick_speed_->addItem(amv::text("AMVPlugin.Provider.Spout.Tick.Crazy"), kSpoutTickCrazy);
+	cmb_tick_speed_->addItem(amv::text("AMVPlugin.Provider.Spout.Tick.Fast"), kSpoutTickFast);
+	cmb_tick_speed_->addItem(amv::text("AMVPlugin.Provider.Spout.Tick.Normal"), kSpoutTickNormal);
+	cmb_tick_speed_->addItem(amv::text("AMVPlugin.Provider.Spout.Tick.Slow"), kSpoutTickSlow);
+	cmb_tick_speed_->setToolTip(amv::text("AMVPlugin.Provider.Spout.TickTooltip"));
 	/* Default to Normal (500 ms): obs-spout2's own default is Fast
 	 * (100 ms) which is wasteful for a Multiview cell where stale
 	 * frames cost more than they're worth. Each multiview cell
@@ -103,7 +97,7 @@ SpoutSenderForm::SpoutSenderForm(QWidget *parent) : QWidget(parent)
 		if (normal_idx >= 0)
 			cmb_tick_speed_->setCurrentIndex(normal_idx);
 	}
-	form->addRow(QStringLiteral("Tick speed:"), cmb_tick_speed_);
+	form->addRow(amv::text("AMVPlugin.Provider.Spout.TickSpeed"), cmb_tick_speed_);
 
 	root->addLayout(form);
 
@@ -159,8 +153,7 @@ void SpoutSenderForm::refresh_discovery()
 		discovered_list_->setCurrentItem(to_select);
 
 	if (names.empty() && remembered_selection_.isEmpty()) {
-		auto *item = new QListWidgetItem(
-			QStringLiteral("(no Spout senders detected; click Refresh after starting one)"));
+		auto *item = new QListWidgetItem(amv::text("AMVPlugin.Provider.Spout.NoSenders"));
 		item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
 		QFont f = item->font();
 		f.setItalic(true);
@@ -211,7 +204,7 @@ QString SpoutSenderForm::invalid_reason() const
 {
 	if (is_valid())
 		return QString();
-	return QStringLiteral("Pick a Spout sender from the list, or check 'Use first available sender'.");
+	return amv::text("AMVPlugin.Provider.Spout.ErrorNoSender");
 }
 
 SignalConfig SpoutSenderForm::to_signal_config() const
@@ -225,7 +218,7 @@ SignalConfig SpoutSenderForm::to_signal_config() const
 	QString sender_name;
 	if (chk_first_available_->isChecked()) {
 		sender_name = QString::fromUtf8(kSpoutFirstAvailableToken);
-		cfg.displayName = "(Spout: first available)";
+		cfg.displayName = amv::text("AMVPlugin.Provider.Spout.DisplayFirstAvailable").toStdString();
 	} else {
 		auto *cur = discovered_list_->currentItem();
 		sender_name = cur ? item_bare_name(cur) : QString();

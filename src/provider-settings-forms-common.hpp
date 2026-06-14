@@ -16,6 +16,8 @@ License: GPL-2.0-or-later
 
 #pragma once
 
+#include "amv-i18n.hpp"
+
 #include <QBrush>
 #include <QColor>
 #include <QFont>
@@ -71,8 +73,6 @@ inline void set_or_default_string(obs_data_t *data, const char *key, const QStri
  * SourcePicker / EditSource on a Refresh just builds normal items;
  * the form notices when the remembered selection is missing and
  * appends a single lost-style item. */
-inline constexpr const char *kLostSuffix = " | signal lost";
-
 inline QString item_bare_name(const QListWidgetItem *item)
 {
 	if (!item)
@@ -92,7 +92,7 @@ inline QListWidgetItem *make_normal_item(const QString &bare_name)
 
 inline QListWidgetItem *make_lost_item(const QString &bare_name)
 {
-	auto *item = new QListWidgetItem(bare_name + QString::fromUtf8(kLostSuffix));
+	auto *item = new QListWidgetItem(bare_name + amv::text("AMVPlugin.Provider.Common.SignalLostSuffix"));
 	item->setData(Qt::UserRole, bare_name);
 	QFont f = item->font();
 	f.setItalic(true);

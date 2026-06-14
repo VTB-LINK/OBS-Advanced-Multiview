@@ -10,6 +10,7 @@ License: GPL-2.0-or-later
 */
 
 #include "provider-settings-forms.hpp"
+#include "amv-i18n.hpp"
 #include "provider-settings-forms-common.hpp"
 
 #include <QFileDialog>
@@ -52,28 +53,27 @@ FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : QWidget(parent)
 
 	auto *form = new QFormLayout();
 
-	chk_local_file_ = new QCheckBox(QStringLiteral("Local file"), this);
-	chk_local_file_->setToolTip(
-		QStringLiteral("Switch between a network URL (RTMP / HLS / FLV / SRT / http) and a local media file."));
+	chk_local_file_ = new QCheckBox(amv::text("AMVPlugin.Provider.FFmpeg.LocalFile"), this);
+	chk_local_file_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.LocalFileTooltip"));
 	form->addRow(QString(), chk_local_file_);
 
 	url_edit_ = new QLineEdit(this);
-	url_edit_->setPlaceholderText(QStringLiteral("e.g. https://example.com/live.m3u8"));
+	url_edit_->setPlaceholderText(amv::text("AMVPlugin.Provider.FFmpeg.UrlPlaceholder"));
 	url_edit_->setClearButtonEnabled(true);
-	form->addRow(QStringLiteral("URL:"), url_edit_);
+	form->addRow(amv::text("AMVPlugin.Provider.FFmpeg.Url"), url_edit_);
 
 	auto *local_row = new QHBoxLayout();
 	local_path_edit_ = new QLineEdit(this);
-	local_path_edit_->setPlaceholderText(QStringLiteral("Path to a local media file"));
+	local_path_edit_->setPlaceholderText(amv::text("AMVPlugin.Provider.FFmpeg.LocalPathPlaceholder"));
 	local_path_edit_->setClearButtonEnabled(true);
 	local_row->addWidget(local_path_edit_, 1);
 	local_browse_btn_ = new QToolButton(this);
 	local_browse_btn_->setText(QStringLiteral("..."));
-	local_browse_btn_->setToolTip(QStringLiteral("Browse for a local media file"));
+	local_browse_btn_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.BrowseLocalTooltip"));
 	local_row->addWidget(local_browse_btn_);
 	auto *local_row_widget = new QWidget(this);
 	local_row_widget->setLayout(local_row);
-	form->addRow(QStringLiteral("Local file:"), local_row_widget);
+	form->addRow(amv::text("AMVPlugin.Provider.FFmpeg.LocalFilePath"), local_row_widget);
 
 	/* Reconnect delay is network-only. Local files don't need a retry
 	 * interval \u2014 if a local file fails to open, retrying every N seconds
@@ -82,59 +82,53 @@ FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : QWidget(parent)
 	spin_reconnect_delay_->setRange(1, 60);
 	spin_reconnect_delay_->setSuffix(QStringLiteral(" s"));
 	spin_reconnect_delay_->setValue(kDefaultReconnectDelaySec);
-	spin_reconnect_delay_->setToolTip(QStringLiteral(
-		"Seconds to wait before retrying a network stream that drops or fails to open. Default 10."));
-	lbl_reconnect_delay_ = new QLabel(QStringLiteral("Reconnect delay:"), this);
+	spin_reconnect_delay_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.ReconnectDelayTooltip"));
+	lbl_reconnect_delay_ = new QLabel(amv::text("AMVPlugin.Provider.FFmpeg.ReconnectDelay"), this);
 	form->addRow(lbl_reconnect_delay_, spin_reconnect_delay_);
 
 	spin_buffering_mb_ = new QSpinBox(this);
 	spin_buffering_mb_->setRange(0, 16);
 	spin_buffering_mb_->setSuffix(QStringLiteral(" MB"));
 	spin_buffering_mb_->setValue(kDefaultBufferingMb);
-	spin_buffering_mb_->setToolTip(QStringLiteral(
-		"Network buffering, in megabytes. Larger values smooth out network jitter at the cost of latency."));
-	form->addRow(QStringLiteral("Network buffering:"), spin_buffering_mb_);
+	spin_buffering_mb_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.BufferingTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.FFmpeg.Buffering"), spin_buffering_mb_);
 
-	chk_hw_decode_ = new QCheckBox(QStringLiteral("Use hardware decoding when available"), this);
-	chk_hw_decode_->setToolTip(QStringLiteral(
-		"Hand decoding off to the GPU when supported. Reduces CPU but may fail on some hardware/codecs."));
+	chk_hw_decode_ = new QCheckBox(amv::text("AMVPlugin.Provider.FFmpeg.HwDecode"), this);
+	chk_hw_decode_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.HwDecodeTooltip"));
 	form->addRow(QString(), chk_hw_decode_);
 
 	cmb_color_range_ = new QComboBox(this);
-	cmb_color_range_->addItem(QStringLiteral("Auto"), 0);
-	cmb_color_range_->addItem(QStringLiteral("Partial (TV)"), 1);
-	cmb_color_range_->addItem(QStringLiteral("Full (PC)"), 2);
-	cmb_color_range_->setToolTip(QStringLiteral(
-		"YUV color range. Auto uses the codec's signaling; override only if your stream looks washed-out or crushed."));
-	form->addRow(QStringLiteral("Color range:"), cmb_color_range_);
+	cmb_color_range_->addItem(amv::text("AMVPlugin.Common.Auto"), 0);
+	cmb_color_range_->addItem(amv::text("AMVPlugin.Provider.Common.RangePartial"), 1);
+	cmb_color_range_->addItem(amv::text("AMVPlugin.Provider.Common.RangeFull"), 2);
+	cmb_color_range_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.ColorRangeTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.FFmpeg.ColorRange"), cmb_color_range_);
 
-	chk_clear_on_end_ = new QCheckBox(QStringLiteral("Show nothing when playback ends"), this);
+	chk_clear_on_end_ = new QCheckBox(amv::text("AMVPlugin.Provider.FFmpeg.ClearOnEnd"), this);
 	chk_clear_on_end_->setChecked(true);
-	chk_clear_on_end_->setToolTip(QStringLiteral(
-		"After the media ends (non-looping), draw nothing instead of the last frame. Required for live streams that legitimately end."));
+	chk_clear_on_end_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.ClearOnEndTooltip"));
 	form->addRow(QString(), chk_clear_on_end_);
 
-	chk_looping_ = new QCheckBox(QStringLiteral("Loop playback when media ends"), this);
-	chk_looping_->setToolTip(QStringLiteral("Restart the file from the beginning when it finishes."));
+	chk_looping_ = new QCheckBox(amv::text("AMVPlugin.Provider.FFmpeg.Loop"), this);
+	chk_looping_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.LoopTooltip"));
 	form->addRow(QString(), chk_looping_);
 
 	spin_speed_percent_ = new QSpinBox(this);
 	spin_speed_percent_->setRange(1, 200);
 	spin_speed_percent_->setSuffix(QStringLiteral(" %"));
 	spin_speed_percent_->setValue(kDefaultSpeedPercent);
-	spin_speed_percent_->setToolTip(QStringLiteral("Local-file playback speed."));
-	lbl_speed_percent_ = new QLabel(QStringLiteral("Speed:"), this);
+	spin_speed_percent_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.SpeedTooltip"));
+	lbl_speed_percent_ = new QLabel(amv::text("AMVPlugin.Provider.FFmpeg.Speed"), this);
 	form->addRow(lbl_speed_percent_, spin_speed_percent_);
 
-	chk_linear_alpha_ = new QCheckBox(QStringLiteral("Apply alpha in linear space"), this);
-	chk_linear_alpha_->setToolTip(QStringLiteral("Niche; leave off unless you know you need it."));
+	chk_linear_alpha_ = new QCheckBox(amv::text("AMVPlugin.Provider.FFmpeg.LinearAlpha"), this);
+	chk_linear_alpha_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.LinearAlphaTooltip"));
 	form->addRow(QString(), chk_linear_alpha_);
 
 	ffmpeg_options_edit_ = new QLineEdit(this);
-	ffmpeg_options_edit_->setPlaceholderText(QStringLiteral("e.g. probesize=2000000 stimeout=5000000"));
-	ffmpeg_options_edit_->setToolTip(
-		QStringLiteral("Raw FFmpeg options passed to the decoder. Power-user, leave blank if unsure."));
-	lbl_ffmpeg_options_ = new QLabel(QStringLiteral("FFmpeg options:"), this);
+	ffmpeg_options_edit_->setPlaceholderText(amv::text("AMVPlugin.Provider.FFmpeg.OptionsPlaceholder"));
+	ffmpeg_options_edit_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.OptionsTooltip"));
+	lbl_ffmpeg_options_ = new QLabel(amv::text("AMVPlugin.Provider.FFmpeg.Options"), this);
 	form->addRow(lbl_ffmpeg_options_, ffmpeg_options_edit_);
 
 	root->addLayout(form);
@@ -199,10 +193,10 @@ void FfmpegMediaForm::on_local_file_toggled(bool checked)
 
 void FfmpegMediaForm::on_browse_local_file()
 {
-	const QString picked = QFileDialog::getOpenFileName(
-		this, QStringLiteral("Select media file"), local_path_edit_->text(),
-		QStringLiteral(
-			"Media files (*.mp4 *.mkv *.mov *.avi *.flv *.ts *.m3u8 *.webm *.mp3 *.aac *.wav);;All files (*)"));
+	const QString picked = QFileDialog::getOpenFileName(this,
+							    amv::text("AMVPlugin.Provider.FFmpeg.SelectMediaFile"),
+							    local_path_edit_->text(),
+							    amv::text("AMVPlugin.Provider.FFmpeg.MediaFileFilter"));
 	if (!picked.isEmpty())
 		local_path_edit_->setText(picked);
 }
@@ -264,10 +258,8 @@ QString FfmpegMediaForm::invalid_reason() const
 {
 	if (is_valid())
 		return QString();
-	return chk_local_file_->isChecked()
-		       ? QStringLiteral("Pick a local media file before adding the source.")
-		       : QStringLiteral(
-				 "Enter a media URL (RTMP / HLS / FLV / SRT / file URL) before adding the source.");
+	return chk_local_file_->isChecked() ? amv::text("AMVPlugin.Provider.FFmpeg.ErrorLocalFileRequired")
+					    : amv::text("AMVPlugin.Provider.FFmpeg.ErrorUrlRequired");
 }
 
 SignalConfig FfmpegMediaForm::to_signal_config() const

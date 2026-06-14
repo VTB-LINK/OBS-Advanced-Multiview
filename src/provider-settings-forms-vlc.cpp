@@ -10,6 +10,7 @@ License: GPL-2.0-or-later
 */
 
 #include "provider-settings-forms.hpp"
+#include "amv-i18n.hpp"
 #include "provider-settings-forms-common.hpp"
 
 #include <QFileDialog>
@@ -55,7 +56,7 @@ VlcMediaForm::VlcMediaForm(QWidget *parent) : QWidget(parent)
 	 * reorder buttons. The order matters because vlc-video plays
 	 * items in playlist order (and shuffles them when shuffle is
 	 * checked). */
-	auto *list_label = new QLabel(QStringLiteral("Playlist (files and/or URLs):"), this);
+	auto *list_label = new QLabel(amv::text("AMVPlugin.Provider.VLC.Playlist"), this);
 	root->addWidget(list_label);
 
 	playlist_list_ = new QListWidget(this);
@@ -75,20 +76,17 @@ VlcMediaForm::VlcMediaForm(QWidget *parent) : QWidget(parent)
 	playlist_list_->setDropIndicatorShown(true);
 	playlist_list_->setDragDropMode(QAbstractItemView::InternalMove);
 	playlist_list_->setDefaultDropAction(Qt::MoveAction);
-	playlist_list_->setToolTip(
-		QStringLiteral("libVLC plays entries in order. Mixed local files + network URLs are supported; "
-			       "any entry containing '://' is treated as a URL. Drag rows to reorder."));
+	playlist_list_->setToolTip(amv::text("AMVPlugin.Provider.VLC.PlaylistTooltip"));
 	root->addWidget(playlist_list_, 1);
 
 	auto *btn_row = new QHBoxLayout();
-	btn_add_file_ = new QPushButton(QStringLiteral("Add file"), this);
-	btn_add_files_ = new QPushButton(QStringLiteral("Add files..."), this);
-	btn_add_url_ = new QPushButton(QStringLiteral("Add URL"), this);
-	btn_edit_ = new QPushButton(QStringLiteral("Edit"), this);
-	btn_edit_->setToolTip(
-		QStringLiteral("Edit the selected playlist entry's path or URL. Double-click a row to do the same."));
-	btn_remove_ = new QPushButton(QStringLiteral("Remove"), this);
-	btn_clear_ = new QPushButton(QStringLiteral("Clear"), this);
+	btn_add_file_ = new QPushButton(amv::text("AMVPlugin.Provider.VLC.AddFile"), this);
+	btn_add_files_ = new QPushButton(amv::text("AMVPlugin.Provider.VLC.AddFiles"), this);
+	btn_add_url_ = new QPushButton(amv::text("AMVPlugin.Provider.VLC.AddURL"), this);
+	btn_edit_ = new QPushButton(amv::text("AMVPlugin.Provider.VLC.Edit"), this);
+	btn_edit_->setToolTip(amv::text("AMVPlugin.Provider.VLC.EditTooltip"));
+	btn_remove_ = new QPushButton(amv::text("AMVPlugin.Provider.VLC.Remove"), this);
+	btn_clear_ = new QPushButton(amv::text("AMVPlugin.Provider.VLC.Clear"), this);
 	btn_row->addWidget(btn_add_file_);
 	btn_row->addWidget(btn_add_files_);
 	btn_row->addWidget(btn_add_url_);
@@ -100,69 +98,62 @@ VlcMediaForm::VlcMediaForm(QWidget *parent) : QWidget(parent)
 
 	auto *form = new QFormLayout();
 
-	chk_loop_ = new QCheckBox(QStringLiteral("Loop playlist"), this);
+	chk_loop_ = new QCheckBox(amv::text("AMVPlugin.Provider.VLC.Loop"), this);
 	chk_loop_->setChecked(true);
-	chk_loop_->setToolTip(QStringLiteral("Restart the playlist from the beginning when the last entry ends."));
+	chk_loop_->setToolTip(amv::text("AMVPlugin.Provider.VLC.LoopTooltip"));
 	form->addRow(QString(), chk_loop_);
 
-	chk_shuffle_ = new QCheckBox(QStringLiteral("Shuffle"), this);
-	chk_shuffle_->setToolTip(QStringLiteral("Randomize playlist order on each cycle."));
+	chk_shuffle_ = new QCheckBox(amv::text("AMVPlugin.Provider.VLC.Shuffle"), this);
+	chk_shuffle_->setToolTip(amv::text("AMVPlugin.Provider.VLC.ShuffleTooltip"));
 	form->addRow(QString(), chk_shuffle_);
 
 	cmb_behavior_ = new QComboBox(this);
-	cmb_behavior_->addItem(QStringLiteral("Stop when inactive, restart on activate"),
+	cmb_behavior_->addItem(amv::text("AMVPlugin.Provider.VLC.Behavior.StopRestart"),
 			       QString::fromUtf8(kVlcBehaviorStopRestart));
-	cmb_behavior_->addItem(QStringLiteral("Pause when inactive, unpause on activate"),
+	cmb_behavior_->addItem(amv::text("AMVPlugin.Provider.VLC.Behavior.PauseUnpause"),
 			       QString::fromUtf8(kVlcBehaviorPauseUnpause));
-	cmb_behavior_->addItem(QStringLiteral("Always play (ignore activate state)"),
+	cmb_behavior_->addItem(amv::text("AMVPlugin.Provider.VLC.Behavior.AlwaysPlay"),
 			       QString::fromUtf8(kVlcBehaviorAlwaysPlay));
-	cmb_behavior_->setToolTip(
-		QStringLiteral("How vlc_source reacts to OBS activate/deactivate signals. "
-			       "For a multiview cell, Stop+Restart matches the FFmpeg provider's behavior."));
-	form->addRow(QStringLiteral("On activate/deactivate:"), cmb_behavior_);
+	cmb_behavior_->setToolTip(amv::text("AMVPlugin.Provider.VLC.BehaviorTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.VLC.Behavior"), cmb_behavior_);
 
 	spin_network_caching_ = new QSpinBox(this);
 	spin_network_caching_->setRange(50, 60000);
 	spin_network_caching_->setSingleStep(50);
 	spin_network_caching_->setSuffix(QStringLiteral(" ms"));
 	spin_network_caching_->setValue(kVlcDefaultNetworkCaching);
-	spin_network_caching_->setToolTip(
-		QStringLiteral("libVLC network cache size (--network-caching). Smaller = lower latency, "
-			       "larger = smoother on lossy networks."));
-	form->addRow(QStringLiteral("Network caching:"), spin_network_caching_);
+	spin_network_caching_->setToolTip(amv::text("AMVPlugin.Provider.VLC.NetworkCachingTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.VLC.NetworkCaching"), spin_network_caching_);
 
 	spin_track_ = new QSpinBox(this);
 	spin_track_->setRange(1, 32);
 	spin_track_->setValue(kVlcDefaultTrack);
-	spin_track_->setToolTip(QStringLiteral("Audio track index to play (1 = first track)."));
-	form->addRow(QStringLiteral("Audio track:"), spin_track_);
+	spin_track_->setToolTip(amv::text("AMVPlugin.Provider.VLC.AudioTrackTooltip"));
+	form->addRow(amv::text("AMVPlugin.Provider.VLC.AudioTrack"), spin_track_);
 
 	root->addLayout(form);
 
 	/* Button wiring. The add/remove handlers are all small inline
 	 * lambdas because none have anything reusable about them. */
 	connect(btn_add_file_, &QPushButton::clicked, this, [this]() {
-		const QString path = QFileDialog::getOpenFileName(
-			this, QStringLiteral("Add media file"), QString(),
-			QStringLiteral("Media files (*.mp4 *.mov *.mkv *.webm *.avi *.flv *.ts *.mp3 "
-				       "*.wav *.flac *.m3u *.m3u8 *.pls);;All files (*)"));
+		const QString path =
+			QFileDialog::getOpenFileName(this, amv::text("AMVPlugin.Provider.VLC.AddMediaFile"), QString(),
+						     amv::text("AMVPlugin.Provider.VLC.MediaFileFilter"));
 		if (!path.isEmpty())
 			playlist_list_->addItem(new QListWidgetItem(path));
 	});
 	connect(btn_add_files_, &QPushButton::clicked, this, [this]() {
-		const QStringList paths = QFileDialog::getOpenFileNames(
-			this, QStringLiteral("Add media files"), QString(),
-			QStringLiteral("Media files (*.mp4 *.mov *.mkv *.webm *.avi *.flv *.ts *.mp3 "
-				       "*.wav *.flac *.m3u *.m3u8 *.pls);;All files (*)"));
+		const QStringList paths =
+			QFileDialog::getOpenFileNames(this, amv::text("AMVPlugin.Provider.VLC.AddMediaFiles"),
+						      QString(), amv::text("AMVPlugin.Provider.VLC.MediaFileFilter"));
 		for (const auto &p : paths)
 			playlist_list_->addItem(new QListWidgetItem(p));
 	});
 	connect(btn_add_url_, &QPushButton::clicked, this, [this]() {
 		bool ok = false;
-		const QString url =
-			QInputDialog::getText(this, QStringLiteral("Add URL"),
-					      QStringLiteral("Stream URL (RTMP, HLS, SRT, http(s), rtsp, etc.):"),
-					      QLineEdit::Normal, QString(), &ok);
+		const QString url = QInputDialog::getText(this, amv::text("AMVPlugin.Provider.VLC.AddURL"),
+							  amv::text("AMVPlugin.Provider.VLC.StreamUrlPrompt"),
+							  QLineEdit::Normal, QString(), &ok);
 		if (ok && !url.trimmed().isEmpty())
 			playlist_list_->addItem(new QListWidgetItem(url.trimmed()));
 	});
@@ -186,17 +177,15 @@ VlcMediaForm::VlcMediaForm(QWidget *parent) : QWidget(parent)
 		const bool is_url = existing.contains(QStringLiteral("://"));
 		if (is_url) {
 			bool ok = false;
-			const QString url = QInputDialog::getText(
-				this, QStringLiteral("Edit URL"),
-				QStringLiteral("Stream URL (RTMP, HLS, SRT, http(s), rtsp, etc.):"), QLineEdit::Normal,
-				existing, &ok);
+			const QString url = QInputDialog::getText(this, amv::text("AMVPlugin.Provider.VLC.EditURL"),
+								  amv::text("AMVPlugin.Provider.VLC.StreamUrlPrompt"),
+								  QLineEdit::Normal, existing, &ok);
 			if (ok && !url.trimmed().isEmpty())
 				item->setText(url.trimmed());
 		} else {
 			const QString path = QFileDialog::getOpenFileName(
-				this, QStringLiteral("Edit media file"), existing,
-				QStringLiteral("Media files (*.mp4 *.mov *.mkv *.webm *.avi *.flv *.ts *.mp3 "
-					       "*.wav *.flac *.m3u *.m3u8 *.pls);;All files (*)"));
+				this, amv::text("AMVPlugin.Provider.VLC.EditMediaFile"), existing,
+				amv::text("AMVPlugin.Provider.VLC.MediaFileFilter"));
 			if (!path.isEmpty())
 				item->setText(path);
 		}
@@ -268,7 +257,7 @@ QString VlcMediaForm::invalid_reason() const
 {
 	if (is_valid())
 		return QString();
-	return QStringLiteral("Add at least one file or URL to the playlist.");
+	return amv::text("AMVPlugin.Provider.VLC.ErrorNoPlaylist");
 }
 
 SignalConfig VlcMediaForm::to_signal_config() const
@@ -290,7 +279,7 @@ SignalConfig VlcMediaForm::to_signal_config() const
 		if (sep >= 0 && sep + 1 < first.size())
 			hint = first.mid(sep + 1);
 		if (playlist_list_->count() > 1)
-			hint += QStringLiteral(" (+%1 more)").arg(playlist_list_->count() - 1);
+			hint += amv::text("AMVPlugin.Provider.VLC.DisplayMoreSuffix").arg(playlist_list_->count() - 1);
 		cfg.displayName = hint.toStdString();
 	}
 
