@@ -2070,8 +2070,8 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				/* Phase 3 / M6 step 10: source resolved but produces
 				 * no frame yet (or has stopped producing frames).
 				 * Common for:
-				 *   - external cells where DistroAV cleared content
-				 *     on disconnect (Clear content default);
+				 *   - external cells where the provider cleared content
+				 *     on disconnect or timeout;
 				 *   - FFmpeg cells with an unreachable URL;
 				 *   - sources still in their initial open phase.
 				 *

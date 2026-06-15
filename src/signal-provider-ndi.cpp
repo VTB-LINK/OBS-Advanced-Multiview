@@ -54,6 +54,7 @@ constexpr const char *kKeyLatency = "latency";
 constexpr const char *kKeyAudio = "ndi_audio";
 
 constexpr int kBehaviorKeepActive = 0;
+constexpr int kTimeoutKeepContent = 1;
 
 class NdiProvider : public ISignalProvider {
 public:
@@ -111,23 +112,8 @@ public:
 			obs_data_set_bool(settings, kKeyAudio, true);
 		if (!obs_data_has_user_value(settings, kKeyBehavior))
 			obs_data_set_int(settings, kKeyBehavior, kBehaviorKeepActive);
-
-		/* Phase 3 / M6.2 fix: hard-lock ndi_behavior_timeout to
-		 * PROP_TIMEOUT_CLEAR_CONTENT (= 0) so the source reports
-		 * width/height = 0 on disconnect and the health supervisor
-		 * can flip the cell to Lost. DistroAV's default is
-		 * PROP_TIMEOUT_KEEP_CONTENT (freeze last frame, dimensions
-		 * stay non-zero), which would defeat lost detection.
-		 *
-		 * The "keep last frame" behavior is intentionally NOT
-		 * exposed in our NDI form because we don't have a clean way
-		 * to render a SIGNAL LOST overlay over a frozen frame
-		 * (DistroAV reports the source as still active, so the
-		 * supervisor never escalates). Users who want frozen-frame
-		 * behavior can configure NDI sources directly inside an
-		 * OBS scene and bind the cell to that scene as a normal
-		 * scene cell. */
-		obs_data_set_int(settings, kKeyBehaviorTimeout, 0);
+		if (!obs_data_has_user_value(settings, kKeyBehaviorTimeout))
+			obs_data_set_int(settings, kKeyBehaviorTimeout, kTimeoutKeepContent);
 
 		obs_source_t *raw = obs_source_create_private(kNdiSourceId, desired_name.c_str(), settings);
 		obs_data_release(settings);
