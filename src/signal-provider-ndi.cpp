@@ -12,7 +12,7 @@ lived private "discovery probe" source so the async callback fired by
 NDIFinder can safely dereference the source's context for the rest of
 the OBS session.
 
-Scope of this milestone (matches plan.md §9 M6.2 first slice):
+Scope of this milestone (matches docs/ROADMAP.md §9 M6.2 first slice):
   - Availability detection (DistroAV installed? ndi_source registered?)
   - Safe one-shot + Refresh discovery
   - create_private_source with the essential NDI settings keys

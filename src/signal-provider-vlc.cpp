@@ -3,7 +3,7 @@ OBS Advanced Multiview - VLC signal provider (Phase 3 / M6.4)
 
 Wraps OBS's built-in `vlc_source` so multiview cells can host media via
 VLC's protocol stack (live network streams, playlists, formats
-ffmpeg_source cannot open). Marked optional in plan.md M6.4: vlc_source
+ffmpeg_source cannot open). Marked optional in docs/ROADMAP.md M6.4: vlc_source
 ships with OBS Studio only when the vlc-video plugin was built against
 libVLC at packaging time, so availability is not guaranteed even on
 modern OBS installs.

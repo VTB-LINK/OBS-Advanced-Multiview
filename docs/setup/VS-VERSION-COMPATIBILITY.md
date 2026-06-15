@@ -103,4 +103,4 @@ cmake --version
 
 - [SETUP.md](SETUP.md) - 完整的开发环境配置指南
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - 常见问题排查
-- [README.md](README.md) - 快速开始指南
+- [../../README.md](../../README.md) - 快速开始指南

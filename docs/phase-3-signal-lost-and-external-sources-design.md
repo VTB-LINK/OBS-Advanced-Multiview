@@ -1,8 +1,8 @@
 # Phase 3 Signal Lost 与外部信号设计
 
 > 本文档定义 OBS Advanced Multiview 的 Phase 3（M5~M6）详细开发计划。  
-> 术语口径以 [TERMINOLOGY.md](TERMINOLOGY.md) 和 [../plan.md](../plan.md) 为准。  
-> 本文档属于专题设计文档，优先级低于 PRD / general instructions / [../README.md](../README.md) / [../plan.md](../plan.md)。如出现冲突，以高优先级文档为准。
+> 术语口径以 [TERMINOLOGY.md](TERMINOLOGY.md) 和 [ROADMAP.md](ROADMAP.md) 为准。  
+> 本文档属于专题设计文档，优先级低于 PRD / general instructions / [../README.md](../README.md) / [ROADMAP.md](ROADMAP.md)。如出现冲突，以高优先级文档为准。
 
 ---
 

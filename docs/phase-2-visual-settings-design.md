@@ -2,7 +2,7 @@
 
 > 本文件用于定义 OBS Advanced Multiview 的 Phase 2 设计。  
 > Phase 2 聚焦视觉参数系统与 cell 显示能力，不包含外部流、Signal Lost 完整策略、安装器 / 便携版正式分发系统等后续阶段内容。  
-> 本文件是 `plan.md`、`docs/ui-ascii-wireframes.md`、`docs/phase-1-acceptance-checklist.md`、`docs/known-limitations.md` 和 Phase 1 基线实现之上的详细设计文档。
+> 本文件是 `ROADMAP.md`、`docs/ui-ascii-wireframes.md`、`docs/phase-1-acceptance-checklist.md`、`docs/known-limitations.md` 和 Phase 1 基线实现之上的详细设计文档。
 
 ---
 
@@ -61,7 +61,7 @@ Phase 2 明确不包含以下内容：
 - 完整发布系统；
 - 外部流 private source 详细实现。
 
-这些内容属于 `plan.md` 中的 Milestone 5、Milestone 6、Milestone 7、Milestone 8 或更后续阶段。
+这些内容属于 `ROADMAP.md` 中的 Milestone 5、Milestone 6、Milestone 7、Milestone 8 或更后续阶段。
 
 ---
 

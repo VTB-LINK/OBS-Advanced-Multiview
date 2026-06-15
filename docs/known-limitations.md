@@ -1,7 +1,7 @@
 # 已知限制 (Known Limitations)
 
 > 本文档记录当前版本（0.2.x，Phase 2 / M4 主体完成，Phase 2.5 已完成，Phase 3 / M5 功能已完成）已知的功能缺失、设计边界与跨平台验证缺口。
-> 术语口径以 [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) 为准。
+> 术语口径以 [TERMINOLOGY.md](TERMINOLOGY.md) 为准。
 > 这些不是 bug，而是尚未规划或排期到后续阶段的功能；其中部分项被显式标注为 **设计决策不做**，避免被重复提议。
 
 ---
@@ -36,7 +36,7 @@
   - **线程模型**：接收循环线程归属，与现有 supervisor 1Hz health-check 的协调。
   - **延迟与备播策略**：是否复用 NDI/Spout 的 discovery-driven SIGNAL LOST 语义，或需要 WebRTC 专属 reconnect timing。
   - **音频路径**：是否复用 rebuild_volmeters 既有外部 cell 通路；多通道 / opus 转译策略。
-- ~~**Signal Lost / 断流策略**：重试、备播、彩条等断开行为尚未实现（属 Phase 3 / M5）。~~ **已全部完成**（[docs/phase-3-acceptance-checklist.md](docs/phase-3-acceptance-checklist.md)）：M5 内部源 Black / PlaceholderImage / ClearCell + Fallback (PGM/PRVW/Scene/Source/Image) + Reconnect Now + 动态生效；M6 外部源（NDI/Spout/FFmpeg/VLC）sticky display state 下的 SignalLost / RetryWithFallback / Reconnecting / Paused / FallbackActive overlay 均已接通。
+- ~~**Signal Lost / 断流策略**：重试、备播、彩条等断开行为尚未实现（属 Phase 3 / M5）。~~ **已全部完成**（[phase-3-acceptance-checklist.md](phase-3-acceptance-checklist.md)）：M5 内部源 Black / PlaceholderImage / ClearCell + Fallback (PGM/PRVW/Scene/Source/Image) + Reconnect Now + 动态生效；M6 外部源（NDI/Spout/FFmpeg/VLC）sticky display state 下的 SignalLost / RetryWithFallback / Reconnecting / Paused / FallbackActive overlay 均已接通。
 
 ## Signal Lost / Phase 3 / M5 范围内的边界
 
@@ -49,7 +49,7 @@
 ## 实例管理
 
 - **实例排序（Move Up / Move Down / 拖放）**：按钮已预留但禁用。后续计划支持鼠标拖放排序 + 按钮辅助排序，排序结果持久化。
-- ~~**删除已打开实例**：当前删除实例不会自动关闭已打开的对应窗口（窗口可能变为孤儿状态）。~~ **已修复**：[src/manager-dialog.cpp](src/manager-dialog.cpp) `on_delete_instance()` 在删除前调用 `close_multiview_window(uuid)` 关闭对应窗口。
+- ~~**删除已打开实例**：当前删除实例不会自动关闭已打开的对应窗口（窗口可能变为孤儿状态）。~~ **已修复**：[src/manager-dialog.cpp](../src/manager-dialog.cpp) `on_delete_instance()` 在删除前调用 `close_multiview_window(uuid)` 关闭对应窗口。
 
 ## Source Identity
 
@@ -61,7 +61,7 @@
 
 ## Visual Settings 保存语义
 
-- **整对象保存**：当前 `CellDisplaySettingsDialog` accept 时无条件 save，不利用 `dirty_` 标志做最小写入。10x10 grid 下改一个字段会触发整 instance JSON 重写。属 [docs/phase-2-hardening-notes.md](docs/phase-2-hardening-notes.md) 观察项，Phase 2.5 不强制优化。
+- **整对象保存**：当前 `CellDisplaySettingsDialog` accept 时无条件 save，不利用 `dirty_` 标志做最小写入。10x10 grid 下改一个字段会触发整 instance JSON 重写。属 [phase-2-hardening-notes.md](phase-2-hardening-notes.md) 观察项，Phase 2.5 不强制优化。
 
 ## 分发
 
@@ -80,7 +80,7 @@
 以下功能曾被讨论或预留过，但已明确否决，避免在后续提案中重复出现：
 
 - ~~**Folder grouping（实例文件夹分组）**：~~ Phase 1（M0~M3）阶段中途移除，理由是简化实例管理。空 folder 持久化问题已不存在。
-- ~~**右键菜单中的克隆 / 删除整个 Multiview 实例**：~~ 这些操作仅在管理 / 设置 Dialog 中提供，避免误操作（详见 [plan.md](plan.md) §1.9）。
+- ~~**右键菜单中的克隆 / 删除整个 Multiview 实例**：~~ 这些操作仅在管理 / 设置 Dialog 中提供，避免误操作（详见 [ROADMAP.md](ROADMAP.md) §1.9）。
 - ~~**复制网格 UUID 入口（用户向）**：~~ Phase 1 不需要；未来如需要，可放到高级 / debug 区域。
 - ~~**字段级 Visual Settings 继承**：~~ Phase 2 决策为分组级继承（Background / Label / SafeArea / VuMeter / Overlay 各自独立 `InheritanceMode`），避免 UI 碎片化。
 - ~~**Per-cell Highlight override**：~~ Highlight 由 cell 与 PGM/PRVW scene tree 的关系驱动，per-cell override 无语义。Highlight scope 限定在 Global / Instance。

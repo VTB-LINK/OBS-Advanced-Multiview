@@ -82,7 +82,7 @@ public:
 	 *     a count mismatch; the caller is expected to fall back to
 	 *     refresh_sources() in that case.
 	 *   - External private-source release / create must run OUTSIDE
-	 *     source_mutex_ (lock-order rule from plan.md §6).
+	 *     source_mutex_ (lock-order rule from docs/ROADMAP.md §6).
 	 *   - Volmeter rebuild uses the existing throttle flag —
 	 *     check_active_track_change() coalesces it on the next render
 	 *     frame, no per-cell volmeter API.

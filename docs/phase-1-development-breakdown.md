@@ -1,8 +1,8 @@
 # Phase 1 Development Breakdown
 
 > 本文件用于说明 OBS Advanced Multiview 第一阶段开发范围与任务拆分。  
-> 第一阶段对应 `plan.md` 中的 Milestone 0 到 Milestone 3。  
-> 本文件是 `plan.md` 的补充说明，不替代 `plan.md`。
+> 第一阶段对应 `ROADMAP.md` 中的 Milestone 0 到 Milestone 3。  
+> 本文件是 `ROADMAP.md` 的补充说明，不替代 `ROADMAP.md`。
 
 ---
 
@@ -766,7 +766,7 @@ gutter / 缝隙：
 - 外部流立即重连。
 - artifacts 打包完善。
 
-Phase 2.5 已完成；这些内容应在 Phase 3（M5~M6）、Phase 4（M7~M8）时再详细规划，详见 [TERMINOLOGY.md](TERMINOLOGY.md) 与 [../plan.md](../plan.md)。
+Phase 2.5 已完成；这些内容应在 Phase 3（M5~M6）、Phase 4（M7~M8）时再详细规划，详见 [TERMINOLOGY.md](TERMINOLOGY.md) 与 [ROADMAP.md](ROADMAP.md)。
 
 ---
 

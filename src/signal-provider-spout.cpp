@@ -12,7 +12,7 @@ spout_receiver_ptr. We use a long-lived dormant private "discovery
 probe" spout_capture source so the property dereference is always
 safe (matches the NDI provider's discovery probe pattern).
 
-Scope of this milestone (matches plan.md M6.3 first slice):
+Scope of this milestone (matches docs/ROADMAP.md M6.3 first slice):
   - Availability detection (obs-spout2 installed? spout_capture
     registered?)
   - One-shot + manual Refresh discovery via the dormant probe

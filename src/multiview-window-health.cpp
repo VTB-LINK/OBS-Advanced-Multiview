@@ -18,7 +18,7 @@ supervisor code; they just override the three provider virtuals and the
 generic logic here handles state transitions, timing, backoff, and the
 refresh_cell scheduling for full recreate.
 
-Lock-order notes (mirrors plan.md §6):
+Lock-order notes (mirrors docs/ROADMAP.md §6):
   - Caller holds source_mutex_ for the duration of the tick.
   - obs_source_media_restart() is safe to call under the mutex; it just
     signals ffmpeg_source's worker thread.

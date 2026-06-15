@@ -27,7 +27,7 @@ using mv_forms::set_or_default_string;
 
 namespace {
 
-/* Defaults pinned to the M6.1 plan.md values so a fresh form matches the
+/* Defaults pinned to the M6.1 docs/ROADMAP.md values so a fresh form matches the
  * canonical first-slice config. Persistence keys mirror obs-ffmpeg-source.c
  * verbatim so providerSettings can be passed straight to
  * obs_source_create_private without translation. */

@@ -1146,7 +1146,7 @@ void MultiviewWindow::update_source_refs()
 	/* Phase 3 / M6 step 9: per-cell external provider intents collected
 	 * inside the locked section, materialized OUTSIDE the lock so
 	 * obs_source_create_private never runs while we hold source_mutex_
-	 * (see plan.md §6 lock order). Each intent owns a deep copy of the
+	 * (see docs/ROADMAP.md §6 lock order). Each intent owns a deep copy of the
 	 * provider settings so the SignalConfig in instance memory can be
 	 * mutated by the UI thread without racing us. */
 	struct ExternalIntent {
@@ -1406,7 +1406,7 @@ void MultiviewWindow::release_source_refs()
 	std::vector<gs_texture_t *> textures_to_destroy;
 
 	/* Phase 3 / M6: external private sources must be released OUTSIDE
-	 * source_mutex_ (see plan.md §6 lock order). Move them into a local
+	 * source_mutex_ (see docs/ROADMAP.md §6 lock order). Move them into a local
 	 * vector under lock so the RAII destructors fire after we release. */
 	std::vector<OBSSource> externals_to_release;
 

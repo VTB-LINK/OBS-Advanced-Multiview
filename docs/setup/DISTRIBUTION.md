@@ -268,6 +268,6 @@ git push origin v1.0.0
 
 ## 相关文档
 
-- [README.md](README.md) - 开发环境快速开始
+- [../../README.md](../../README.md) - 项目 README
 - [SETUP.md](SETUP.md) - 完整配置指南
-- [../../plan.md](../../plan.md) - 项目开发计划
+- [../ROADMAP.md](../ROADMAP.md) - 项目开发计划

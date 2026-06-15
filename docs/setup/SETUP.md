@@ -239,8 +239,8 @@ CMakePresets.json        # 已修改：启用 Qt 和 Frontend API
 
 当开发环境配置完成后，可以开始：
 1. 熟悉 OBS 插件 API 文档
-2. 查看项目计划：[plan.md](plan.md)
-3. 查看 UI 设计：[docs/ui-ascii-wireframes.md](docs/ui-ascii-wireframes.md)
+2. 查看项目计划：[ROADMAP.md](../ROADMAP.md)
+3. 查看 UI 设计：[ui-ascii-wireframes.md](../ui-ascii-wireframes.md)
 4. 开始实现第一阶段功能
 
 ---

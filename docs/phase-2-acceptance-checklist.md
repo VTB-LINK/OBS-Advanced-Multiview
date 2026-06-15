@@ -1,7 +1,7 @@
 # Phase 2 验收清单
 
 > 本文档用于把 Phase 2（M4：视觉参数与辅助功能）已完成内容变成可复测、可交接、可回归的事实。  
-> 术语口径以 [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) 为准；Phase 2 = M4，本文档中 “M4 子任务 2.0~2.7” 对应 [docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md) 第 16 节的拆分。  
+> 术语口径以 [TERMINOLOGY.md](TERMINOLOGY.md) 为准；Phase 2 = M4，本文档中 “M4 子任务 2.0~2.7” 对应 [phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) 第 16 节的拆分。  
 > 进入 Phase 3（M5~M6）之前，应先确认本清单中的关键项均已验证，未确认项需要在 Phase 2.5（M4 收尾 / Phase 3 准备）期间补齐或显式标注为非阻塞。
 
 图例：
@@ -15,7 +15,7 @@
 
 ## 2.0 Visual Settings 架构与继承模型（M4 子任务 2.0）
 
-- [x] `GlobalVisualSettings` 结构定义于 [src/multiview-instance.hpp](src/multiview-instance.hpp)
+- [x] `GlobalVisualSettings` 结构定义于 [src/multiview-instance.hpp](../src/multiview-instance.hpp)
 - [x] `InstanceVisualSettings` 结构定义，包含每组 `InheritanceMode`
 - [x] `CellVisualSettings` 结构定义，包含每组 `InheritanceMode`
 - [x] `EffectiveCellVisualSettings` 解析结果结构定义
@@ -47,7 +47,7 @@
 - [x] `ImageFitMode`：`Fit / Stretch`（Phase 2.5 不扩展 Fill/Tile）
 - [x] 底色支持透明源（Alpha）下显示
 - [x] 底图加载走 `obs_enter_graphics()` 锁外创建，遵守锁顺序
-- [x] 缩小网格时旧纹理被释放（[src/multiview-window.cpp](src/multiview-window.cpp) `rebuild_bg_images()` 修复缩容泄漏）
+- [x] 缩小网格时旧纹理被释放（[src/multiview-window.cpp](../src/multiview-window.cpp) `rebuild_bg_images()` 修复缩容泄漏）
 - [x] 图片文件不存在时优雅回退（不崩溃，不阻塞渲染）
 - [o] 透明 Scene / Source 与底色叠加结果符合预期
 - [o] 空 cell 底色显示正确
@@ -56,7 +56,7 @@
 
 ## 2.3 Overlay 坐标空间与前景 Overlay（M4 子任务 2.3）
 
-- [x] `CellRect` 与 `SignalRect` 在 [src/multiview-window.cpp](src/multiview-window.cpp) `render()` 中显式区分
+- [x] `CellRect` 与 `SignalRect` 在 [src/multiview-window.cpp](../src/multiview-window.cpp) `render()` 中显式区分
 - [x] `OverlaySettings` 字段：`enabled / imagePath / opacity / fitMode / anchorMode`
 - [x] `OverlayAnchorMode`：`Cell / Signal`
 - [x] `OverlayFitMode`：`Fit / Stretch`
@@ -72,7 +72,7 @@
 - [x] `SafeAreaSettings` 字段：`enabled / preset / color / opacity`
 - [x] `SafeAreaPreset`：`EBU_R95`（Phase 2.5 不扩展其它 preset）
 - [x] 安全区基于 `SignalRect` 渲染，不画到 letterbox / pillarbox 黑边
-- [x] 使用 OBS 原生风格 `gs_vertbuffer_t` + `GS_LINESTRIP` 实现（[src/multiview-window.cpp](src/multiview-window.cpp) `init_safe_area_vbs()` / `render_safe_area()`）
+- [x] 使用 OBS 原生风格 `gs_vertbuffer_t` + `GS_LINESTRIP` 实现（[src/multiview-window.cpp](../src/multiview-window.cpp) `init_safe_area_vbs()` / `render_safe_area()`）
 - [x] vertex buffer 与 cell 尺寸同步重建
 - [o] 重启 OBS 后安全区开关与颜色字段恢复
 - [ ] SMPTE RP 218 / Action Safe / Title Safe 多 preset — **不做**，未来作为 overlay 资源提供
@@ -114,7 +114,7 @@
 
 ## 2.6 Visual Settings UI 整合（M4 子任务 2.6）
 
-- [x] Settings tab 暴露 Global Visual Settings 入口（[src/manager-dialog.cpp](src/manager-dialog.cpp) `Edit Global Visual Settings...`）
+- [x] Settings tab 暴露 Global Visual Settings 入口（[src/manager-dialog.cpp](../src/manager-dialog.cpp) `Edit Global Visual Settings...`）
 - [x] Instance 详情页暴露 Instance Visual Settings 入口（`Instance Visual Settings...`）
 - [x] `CellDisplaySettingsDialog` 三种模式：`Global / Instance / Cell`
 - [x] 6 个 group：Background / Label / Safe Area / VU Meter / Overlay / Highlight
@@ -174,10 +174,10 @@
 
 ## 文档同步状态（Phase 2.5 Step 1~5 覆盖）
 
-- [x] [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) 已建立
-- [x] [plan.md](plan.md) M4 状态更新为 "主体已完成"
-- [x] [README.md](README.md) 增加 Phase 1 / Phase 2 文档导航
-- [x] [docs/phase-2-acceptance-checklist.md](docs/phase-2-acceptance-checklist.md) 本文件
-- [x] [docs/known-limitations.md](docs/known-limitations.md) 清理已过时条目（Phase 2.5 完成）
-- [x] [docs/phase-2-hardening-notes.md](docs/phase-2-hardening-notes.md) 交叉引用验收清单（已在顶部 block 链接）
-- [x] VU meter polish 设计文档 [docs/phase-2.5-vu-meter-polish-design.md](docs/phase-2.5-vu-meter-polish-design.md)（已建立并实现）
+- [x] [TERMINOLOGY.md](TERMINOLOGY.md) 已建立
+- [x] [ROADMAP.md](ROADMAP.md) M4 状态更新为 "主体已完成"
+- [x] [../README.md](../README.md) 增加 Phase 1 / Phase 2 文档导航
+- [x] [phase-2-acceptance-checklist.md](phase-2-acceptance-checklist.md) 本文件
+- [x] [known-limitations.md](known-limitations.md) 清理已过时条目（Phase 2.5 完成）
+- [x] [phase-2-hardening-notes.md](phase-2-hardening-notes.md) 交叉引用验收清单（已在顶部 block 链接）
+- [x] VU meter polish 设计文档 [phase-2.5-vu-meter-polish-design.md](phase-2.5-vu-meter-polish-design.md)（已建立并实现）

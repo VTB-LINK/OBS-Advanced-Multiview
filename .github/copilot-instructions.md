@@ -15,7 +15,7 @@
 2. **环境配置** → [docs/setup/README.md](docs/setup/README.md)
    - 首次配置步骤
    - VS 版本兼容性
-3. **项目计划** → [plan.md](plan.md)
+3. **项目计划** → [docs/ROADMAP.md](docs/ROADMAP.md)
    - 功能规划
    - 里程碑
 

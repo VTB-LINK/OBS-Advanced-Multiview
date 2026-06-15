@@ -4,7 +4,7 @@
 >
 > 适用范围：仓库内全部 Markdown 文档、新建文档、commit message、PR/issue 标题与描述。
 >
-> 本文件本身位置：[docs/TERMINOLOGY.md](docs/TERMINOLOGY.md)。如未来需要调整，须先更新本文件，再批量更新引用方。
+> 本文件本身位置：[TERMINOLOGY.md](TERMINOLOGY.md)。如未来需要调整，须先更新本文件，再批量更新引用方。
 
 ---
 
@@ -13,7 +13,7 @@
 当文档之间出现冲突时，按以下优先级裁决，**不允许低优先级文档覆盖高优先级文档**：
 
 1. **PRD 与 general instructions**（Copilot Space 中维护）—— 最高纲领。
-2. [README.md](README.md) 与 [plan.md](plan.md) —— 第二优先级。`plan.md` 是全局 Milestone 与 Phase 命名的唯一来源。
+2. [../README.md](../README.md) 与 [ROADMAP.md](ROADMAP.md) —— 第二优先级。`ROADMAP.md` 是全局 Milestone 与 Phase 命名的唯一来源。
 3. `docs/phase-*.md`、`docs/*-design.md`、`docs/*-hardening-notes.md` 等专题文档 —— 第三优先级。
 4. 仓库内其它说明文档（`docs/DEVELOPMENT.md`、`docs/setup/*.md` 等）—— 第四优先级。
 
@@ -23,7 +23,7 @@
 
 ## 2. 全局 Milestone 命名
 
-全局 Milestone 以 [plan.md](plan.md) 为唯一来源，编号 `M0` 到 `M8`：
+全局 Milestone 以 [ROADMAP.md](ROADMAP.md) 为唯一来源，编号 `M0` 到 `M8`：
 
 | 编号 | 中文名 | 主体交付 |
 | --- | --- | --- |
@@ -42,7 +42,7 @@
 - 正式文档章节标题统一写 `Milestone X：<中文名>`。
 - 正文引用允许使用缩写 `M0`、`M3`、`M0~M3`。
 - 不允许使用 `第 N 阶段`、`第 N 期`、`Stage N`、`Iter N` 等替代用词。
-- 不允许在仓库范围内重新编号 Milestone，例如不允许出现 `Milestone 9`、`Milestone 4.5` 等扩展编号；若需新增阶段性目标，请用下面的 Phase 体系或在 `plan.md` 中统一扩展。
+- 不允许在仓库范围内重新编号 Milestone，例如不允许出现 `Milestone 9`、`Milestone 4.5` 等扩展编号；若需新增阶段性目标，请用下面的 Phase 体系或在 `ROADMAP.md` 中统一扩展。
 
 ---
 
@@ -68,12 +68,12 @@ Phase 是对 Milestone 的粗粒度阶段分组，固定如下：
 
 ## 4. 设计文档内部子里程碑
 
-[docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md) 历史上使用过 `Milestone 2.0` ~ `Milestone 2.7` 编号。这些**不是全局 Milestone**，仅是 M4 内部的子任务编号。
+[phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) 历史上使用过 `Milestone 2.0` ~ `Milestone 2.7` 编号。这些**不是全局 Milestone**，仅是 M4 内部的子任务编号。
 
 **写作约定**：
 
 - 正式引用必须写 `M4 子任务 2.0` 或 `Phase 2 子里程碑 2.0`，避免与全局 `Milestone 2`（布局引擎）混淆。
-- 在 [docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md) 内部章节标题仍可保留 `Milestone 2.x` 历史编号，但**必须**在文档开头加一段说明，明确这些是 M4 内部子任务而非全局 Milestone。
+- 在 [phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) 内部章节标题仍可保留 `Milestone 2.x` 历史编号，但**必须**在文档开头加一段说明，明确这些是 M4 内部子任务而非全局 Milestone。
 - 新增任何子里程碑必须遵循 `M<global>.子<sub>` 的两段命名，例如 `M4 子任务 2.8`，不允许直接写 `Milestone 2.8`。
 
 ---
@@ -99,7 +99,7 @@ Phase 是对 Milestone 的粗粒度阶段分组，固定如下：
 - `第 1 阶段` / `第一阶段` —— 应写 `Phase 1（M0~M3）`。
 - `Phase 1 = Milestone 0 + Milestone 1 + Milestone 2 + Milestone 3` —— 简化为 `Phase 1 = M0~M3`，与本规范一致。
 - `Milestone 4 包含 Phase 2` —— Phase 与 Milestone 是包含与分组关系，Milestone 不包含 Phase，反向才成立。
-- 在 [docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md) 之外的文档中独立引用 `Milestone 2.0` ~ `Milestone 2.7` —— 必须加 `M4 子任务` 或 `Phase 2 子里程碑` 限定词。
+- 在 [phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) 之外的文档中独立引用 `Milestone 2.0` ~ `Milestone 2.7` —— 必须加 `M4 子任务` 或 `Phase 2 子里程碑` 限定词。
 
 ---
 
@@ -115,5 +115,5 @@ Phase 是对 Milestone 的粗粒度阶段分组，固定如下：
 
 1. 修改任意 Phase / Milestone 定义前，**必须**先更新本文件。
 2. 本文件改动应单独 commit，commit message 建议：`docs: update terminology (Phase/Milestone)`。
-3. 改动后需在 [README.md](README.md) 与 [plan.md](plan.md) 中同步引用，确保读者按引用链能找到本文件。
+3. 改动后需在 [../README.md](../README.md) 与 [ROADMAP.md](ROADMAP.md) 中同步引用，确保读者按引用链能找到本文件。
 4. 历史文档中的过时写法可分批清理，不强制要求一次性完成；新增内容必须立即遵循本规范。

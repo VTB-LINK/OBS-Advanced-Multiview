@@ -165,7 +165,7 @@ Copy-Item "build_x64\RelWithDebInfo\obs-advanced-multiview.dll" `
 
 - [../phase-1-development-breakdown.md](../phase-1-development-breakdown.md) — 第一阶段开发任务分解
 - [../ui-ascii-wireframes.md](../ui-ascii-wireframes.md) — UI 设计线框图
-- [../../plan.md](../../plan.md) — 完整项目开发计划
+- [../ROADMAP.md](../ROADMAP.md) — 完整项目开发计划
 - [../../README.md](../../README.md) — 项目主 README
 
 ## ⚠️ 重要提示

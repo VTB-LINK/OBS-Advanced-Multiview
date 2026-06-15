@@ -340,7 +340,7 @@ build_x64/
 - [故障排除](setup/TROUBLESHOOTING.md) - 常见问题解决
 - [插件分发](setup/DISTRIBUTION.md) - 分发包创建方法
 - [VS 版本兼容性](setup/VS-VERSION-COMPATIBILITY.md) - VS 2022/2026 切换
-- [项目计划](../plan.md) - 功能规划和里程碑
+- [项目计划](ROADMAP.md) - 功能规划和里程碑
 
 ---
 

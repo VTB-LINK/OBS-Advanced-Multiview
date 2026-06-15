@@ -1,8 +1,8 @@
 # Phase 3 / M5 验收清单
 
 > 本文档记录 Phase 3 上半段（M5：Signal Lost 与删除行为）的功能完成度与人工验证结果。
-> 术语口径以 [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) 为准；M5 子任务编号对应
-> [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md) §7。
+> 术语口径以 [TERMINOLOGY.md](TERMINOLOGY.md) 为准；M5 子任务编号对应
+> [phase-3-signal-lost-and-external-sources-design.md](phase-3-signal-lost-and-external-sources-design.md) §7。
 > M6（外部流接入）尚未开始；硬化 pass 计划在 M6 完成后作为 Phase 3 综合收尾统一进行。
 
 图例：
@@ -16,14 +16,14 @@
 
 ## M5.0 运行时层 (Signal Runtime State)
 
-- [x] `SignalRuntimeState` 状态机定义于 [src/multiview-window.hpp](src/multiview-window.hpp)：`Empty / Resolving / Active / MissingInternal / Connecting / Lost / RetryScheduled / FallbackActive / Error`
+- [x] `SignalRuntimeState` 状态机定义于 [src/multiview-window.hpp](../src/multiview-window.hpp)：`Empty / Resolving / Active / MissingInternal / Connecting / Lost / RetryScheduled / FallbackActive / Error`
 - [x] 每 cell 的 `CellSource` 持有 `state / last_active_ns / last_reconnect_ns / retry_attempt`
 - [x] 每 cell 缓存 `effective_lost`（Global + Cell Override 解析结果），避免每帧查 instance config
-- [x] `LostSignalSettings` 结构（[src/multiview-instance.hpp](src/multiview-instance.hpp)）持久化字段：
+- [x] `LostSignalSettings` 结构（[src/multiview-instance.hpp](../src/multiview-instance.hpp)）持久化字段：
   - `internalMissingBehavior`、`externalLostBehavior`、`placeholderImagePath`、`signalLostImagePath`
   - `fallbackType`（白名单：image / pgm / prvw / scene / source）+ `fallbackName`
   - `placeholderImageFitMode` / `signalLostImageFitMode` / `fallbackImageFitMode`
-  - `retryInitialMs / retryMaxMs / manualReconnectCooldownMs`（clamp 落入 [docs/phase-3-signal-lost-and-external-sources-design.md](docs/phase-3-signal-lost-and-external-sources-design.md) §10 边界）
+  - `retryInitialMs / retryMaxMs / manualReconnectCooldownMs`（clamp 落入 [phase-3-signal-lost-and-external-sources-design.md](phase-3-signal-lost-and-external-sources-design.md) §10 边界）
 - [x] `CellLostSignalSettings`（含 `InheritanceMode`）持久化；只持久化 Override 条目
 - [x] `CURRENT_CONFIG_VERSION` 升到 v3，旧 v2 配置加载时透传默认值；记录升级日志
 - [x] `resolve_effective_lost_signal(global, cell)` 实现 Global + Cell 两层（设计明确不引入 Instance 层）
@@ -38,9 +38,9 @@
 
 ### 渲染管线
 
-- [x] 状态分类发生在 render 路径 newState 计算块（[src/multiview-window.cpp](src/multiview-window.cpp) `render()`）
+- [x] 状态分类发生在 render 路径 newState 计算块（[src/multiview-window.cpp](../src/multiview-window.cpp) `render()`）
 - [x] PGM / PRVW 永远 Active；其它类型在 weak ref 解析失败 / `obs_source_removed()` 命中时进入 MissingInternal
-- [x] Lost-Signal image 与 bg-image 走同样的 4 阶段加载（snapshot under lock → disk IO → graphics ops → install）：[src/multiview-window-lost-image.cpp](src/multiview-window-lost-image.cpp)
+- [x] Lost-Signal image 与 bg-image 走同样的 4 阶段加载（snapshot under lock → disk IO → graphics ops → install）：[src/multiview-window-lost-image.cpp](../src/multiview-window-lost-image.cpp)
 - [x] 单 slot 自动切换：`compute_wanted_lost_image_path()` 按 `cs.state` + `effective_lost` 决定 placeholder / fallback static image
 - [x] 图像 fit 模式独立可配置：`placeholderImageFitMode` / `fallbackImageFitMode` / `signalLostImageFitMode`，默认 Stretch（贴满 cell）
 
@@ -113,7 +113,7 @@
 
 ## M5.5 动态生效
 
-- [x] `notify_multiview_signal_settings_changed(uuid)` 入口（[src/plugin-main.cpp](src/plugin-main.cpp)）
+- [x] `notify_multiview_signal_settings_changed(uuid)` 入口（[src/plugin-main.cpp](../src/plugin-main.cpp)）
 - [x] Settings tab → Edit Global Signal Lost Settings 后调用
 - [x] Cell 右键 → Signal Lost Settings 后调用
 - [x] 窗口响应 `refresh_signal_settings()`：重算 `effective_lost`、重建 lost-signal image，不重建整个 display
@@ -150,7 +150,7 @@
 # Phase 3 / M6 验收清单（功能完成）
 
 > M6（外部流接入）功能闭环已完成；M6.6 综合硬化已落地。剩余项为跨平台 / 跨 OBS 版本的人工回归（OBS 32.0、macOS、Linux），不阻塞功能交付。
-> 与 [docs/phase-3-signal-lost-and-external-sources-design.md](phase-3-signal-lost-and-external-sources-design.md) §8 / §14 / §15 对齐。
+> 与 [phase-3-signal-lost-and-external-sources-design.md](phase-3-signal-lost-and-external-sources-design.md) §8 / §14 / §15 对齐。
 > 每个子项的状态使用与 M5 章节相同的图例：`[x] / [o] / [ ] / ~~[ ]~~`。
 
 ## M6.0 Provider Registry + 配置 / 运行时基础
@@ -207,7 +207,7 @@
 
 ## M6.1+ First-slice 落地后追加任务
 
-详见 [plan.md §9.1](../plan.md)。M6.2 / step 10 之前必须完成。
+详见 [ROADMAP.md §9.1](ROADMAP.md)。M6.2 / step 10 之前必须完成。
 
 ### 9.1.A Cell-level 增量重建
 
@@ -286,7 +286,7 @@
 - [x] 资源释放：清空 cell / 切换 provider / 缩容 10x10→1x1 / 关闭窗口 / OBS 退出，private source 全部释放
 - [x] 锁顺序与生命周期 audit：无 `source_mutex_` 期间的 OBS 长操作；无 render 期间的 provider 操作
 - [o] 跨版本：OBS 31.1.1 smoke ✅ / 32.0 smoke ⏳（未跑） / 32.1.2 full provider validation ✅
-- [x] 文档：本清单更新、`README.md` / `plan.md` 状态、`docs/known-limitations.md` 同步
+- [x] 文档：本清单更新、`README.md` / `ROADMAP.md` 状态、`docs/known-limitations.md` 同步
 
 ### M6.6 额外硬化（设计 doc 落地后追加）
 

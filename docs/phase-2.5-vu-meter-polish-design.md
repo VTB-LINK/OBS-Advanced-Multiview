@@ -1,7 +1,7 @@
 # Phase 2.5 VU Meter Polish 设计
 
-> 本文档属于 Phase 2.5（M4 收尾 / Phase 3 准备）范围。术语口径见 [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md)。
-> Phase 2 / M4 VU meter 主体已实现（开关、位置、anchor、宽度、长度比例、dB 阈值、衰减、flip、track source 等），实现细节见 [docs/phase-2-visual-settings-design.md](docs/phase-2-visual-settings-design.md) 与 [docs/phase-2-hardening-notes.md](docs/phase-2-hardening-notes.md)。
+> 本文档属于 Phase 2.5（M4 收尾 / Phase 3 准备）范围。术语口径见 [TERMINOLOGY.md](TERMINOLOGY.md)。
+> Phase 2 / M4 VU meter 主体已实现（开关、位置、anchor、宽度、长度比例、dB 阈值、衰减、flip、track source 等），实现细节见 [phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) 与 [phase-2-hardening-notes.md](phase-2-hardening-notes.md)。
 > 本文档记录 Phase 2.5 已完成的 VU meter polish：peak hold、dB 标尺/刻度、Show Labels、Scale Side、以及 scene/source cell 的 trackMode 语义决策。
 
 ---
@@ -14,7 +14,7 @@
 - 把 trackMode 在 scene / source cell 上的语义讲清楚，避免在 Phase 3 / M6 接入外部流时出现行为模糊。
 - 保持现有 v1 的简洁性，不引入混音器级别的复杂度。
 
-### 1.2 明确不做（与 [docs/known-limitations.md](docs/known-limitations.md) 对齐）
+### 1.2 明确不做（与 [known-limitations.md](known-limitations.md) 对齐）
 
 - 完整复制 OBS Mixer 行为（peak hold 时间矩阵、复杂 ballistic 模型、PFL/AFL/混合总线、推子/增益编辑等）。
 - 5.1 / 7.1 多声道独立显示。
@@ -25,7 +25,7 @@
 
 - 现有 `VuMeterSettings` 字段不能破坏式重命名；新字段必须可选并提供安全默认值。
 - 配置 `CURRENT_CONFIG_VERSION` 是否升到 v3 取决于改动是否需要迁移逻辑；优先做向后兼容的可选字段加入，不强制升级 version。
-- 渲染路径已从 `MultiviewWindow::render_vu_meter()` 拆分到 [src/multiview-window-vu.cpp](src/multiview-window-vu.cpp)，仍保持同一帧内同步渲染，不引入新线程或信号回调。
+- 渲染路径已从 `MultiviewWindow::render_vu_meter()` 拆分到 [src/multiview-window-vu.cpp](../src/multiview-window-vu.cpp)，仍保持同一帧内同步渲染，不引入新线程或信号回调。
 
 ---
 
@@ -59,7 +59,7 @@
 
 ### 2.4 UI 暴露
 
-`CellDisplaySettingsDialog::create_vu_meter_group()`（[src/cell-display-settings-dialog.cpp](src/cell-display-settings-dialog.cpp)）追加：
+`CellDisplaySettingsDialog::create_vu_meter_group()`（[src/cell-display-settings-dialog.cpp](../src/cell-display-settings-dialog.cpp)）追加：
 
 - `Peak Hold` checkbox
 - `Hold Time (ms)` spinbox
@@ -131,7 +131,7 @@
 
 ### 4.1 当前实现回顾
 
-[src/multiview-window.cpp](src/multiview-window.cpp) `compute_active_track_bit()` 明确注释：
+[src/multiview-window.cpp](../src/multiview-window.cpp) `compute_active_track_bit()` 明确注释：
 
 > Track selection is a window-wide knob in v1 (per-cell trackMode override is deferred);
 > resolving the full effective settings would only end up reading these same two fields from the instance layer.
@@ -180,9 +180,9 @@ Phase 2.5 实施结果：
 
 ## 6. 与现有文档的引用关系
 
-- 顶层路线：[plan.md](../plan.md) §7 Milestone 4 Phase 2.5 范围。
-- 视觉系统设计基准：[docs/phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) §11 VU Meter v1。
-- 硬化与已知观察项：[docs/phase-2-hardening-notes.md](phase-2-hardening-notes.md) 中 VU 相关段落（rebuild_volmeters / collect_audio_sources / 日志可读性补丁等）。
-- 验收清单：[docs/phase-2-acceptance-checklist.md](phase-2-acceptance-checklist.md) §2.5 Phase 2.5 polish 子段。
-- 已知限制：[docs/known-limitations.md](known-limitations.md) `VU Meter` 段。
-- 术语规范：[docs/TERMINOLOGY.md](TERMINOLOGY.md)。
+- 顶层路线：[ROADMAP.md](ROADMAP.md) §7 Milestone 4 Phase 2.5 范围。
+- 视觉系统设计基准：[phase-2-visual-settings-design.md](phase-2-visual-settings-design.md) §11 VU Meter v1。
+- 硬化与已知观察项：[phase-2-hardening-notes.md](phase-2-hardening-notes.md) 中 VU 相关段落（rebuild_volmeters / collect_audio_sources / 日志可读性补丁等）。
+- 验收清单：[phase-2-acceptance-checklist.md](phase-2-acceptance-checklist.md) §2.5 Phase 2.5 polish 子段。
+- 已知限制：[known-limitations.md](known-limitations.md) `VU Meter` 段。
+- 术语规范：[TERMINOLOGY.md](TERMINOLOGY.md)。
