@@ -73,7 +73,6 @@ jobs:
 
   macos-build:
     name: Build for macOS 🍏
-    if: ${{ false }}
     runs-on: macos-15
     needs: check-event
     defaults:
