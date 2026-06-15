@@ -30,6 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QDesktopServices>
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QEvent>
@@ -50,6 +51,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 /* Compute a muted "secondary text" color from the current palette.
@@ -882,6 +884,23 @@ void ManagerDialog::setup_settings_tab(QWidget *tab)
 		config_->save();
 		obs_log(LOG_INFO, "detailed logs %s", checked ? "enabled" : "disabled");
 	});
+
+	layout->addSpacing(12);
+	auto *about_label = new QLabel(amv::text("AMVPlugin.Manager.Settings.About"), tab);
+	about_label->setStyleSheet(QStringLiteral("font-weight: bold;"));
+	layout->addWidget(about_label);
+
+	auto *about_text = new QLabel(tab);
+	about_text->setTextFormat(Qt::RichText);
+	about_text->setTextInteractionFlags(Qt::TextBrowserInteraction);
+	about_text->setOpenExternalLinks(false);
+	about_text->setText(QStringLiteral("<a href=\"https://vtb.link/obs-amv\">OBS Advanced Multiview</a> "
+					   "(%1) by <a href=\"https://vtb.link\">VTB-LINK</a>")
+				    .arg(QString::fromUtf8(PLUGIN_VERSION).toHtmlEscaped()));
+	layout->addWidget(about_text);
+
+	connect(about_text, &QLabel::linkActivated, this,
+		[](const QString &link) { QDesktopServices::openUrl(QUrl(link)); });
 
 	layout->addStretch();
 }
