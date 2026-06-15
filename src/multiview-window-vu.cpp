@@ -358,10 +358,12 @@ void MultiviewWindow::rebuild_volmeters()
 {
 	struct CellVolmeterBallistics {
 		bool valid = false;
+		float displayMagnitude = VU_SILENCE_DB;
 		float displayPeak = VU_SILENCE_DB;
 		uint64_t last_render_ns = 0;
 		float holdPeak = VU_SILENCE_DB;
 		uint64_t holdSetAtNs = 0;
+		float channelDisplayMagnitude[MAX_AUDIO_CHANNELS];
 		float channelDisplayPeak[MAX_AUDIO_CHANNELS];
 		uint64_t channelLastRenderNs[MAX_AUDIO_CHANNELS];
 		float channelHoldPeak[MAX_AUDIO_CHANNELS];
@@ -383,11 +385,13 @@ void MultiviewWindow::rebuild_volmeters()
 				continue;
 			auto &snap = previousBallistics[i];
 			snap.valid = true;
+			snap.displayMagnitude = cellVm->displayMagnitude;
 			snap.displayPeak = cellVm->displayPeak;
 			snap.last_render_ns = cellVm->last_render_ns;
 			snap.holdPeak = cellVm->holdPeak;
 			snap.holdSetAtNs = cellVm->holdSetAtNs;
 			for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+				snap.channelDisplayMagnitude[ch] = cellVm->channelDisplayMagnitude[ch];
 				snap.channelDisplayPeak[ch] = cellVm->channelDisplayPeak[ch];
 				snap.channelLastRenderNs[ch] = cellVm->channelLastRenderNs[ch];
 				snap.channelHoldPeak[ch] = cellVm->channelHoldPeak[ch];
@@ -402,11 +406,13 @@ void MultiviewWindow::rebuild_volmeters()
 		const auto &snap = previousBallistics[index];
 		if (!snap.valid)
 			return;
+		cellVm->displayMagnitude = snap.displayMagnitude;
 		cellVm->displayPeak = snap.displayPeak;
 		cellVm->last_render_ns = snap.last_render_ns;
 		cellVm->holdPeak = snap.holdPeak;
 		cellVm->holdSetAtNs = snap.holdSetAtNs;
 		for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+			cellVm->channelDisplayMagnitude[ch] = snap.channelDisplayMagnitude[ch];
 			cellVm->channelDisplayPeak[ch] = snap.channelDisplayPeak[ch];
 			cellVm->channelLastRenderNs[ch] = snap.channelLastRenderNs[ch];
 			cellVm->channelHoldPeak[ch] = snap.channelHoldPeak[ch];
@@ -964,9 +970,13 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	const uint64_t STALE_THRESHOLD_NS = 200000000ULL; /* 200ms */
 
 	float peakMax = VU_SILENCE_DB;
+	float magnitudeMax = VU_SILENCE_DB;
+	float magnitudeByChannel[MAX_AUDIO_CHANNELS];
 	float peakByChannel[MAX_AUDIO_CHANNELS];
-	for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++)
+	for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+		magnitudeByChannel[ch] = VU_SILENCE_DB;
 		peakByChannel[ch] = VU_SILENCE_DB;
+	}
 	int detectedChannels = 1;
 	for (auto &sv : cellVm->meters) {
 		if (!sv)
@@ -985,6 +995,14 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		if (ch > detectedChannels)
 			detectedChannels = ch;
 		for (int c = 0; c < ch && c < MAX_AUDIO_CHANNELS; c++) {
+			float m = sv->magnitude[c];
+			if (std::isfinite(m)) {
+				if (m > magnitudeMax)
+					magnitudeMax = m;
+				if (m > magnitudeByChannel[c])
+					magnitudeByChannel[c] = m;
+			}
+
 			float p = sv->peak[c];
 			if (std::isfinite(p)) {
 				if (p > peakMax)
@@ -998,6 +1016,10 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		detectedChannels = 1;
 	if (detectedChannels > MAX_AUDIO_CHANNELS)
 		detectedChannels = MAX_AUDIO_CHANNELS;
+
+	/* Clamp and normalize: -60 dB .. 0 dB -> 0.0 .. 1.0 */
+	const float minDB = -60.0f;
+	const float maxDB = 0.0f;
 
 	/* Apply ballistics: immediate attack, gradual decay
 	 * Decay rates (matching OBS): Fast=23.5, Medium=11.76, Slow=8.57 dB/s */
@@ -1014,13 +1036,19 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		break;
 	}
 
+	double renderDeltaS = 0.0;
+	bool validRenderDelta = false;
 	if (cellVm->last_render_ns > 0) {
-		double deltaS = (double)(now - cellVm->last_render_ns) * 1e-9;
-		if (deltaS > 0.0 && deltaS < 1.0) {
+		renderDeltaS = (double)(now - cellVm->last_render_ns) * 1e-9;
+		validRenderDelta = renderDeltaS > 0.0 && renderDeltaS < 1.0;
+	}
+
+	if (cellVm->last_render_ns > 0) {
+		if (validRenderDelta) {
 			if (peakMax >= cellVm->displayPeak) {
 				cellVm->displayPeak = peakMax;
 			} else {
-				cellVm->displayPeak -= decayRate * (float)deltaS;
+				cellVm->displayPeak -= decayRate * (float)renderDeltaS;
 				if (cellVm->displayPeak < peakMax)
 					cellVm->displayPeak = peakMax;
 			}
@@ -1030,11 +1058,18 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	} else {
 		cellVm->displayPeak = peakMax;
 	}
-	cellVm->last_render_ns = now;
 
-	/* Clamp and normalize: -60 dB .. 0 dB -> 0.0 .. 1.0 */
-	const float minDB = -60.0f;
-	const float maxDB = 0.0f;
+	if (cellVm->last_render_ns > 0 && validRenderDelta) {
+		float attack = (float)((magnitudeMax - cellVm->displayMagnitude) * (renderDeltaS / 0.3) * 0.99);
+		cellVm->displayMagnitude += attack;
+		if (cellVm->displayMagnitude < minDB)
+			cellVm->displayMagnitude = minDB;
+		if (cellVm->displayMagnitude > maxDB)
+			cellVm->displayMagnitude = maxDB;
+	} else {
+		cellVm->displayMagnitude = magnitudeMax;
+	}
+	cellVm->last_render_ns = now;
 
 	/* ---- Peak Hold ballistic ---- */
 	float holdLevel = 0.0f;
@@ -1069,6 +1104,13 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	if (smoothedPeak > maxDB)
 		smoothedPeak = maxDB;
 	float level = (smoothedPeak - minDB) / (maxDB - minDB);
+
+	float smoothedMagnitude = cellVm->displayMagnitude;
+	if (smoothedMagnitude < minDB)
+		smoothedMagnitude = minDB;
+	if (smoothedMagnitude > maxDB)
+		smoothedMagnitude = maxDB;
+	float magnitudeLevel = (smoothedMagnitude - minDB) / (maxDB - minDB);
 
 	/* Determine bar geometry based on position and anchor mode.
 	 * Computed before the early-return so that scale ticks can always render. */
@@ -1109,6 +1151,7 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	uint32_t greenColor = (alpha << 24) | 0x0026A826;  /* green */
 	uint32_t yellowColor = (alpha << 24) | 0x00D4D416; /* yellow */
 	uint32_t redColor = (alpha << 24) | 0x00D41616;    /* red */
+	uint32_t magnitudeColor = (alpha << 24) | 0x00000000;
 
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
@@ -1162,101 +1205,140 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		return;
 	}
 
-	auto draw_meter_lane = [&](int laneX, int laneY, int laneThickness, float laneLevel, float laneHoldLevel) {
-		if (laneThickness <= 0 || (laneLevel <= 0.0f && laneHoldLevel <= 0.0f))
+	auto draw_meter_lane = [&](int laneX, int laneY, int laneThickness, float laneLevel, float laneHoldLevel,
+				   float laneMagnitudeLevel) {
+		if (laneThickness <= 0 || (laneLevel <= 0.0f && laneHoldLevel <= 0.0f && laneMagnitudeLevel <= 0.0f))
 			return;
-		for (int s = 0; s < 3; s++) {
-			float segStart = segments[s].start;
-			float segEnd = segments[s].end;
+		if (laneLevel > 0.0f || laneHoldLevel > 0.0f) {
+			for (int s = 0; s < 3; s++) {
+				float segStart = segments[s].start;
+				float segEnd = segments[s].end;
 
-			/* Clip segment to actual level */
-			if (laneLevel <= segStart)
-				break;
-			float drawEnd = (laneLevel < segEnd) ? laneLevel : segEnd;
+				/* Clip segment to actual level */
+				if (laneLevel <= segStart)
+					break;
+				float drawEnd = (laneLevel < segEnd) ? laneLevel : segEnd;
 
-			int pixStart = (int)(segStart * (float)barFullLen + 0.5f);
-			int pixEnd = (int)(drawEnd * (float)barFullLen + 0.5f);
-			int pixLen = pixEnd - pixStart;
-			if (pixLen <= 0)
-				continue;
+				int pixStart = (int)(segStart * (float)barFullLen + 0.5f);
+				int pixEnd = (int)(drawEnd * (float)barFullLen + 0.5f);
+				int pixLen = pixEnd - pixStart;
+				if (pixLen <= 0)
+					continue;
 
-			gs_effect_set_color(colorParam, segments[s].color);
+				gs_effect_set_color(colorParam, segments[s].color);
 
-			if (isHorizontal) {
-				int drawX;
-				if (vmSettings.flip) {
-					/* Flip: 0dB on left, -∞ on right */
-					drawX = barX + barFullLen - pixEnd;
+				if (isHorizontal) {
+					int drawX;
+					if (vmSettings.flip) {
+						/* Flip: 0dB on left, -∞ on right */
+						drawX = barX + barFullLen - pixEnd;
+					} else {
+						/* Normal: -∞ on left, 0dB on right */
+						drawX = barX + pixStart;
+					}
+					startRegion(drawX, laneY, pixLen, laneThickness, 0.0f, (float)pixLen, 0.0f,
+						    (float)laneThickness);
+					while (gs_effect_loop(solid, "Solid"))
+						gs_draw_sprite(nullptr, 0, pixLen, laneThickness);
+					endRegion();
 				} else {
-					/* Normal: -∞ on left, 0dB on right */
-					drawX = barX + pixStart;
+					int drawY;
+					if (vmSettings.flip) {
+						/* Flip: 0dB on top, -∞ on bottom */
+						drawY = barY + pixStart;
+					} else {
+						/* Normal: -∞ on top (bottom-up), 0dB at bottom */
+						drawY = barY + barFullLen - pixEnd;
+					}
+					startRegion(laneX, drawY, laneThickness, pixLen, 0.0f, (float)laneThickness,
+						    0.0f, (float)pixLen);
+					while (gs_effect_loop(solid, "Solid"))
+						gs_draw_sprite(nullptr, 0, laneThickness, pixLen);
+					endRegion();
 				}
-				startRegion(drawX, laneY, pixLen, laneThickness, 0.0f, (float)pixLen, 0.0f,
-					    (float)laneThickness);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, pixLen, laneThickness);
-				endRegion();
-			} else {
-				int drawY;
-				if (vmSettings.flip) {
-					/* Flip: 0dB on top, -∞ on bottom */
-					drawY = barY + pixStart;
-				} else {
-					/* Normal: -∞ on top (bottom-up), 0dB at bottom */
-					drawY = barY + barFullLen - pixEnd;
-				}
-				startRegion(laneX, drawY, laneThickness, pixLen, 0.0f, (float)laneThickness, 0.0f,
-					    (float)pixLen);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, laneThickness, pixLen);
-				endRegion();
 			}
-		}
 
-		/* ---- Peak Hold marker ---- */
-		if (vmSettings.peakHoldEnabled && laneHoldLevel > 0.0f) {
-			int holdWidthPx = vmSettings.peakHoldWidthPx;
-			int holdPos = (int)(laneHoldLevel * (float)barFullLen + 0.5f);
-			if (holdPos > barFullLen)
-				holdPos = barFullLen;
+			/* ---- Peak Hold marker ---- */
+			if (vmSettings.peakHoldEnabled && laneHoldLevel > 0.0f) {
+				int holdWidthPx = vmSettings.peakHoldWidthPx;
+				int holdPos = (int)(laneHoldLevel * (float)barFullLen + 0.5f);
+				if (holdPos > barFullLen)
+					holdPos = barFullLen;
 
-			/* Determine color from dB zone */
-			uint32_t holdColor;
-			if (laneHoldLevel >= errorNorm)
-				holdColor = redColor;
-			else if (laneHoldLevel >= warningNorm)
-				holdColor = yellowColor;
-			else
-				holdColor = greenColor;
-
-			gs_effect_set_color(colorParam, holdColor);
-
-			if (isHorizontal) {
-				int hx;
-				if (vmSettings.flip)
-					hx = barX + barFullLen - holdPos;
+				/* Determine color from dB zone */
+				uint32_t holdColor;
+				if (laneHoldLevel >= errorNorm)
+					holdColor = redColor;
+				else if (laneHoldLevel >= warningNorm)
+					holdColor = yellowColor;
 				else
-					hx = barX + holdPos - holdWidthPx;
-				if (hx < barX)
-					hx = barX;
-				startRegion(hx, laneY, holdWidthPx, laneThickness, 0.0f, (float)holdWidthPx, 0.0f,
-					    (float)laneThickness);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, holdWidthPx, laneThickness);
-				endRegion();
-			} else {
-				int hy;
-				if (vmSettings.flip)
-					hy = barY + holdPos - holdWidthPx;
-				else
-					hy = barY + barFullLen - holdPos;
-				if (hy < barY)
-					hy = barY;
-				startRegion(laneX, hy, laneThickness, holdWidthPx, 0.0f, (float)laneThickness, 0.0f,
-					    (float)holdWidthPx);
-				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, laneThickness, holdWidthPx);
-				endRegion();
+					holdColor = greenColor;
+
+				gs_effect_set_color(colorParam, holdColor);
+
+				if (isHorizontal) {
+					int hx;
+					if (vmSettings.flip)
+						hx = barX + barFullLen - holdPos;
+					else
+						hx = barX + holdPos - holdWidthPx;
+					if (hx < barX)
+						hx = barX;
+					startRegion(hx, laneY, holdWidthPx, laneThickness, 0.0f, (float)holdWidthPx,
+						    0.0f, (float)laneThickness);
+					while (gs_effect_loop(solid, "Solid"))
+						gs_draw_sprite(nullptr, 0, holdWidthPx, laneThickness);
+					endRegion();
+				} else {
+					int hy;
+					if (vmSettings.flip)
+						hy = barY + holdPos - holdWidthPx;
+					else
+						hy = barY + barFullLen - holdPos;
+					if (hy < barY)
+						hy = barY;
+					startRegion(laneX, hy, laneThickness, holdWidthPx, 0.0f, (float)laneThickness,
+						    0.0f, (float)holdWidthPx);
+					while (gs_effect_loop(solid, "Solid"))
+						gs_draw_sprite(nullptr, 0, laneThickness, holdWidthPx);
+					endRegion();
+				}
+			}
+
+			if (laneMagnitudeLevel > 0.0f) {
+				int markerPx = 5;
+				if (markerPx > barFullLen)
+					markerPx = barFullLen;
+				int magPos = (int)(laneMagnitudeLevel * (float)barFullLen + 0.5f);
+				if (magPos > barFullLen)
+					magPos = barFullLen;
+
+				gs_effect_set_color(colorParam, magnitudeColor);
+				if (isHorizontal) {
+					int mx = vmSettings.flip ? barX + barFullLen - magPos
+								 : barX + magPos - markerPx;
+					if (mx < barX)
+						mx = barX;
+					if (mx > barX + barFullLen - markerPx)
+						mx = barX + barFullLen - markerPx;
+					startRegion(mx, laneY, markerPx, laneThickness, 0.0f, (float)markerPx, 0.0f,
+						    (float)laneThickness);
+					while (gs_effect_loop(solid, "Solid"))
+						gs_draw_sprite(nullptr, 0, markerPx, laneThickness);
+					endRegion();
+				} else {
+					int my = vmSettings.flip ? barY + magPos - markerPx
+								 : barY + barFullLen - magPos;
+					if (my < barY)
+						my = barY;
+					if (my > barY + barFullLen - markerPx)
+						my = barY + barFullLen - markerPx;
+					startRegion(laneX, my, laneThickness, markerPx, 0.0f, (float)laneThickness,
+						    0.0f, (float)markerPx);
+					while (gs_effect_loop(solid, "Solid"))
+						gs_draw_sprite(nullptr, 0, laneThickness, markerPx);
+					endRegion();
+				}
 			}
 		}
 	};
@@ -1264,17 +1346,25 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	/* Only draw bar segments and peak hold when there is actual signal.
 	 * Scale ticks/labels always render (below this block). */
 	if (vmSettings.multiChannelEnabled && detectedChannels > 1) {
+		float channelMagnitudeLevels[MAX_AUDIO_CHANNELS];
 		float channelLevels[MAX_AUDIO_CHANNELS];
 		float channelHoldLevels[MAX_AUDIO_CHANNELS];
 		for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+			float chMagnitude = magnitudeByChannel[ch];
 			float chPeak = peakByChannel[ch];
+			double channelDeltaS = 0.0;
+			bool validChannelDelta = false;
 			if (cellVm->channelLastRenderNs[ch] > 0) {
-				double deltaS = (double)(now - cellVm->channelLastRenderNs[ch]) * 1e-9;
-				if (deltaS > 0.0 && deltaS < 1.0) {
+				channelDeltaS = (double)(now - cellVm->channelLastRenderNs[ch]) * 1e-9;
+				validChannelDelta = channelDeltaS > 0.0 && channelDeltaS < 1.0;
+			}
+
+			if (cellVm->channelLastRenderNs[ch] > 0) {
+				if (validChannelDelta) {
 					if (chPeak >= cellVm->channelDisplayPeak[ch]) {
 						cellVm->channelDisplayPeak[ch] = chPeak;
 					} else {
-						cellVm->channelDisplayPeak[ch] -= decayRate * (float)deltaS;
+						cellVm->channelDisplayPeak[ch] -= decayRate * (float)channelDeltaS;
 						if (cellVm->channelDisplayPeak[ch] < chPeak)
 							cellVm->channelDisplayPeak[ch] = chPeak;
 					}
@@ -1283,6 +1373,18 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 				}
 			} else {
 				cellVm->channelDisplayPeak[ch] = chPeak;
+			}
+
+			if (cellVm->channelLastRenderNs[ch] > 0 && validChannelDelta) {
+				float attack = (float)((chMagnitude - cellVm->channelDisplayMagnitude[ch]) *
+						       (channelDeltaS / 0.3) * 0.99);
+				cellVm->channelDisplayMagnitude[ch] += attack;
+				if (cellVm->channelDisplayMagnitude[ch] < minDB)
+					cellVm->channelDisplayMagnitude[ch] = minDB;
+				if (cellVm->channelDisplayMagnitude[ch] > maxDB)
+					cellVm->channelDisplayMagnitude[ch] = maxDB;
+			} else {
+				cellVm->channelDisplayMagnitude[ch] = chMagnitude;
 			}
 			cellVm->channelLastRenderNs[ch] = now;
 
@@ -1319,6 +1421,12 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 				chSmoothed = minDB;
 			if (chSmoothed > maxDB)
 				chSmoothed = maxDB;
+			float chMagSmoothed = cellVm->channelDisplayMagnitude[ch];
+			if (chMagSmoothed < minDB)
+				chMagSmoothed = minDB;
+			if (chMagSmoothed > maxDB)
+				chMagSmoothed = maxDB;
+			channelMagnitudeLevels[ch] = (chMagSmoothed - minDB) / (maxDB - minDB);
 			channelLevels[ch] = (chSmoothed - minDB) / (maxDB - minDB);
 			channelHoldLevels[ch] = chHoldLevel;
 		}
@@ -1336,14 +1444,14 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 				continue;
 			if (isHorizontal)
 				draw_meter_lane(barX, barY + offset, laneThickness, channelLevels[ch],
-						channelHoldLevels[ch]);
+						channelHoldLevels[ch], channelMagnitudeLevels[ch]);
 			else
 				draw_meter_lane(barX + offset, barY, laneThickness, channelLevels[ch],
-						channelHoldLevels[ch]);
+						channelHoldLevels[ch], channelMagnitudeLevels[ch]);
 			offset += laneThickness;
 		}
 	} else {
-		draw_meter_lane(barX, barY, barW, level, holdLevel);
+		draw_meter_lane(barX, barY, barW, level, holdLevel, magnitudeLevel);
 	}
 
 	/* ---- dB Scale ticks ---- */

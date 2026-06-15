@@ -587,6 +587,7 @@ private:
 		CellVolmeter()
 		{
 			for (int i = 0; i < MAX_AUDIO_CHANNELS; i++) {
+				channelDisplayMagnitude[i] = -200.0f;
 				channelDisplayPeak[i] = -200.0f;
 				channelLastRenderNs[i] = 0;
 				channelHoldPeak[i] = -200.0f;
@@ -596,10 +597,12 @@ private:
 
 		std::vector<std::unique_ptr<SingleVolmeter>> meters;
 		uint64_t last_update_ts = 0;
-		float displayPeak = -200.0f; /* smoothed display value in dB */
-		uint64_t last_render_ns = 0; /* for ballistics time delta */
-		float holdPeak = -200.0f;    /* peak hold value in dB */
-		uint64_t holdSetAtNs = 0;    /* timestamp when holdPeak was last set */
+		float displayMagnitude = -200.0f; /* smoothed RMS magnitude in dB */
+		float displayPeak = -200.0f;      /* smoothed display value in dB */
+		uint64_t last_render_ns = 0;      /* for ballistics time delta */
+		float holdPeak = -200.0f;         /* peak hold value in dB */
+		uint64_t holdSetAtNs = 0;         /* timestamp when holdPeak was last set */
+		float channelDisplayMagnitude[MAX_AUDIO_CHANNELS];
 		float channelDisplayPeak[MAX_AUDIO_CHANNELS];
 		uint64_t channelLastRenderNs[MAX_AUDIO_CHANNELS];
 		float channelHoldPeak[MAX_AUDIO_CHANNELS];
