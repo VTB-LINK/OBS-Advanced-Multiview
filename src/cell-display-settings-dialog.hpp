@@ -128,6 +128,7 @@ private:
 	QDoubleSpinBox *spin_vu_warning_db_ = nullptr;
 	QDoubleSpinBox *spin_vu_error_db_ = nullptr;
 	QComboBox *cmb_vu_decay_ = nullptr;
+	QCheckBox *chk_vu_multi_channel_ = nullptr;
 	QCheckBox *chk_vu_flip_ = nullptr;
 	QComboBox *cmb_vu_track_mode_ = nullptr;
 	QSpinBox *spin_vu_manual_track_ = nullptr;

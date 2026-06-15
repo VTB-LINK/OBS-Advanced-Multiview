@@ -21,7 +21,7 @@
 - ~~**dB 标尺 / 刻度**：尚未实现。~~ **已完成**（Phase 2.5）：`scaleEnabled`、`scaleTicks` CSV、`scaleShowLabels`（text source cache）、`scaleColor`、`scaleSide`；tick 全宽 + labels below tick + 全 alpha 可见。
 - ~~**Per-cell trackMode**：需 Phase 2.5 单独决策。~~ **已决策**（Phase 2.5）：不做 per-cell trackMode override；Cell scope 下 Track Source / Manual Track 控件已禁用；字段保留以便未来无破坏扩展。
 - **完整 OBS Mixer 复刻**：**明确不做**。VU meter 定位是监看辅助而非混音器。
-- **5.1 / 7.1 多声道独立 meter**：**低优先级**，当前不做。
+- ~~**5.1 / 7.1 多声道独立 meter**：**低优先级**，当前不做。~~ **已完成**（issue #7）：VU meter 可按源实际声道数显示 multi-channel bars，宽度仍表示总厚度。第一版不显示每声道标签，也不提供手动声道布局 preset。
 - **外部信号（NDI / Spout / 媒体流）音频 meter**：~~属于 Phase 3（M6）外部流接入范围。~~ **已完成**（M6.0 + M6.6）：FFmpeg / NDI / VLC 外部 cell 默认 metering 自己的私有源，与 trackMode 正交（内部 cell 仍走 streaming track）；Spout 无音频仍是 silence。
 
 ## 外部信号（Phase 3 / M6）

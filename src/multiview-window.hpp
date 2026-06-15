@@ -584,12 +584,26 @@ private:
 		SingleVolmeter &operator=(const SingleVolmeter &) = delete;
 	};
 	struct CellVolmeter {
+		CellVolmeter()
+		{
+			for (int i = 0; i < MAX_AUDIO_CHANNELS; i++) {
+				channelDisplayPeak[i] = -200.0f;
+				channelLastRenderNs[i] = 0;
+				channelHoldPeak[i] = -200.0f;
+				channelHoldSetAtNs[i] = 0;
+			}
+		}
+
 		std::vector<std::unique_ptr<SingleVolmeter>> meters;
 		uint64_t last_update_ts = 0;
 		float displayPeak = -200.0f; /* smoothed display value in dB */
 		uint64_t last_render_ns = 0; /* for ballistics time delta */
 		float holdPeak = -200.0f;    /* peak hold value in dB */
 		uint64_t holdSetAtNs = 0;    /* timestamp when holdPeak was last set */
+		float channelDisplayPeak[MAX_AUDIO_CHANNELS];
+		uint64_t channelLastRenderNs[MAX_AUDIO_CHANNELS];
+		float channelHoldPeak[MAX_AUDIO_CHANNELS];
+		uint64_t channelHoldSetAtNs[MAX_AUDIO_CHANNELS];
 	};
 	std::vector<CellVolmeter *> cell_volmeters_;
 	/* Active mixer track bit (1 << (track_index - 1)). Recomputed in

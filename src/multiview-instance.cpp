@@ -660,6 +660,7 @@ obs_data_t *VuMeterSettings::to_obs_data() const
 	obs_data_t *look = obs_data_create();
 	obs_data_set_double(look, "opacity", opacity);
 	obs_data_set_string(look, "style", vu_meter_style_to_str(style));
+	obs_data_set_bool(look, "multiChannel", multiChannelEnabled);
 	obs_data_set_obj(data, "look", look);
 	obs_data_release(look);
 
@@ -737,6 +738,8 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 		if (!obs_data_has_user_value(look, "opacity"))
 			s.opacity = 0.75;
 		s.style = vu_meter_style_from_str(obs_data_get_string(look, "style"));
+		if (obs_data_has_user_value(look, "multiChannel"))
+			s.multiChannelEnabled = obs_data_get_bool(look, "multiChannel");
 		obs_data_release(look);
 	}
 	if (s.opacity < 0.0)

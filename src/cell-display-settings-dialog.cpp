@@ -666,6 +666,10 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	spin_vu_opacity_->setDecimals(2);
 	lookForm->addRow(amv::text("AMVPlugin.Common.Opacity"), spin_vu_opacity_);
 
+	chk_vu_multi_channel_ = new QCheckBox(grp_vu_meter_);
+	chk_vu_multi_channel_->setToolTip(amv::text("AMVPlugin.Visual.VUMeter.MultiChannelTooltip"));
+	lookForm->addRow(amv::text("AMVPlugin.Visual.VUMeter.MultiChannel"), chk_vu_multi_channel_);
+
 	auto *levelsForm = add_subzone(layout, grp_vu_meter_, amv::text("AMVPlugin.Visual.VUMeter.Levels"));
 
 	spin_vu_warning_db_ = new QDoubleSpinBox(grp_vu_meter_);
@@ -740,6 +744,7 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 	HOOK_DSPIN(spin_vu_opacity_);
 	HOOK_DSPIN(spin_vu_length_ratio_);
 	HOOK_COMBO(cmb_vu_alignment_);
+	HOOK_CHECK(chk_vu_multi_channel_);
 	HOOK_DSPIN(spin_vu_warning_db_);
 	HOOK_DSPIN(spin_vu_error_db_);
 	HOOK_COMBO(cmb_vu_decay_);
@@ -1056,6 +1061,7 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	spin_vu_opacity_->setValue(gs.vuMeter.opacity);
 	spin_vu_length_ratio_->setValue(gs.vuMeter.lengthRatio);
 	cmb_vu_alignment_->setCurrentIndex((int)gs.vuMeter.alignment);
+	chk_vu_multi_channel_->setChecked(gs.vuMeter.multiChannelEnabled);
 	spin_vu_warning_db_->setValue(gs.vuMeter.warningDB);
 	spin_vu_error_db_->setValue(gs.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)gs.vuMeter.decayRate);
@@ -1131,6 +1137,7 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 	gs.vuMeter.opacity = spin_vu_opacity_->value();
 	gs.vuMeter.lengthRatio = spin_vu_length_ratio_->value();
 	gs.vuMeter.alignment = (VuMeterAlignment)cmb_vu_alignment_->currentIndex();
+	gs.vuMeter.multiChannelEnabled = chk_vu_multi_channel_->isChecked();
 	gs.vuMeter.warningDB = spin_vu_warning_db_->value();
 	gs.vuMeter.errorDB = spin_vu_error_db_->value();
 	gs.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
@@ -1221,6 +1228,7 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	spin_vu_opacity_->setValue(is.vuMeter.opacity);
 	spin_vu_length_ratio_->setValue(is.vuMeter.lengthRatio);
 	cmb_vu_alignment_->setCurrentIndex((int)is.vuMeter.alignment);
+	chk_vu_multi_channel_->setChecked(is.vuMeter.multiChannelEnabled);
 	spin_vu_warning_db_->setValue(is.vuMeter.warningDB);
 	spin_vu_error_db_->setValue(is.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)is.vuMeter.decayRate);
@@ -1309,6 +1317,7 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 	is.vuMeter.opacity = spin_vu_opacity_->value();
 	is.vuMeter.lengthRatio = spin_vu_length_ratio_->value();
 	is.vuMeter.alignment = (VuMeterAlignment)cmb_vu_alignment_->currentIndex();
+	is.vuMeter.multiChannelEnabled = chk_vu_multi_channel_->isChecked();
 	is.vuMeter.warningDB = spin_vu_warning_db_->value();
 	is.vuMeter.errorDB = spin_vu_error_db_->value();
 	is.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();
@@ -1401,6 +1410,7 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 	spin_vu_opacity_->setValue(cs.vuMeter.opacity);
 	spin_vu_length_ratio_->setValue(cs.vuMeter.lengthRatio);
 	cmb_vu_alignment_->setCurrentIndex((int)cs.vuMeter.alignment);
+	chk_vu_multi_channel_->setChecked(cs.vuMeter.multiChannelEnabled);
 	spin_vu_warning_db_->setValue(cs.vuMeter.warningDB);
 	spin_vu_error_db_->setValue(cs.vuMeter.errorDB);
 	cmb_vu_decay_->setCurrentIndex((int)cs.vuMeter.decayRate);
@@ -1494,6 +1504,7 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.vuMeter.opacity = spin_vu_opacity_->value();
 	cs.vuMeter.lengthRatio = spin_vu_length_ratio_->value();
 	cs.vuMeter.alignment = (VuMeterAlignment)cmb_vu_alignment_->currentIndex();
+	cs.vuMeter.multiChannelEnabled = chk_vu_multi_channel_->isChecked();
 	cs.vuMeter.warningDB = spin_vu_warning_db_->value();
 	cs.vuMeter.errorDB = spin_vu_error_db_->value();
 	cs.vuMeter.decayRate = (VuMeterDecayRate)cmb_vu_decay_->currentIndex();

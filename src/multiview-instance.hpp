@@ -135,6 +135,7 @@ struct VuMeterSettings {
 	double errorDB = -9.0;    /* yellow->red threshold */
 	VuMeterDecayRate decayRate = VuMeterDecayRate::Fast;
 	VuMeterAlignment alignment = VuMeterAlignment::Center;
+	bool multiChannelEnabled = true;
 
 	/* Track routing — controls which mixer track determines source visibility.
 	 * AutoFollowStreaming: follow streaming output's first mixer bit (default,

@@ -362,6 +362,10 @@ void MultiviewWindow::rebuild_volmeters()
 		uint64_t last_render_ns = 0;
 		float holdPeak = VU_SILENCE_DB;
 		uint64_t holdSetAtNs = 0;
+		float channelDisplayPeak[MAX_AUDIO_CHANNELS];
+		uint64_t channelLastRenderNs[MAX_AUDIO_CHANNELS];
+		float channelHoldPeak[MAX_AUDIO_CHANNELS];
+		uint64_t channelHoldSetAtNs[MAX_AUDIO_CHANNELS];
 	};
 
 	/* Rebuilding obs_volmeter attachments is sometimes necessary for PGM/PRVW
@@ -383,6 +387,12 @@ void MultiviewWindow::rebuild_volmeters()
 			snap.last_render_ns = cellVm->last_render_ns;
 			snap.holdPeak = cellVm->holdPeak;
 			snap.holdSetAtNs = cellVm->holdSetAtNs;
+			for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+				snap.channelDisplayPeak[ch] = cellVm->channelDisplayPeak[ch];
+				snap.channelLastRenderNs[ch] = cellVm->channelLastRenderNs[ch];
+				snap.channelHoldPeak[ch] = cellVm->channelHoldPeak[ch];
+				snap.channelHoldSetAtNs[ch] = cellVm->channelHoldSetAtNs[ch];
+			}
 		}
 	}
 
@@ -396,6 +406,12 @@ void MultiviewWindow::rebuild_volmeters()
 		cellVm->last_render_ns = snap.last_render_ns;
 		cellVm->holdPeak = snap.holdPeak;
 		cellVm->holdSetAtNs = snap.holdSetAtNs;
+		for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+			cellVm->channelDisplayPeak[ch] = snap.channelDisplayPeak[ch];
+			cellVm->channelLastRenderNs[ch] = snap.channelLastRenderNs[ch];
+			cellVm->channelHoldPeak[ch] = snap.channelHoldPeak[ch];
+			cellVm->channelHoldSetAtNs[ch] = snap.channelHoldSetAtNs[ch];
+		}
 	};
 
 	release_volmeters();
@@ -948,6 +964,10 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 	const uint64_t STALE_THRESHOLD_NS = 200000000ULL; /* 200ms */
 
 	float peakMax = VU_SILENCE_DB;
+	float peakByChannel[MAX_AUDIO_CHANNELS];
+	for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++)
+		peakByChannel[ch] = VU_SILENCE_DB;
+	int detectedChannels = 1;
 	for (auto &sv : cellVm->meters) {
 		if (!sv)
 			continue;
@@ -962,12 +982,22 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 			continue;
 
 		int ch = sv->channels > 0 ? sv->channels : 2;
+		if (ch > detectedChannels)
+			detectedChannels = ch;
 		for (int c = 0; c < ch && c < MAX_AUDIO_CHANNELS; c++) {
 			float p = sv->peak[c];
-			if (std::isfinite(p) && p > peakMax)
-				peakMax = p;
+			if (std::isfinite(p)) {
+				if (p > peakMax)
+					peakMax = p;
+				if (p > peakByChannel[c])
+					peakByChannel[c] = p;
+			}
 		}
 	}
+	if (detectedChannels < 1)
+		detectedChannels = 1;
+	if (detectedChannels > MAX_AUDIO_CHANNELS)
+		detectedChannels = MAX_AUDIO_CHANNELS;
 
 	/* Apply ballistics: immediate attack, gradual decay
 	 * Decay rates (matching OBS): Fast=23.5, Medium=11.76, Slow=8.57 dB/s */
@@ -1132,18 +1162,17 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		return;
 	}
 
-	/* Only draw bar segments and peak hold when there is actual signal.
-	 * Scale ticks/labels always render (below this block). */
-	if (level > 0.0f || holdLevel > 0.0f) {
-
+	auto draw_meter_lane = [&](int laneX, int laneY, int laneThickness, float laneLevel, float laneHoldLevel) {
+		if (laneThickness <= 0 || (laneLevel <= 0.0f && laneHoldLevel <= 0.0f))
+			return;
 		for (int s = 0; s < 3; s++) {
 			float segStart = segments[s].start;
 			float segEnd = segments[s].end;
 
 			/* Clip segment to actual level */
-			if (level <= segStart)
+			if (laneLevel <= segStart)
 				break;
-			float drawEnd = (level < segEnd) ? level : segEnd;
+			float drawEnd = (laneLevel < segEnd) ? laneLevel : segEnd;
 
 			int pixStart = (int)(segStart * (float)barFullLen + 0.5f);
 			int pixEnd = (int)(drawEnd * (float)barFullLen + 0.5f);
@@ -1162,9 +1191,10 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 					/* Normal: -∞ on left, 0dB on right */
 					drawX = barX + pixStart;
 				}
-				startRegion(drawX, barY, pixLen, barW, 0.0f, (float)pixLen, 0.0f, (float)barW);
+				startRegion(drawX, laneY, pixLen, laneThickness, 0.0f, (float)pixLen, 0.0f,
+					    (float)laneThickness);
 				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, pixLen, barW);
+					gs_draw_sprite(nullptr, 0, pixLen, laneThickness);
 				endRegion();
 			} else {
 				int drawY;
@@ -1175,25 +1205,26 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 					/* Normal: -∞ on top (bottom-up), 0dB at bottom */
 					drawY = barY + barFullLen - pixEnd;
 				}
-				startRegion(barX, drawY, barW, pixLen, 0.0f, (float)barW, 0.0f, (float)pixLen);
+				startRegion(laneX, drawY, laneThickness, pixLen, 0.0f, (float)laneThickness, 0.0f,
+					    (float)pixLen);
 				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, barW, pixLen);
+					gs_draw_sprite(nullptr, 0, laneThickness, pixLen);
 				endRegion();
 			}
 		}
 
 		/* ---- Peak Hold marker ---- */
-		if (vmSettings.peakHoldEnabled && holdLevel > 0.0f) {
+		if (vmSettings.peakHoldEnabled && laneHoldLevel > 0.0f) {
 			int holdWidthPx = vmSettings.peakHoldWidthPx;
-			int holdPos = (int)(holdLevel * (float)barFullLen + 0.5f);
+			int holdPos = (int)(laneHoldLevel * (float)barFullLen + 0.5f);
 			if (holdPos > barFullLen)
 				holdPos = barFullLen;
 
 			/* Determine color from dB zone */
 			uint32_t holdColor;
-			if (holdLevel >= errorNorm)
+			if (laneHoldLevel >= errorNorm)
 				holdColor = redColor;
-			else if (holdLevel >= warningNorm)
+			else if (laneHoldLevel >= warningNorm)
 				holdColor = yellowColor;
 			else
 				holdColor = greenColor;
@@ -1208,9 +1239,10 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 					hx = barX + holdPos - holdWidthPx;
 				if (hx < barX)
 					hx = barX;
-				startRegion(hx, barY, holdWidthPx, barW, 0.0f, (float)holdWidthPx, 0.0f, (float)barW);
+				startRegion(hx, laneY, holdWidthPx, laneThickness, 0.0f, (float)holdWidthPx, 0.0f,
+					    (float)laneThickness);
 				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, holdWidthPx, barW);
+					gs_draw_sprite(nullptr, 0, holdWidthPx, laneThickness);
 				endRegion();
 			} else {
 				int hy;
@@ -1220,14 +1252,104 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 					hy = barY + barFullLen - holdPos;
 				if (hy < barY)
 					hy = barY;
-				startRegion(barX, hy, barW, holdWidthPx, 0.0f, (float)barW, 0.0f, (float)holdWidthPx);
+				startRegion(laneX, hy, laneThickness, holdWidthPx, 0.0f, (float)laneThickness, 0.0f,
+					    (float)holdWidthPx);
 				while (gs_effect_loop(solid, "Solid"))
-					gs_draw_sprite(nullptr, 0, barW, holdWidthPx);
+					gs_draw_sprite(nullptr, 0, laneThickness, holdWidthPx);
 				endRegion();
 			}
 		}
+	};
 
-	} /* end if (level > 0 || holdLevel > 0) — bar + peak hold only */
+	/* Only draw bar segments and peak hold when there is actual signal.
+	 * Scale ticks/labels always render (below this block). */
+	if (vmSettings.multiChannelEnabled && detectedChannels > 1) {
+		float channelLevels[MAX_AUDIO_CHANNELS];
+		float channelHoldLevels[MAX_AUDIO_CHANNELS];
+		for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+			float chPeak = peakByChannel[ch];
+			if (cellVm->channelLastRenderNs[ch] > 0) {
+				double deltaS = (double)(now - cellVm->channelLastRenderNs[ch]) * 1e-9;
+				if (deltaS > 0.0 && deltaS < 1.0) {
+					if (chPeak >= cellVm->channelDisplayPeak[ch]) {
+						cellVm->channelDisplayPeak[ch] = chPeak;
+					} else {
+						cellVm->channelDisplayPeak[ch] -= decayRate * (float)deltaS;
+						if (cellVm->channelDisplayPeak[ch] < chPeak)
+							cellVm->channelDisplayPeak[ch] = chPeak;
+					}
+				} else {
+					cellVm->channelDisplayPeak[ch] = chPeak;
+				}
+			} else {
+				cellVm->channelDisplayPeak[ch] = chPeak;
+			}
+			cellVm->channelLastRenderNs[ch] = now;
+
+			float chHoldLevel = 0.0f;
+			if (vmSettings.peakHoldEnabled) {
+				if (chPeak > cellVm->channelHoldPeak[ch]) {
+					cellVm->channelHoldPeak[ch] = chPeak;
+					cellVm->channelHoldSetAtNs[ch] = now;
+				} else if (cellVm->channelHoldSetAtNs[ch] > 0) {
+					uint64_t holdNs = (uint64_t)vmSettings.peakHoldMs * 1000000ULL;
+					if (now - cellVm->channelHoldSetAtNs[ch] > holdNs) {
+						double elapsedSinceHold =
+							(double)(now - cellVm->channelHoldSetAtNs[ch] - holdNs) * 1e-9;
+						cellVm->channelHoldPeak[ch] -=
+							(float)(vmSettings.peakHoldDecayDbPerSec * elapsedSinceHold);
+						if (cellVm->channelHoldPeak[ch] < VU_SILENCE_DB)
+							cellVm->channelHoldPeak[ch] = VU_SILENCE_DB;
+						if (cellVm->channelHoldPeak[ch] < chPeak) {
+							cellVm->channelHoldPeak[ch] = chPeak;
+							cellVm->channelHoldSetAtNs[ch] = now;
+						}
+					}
+				}
+				float hp = cellVm->channelHoldPeak[ch];
+				if (hp < minDB)
+					hp = minDB;
+				if (hp > maxDB)
+					hp = maxDB;
+				chHoldLevel = (hp - minDB) / (maxDB - minDB);
+			}
+
+			float chSmoothed = cellVm->channelDisplayPeak[ch];
+			if (chSmoothed < minDB)
+				chSmoothed = minDB;
+			if (chSmoothed > maxDB)
+				chSmoothed = maxDB;
+			channelLevels[ch] = (chSmoothed - minDB) / (maxDB - minDB);
+			channelHoldLevels[ch] = chHoldLevel;
+		}
+
+		const int totalThickness = (std::max)(1, barW);
+		const int channelCount = (std::min)(detectedChannels, MAX_AUDIO_CHANNELS);
+		int gap = 0;
+		if (channelCount > 1 && totalThickness >= channelCount * 2 + (channelCount - 1))
+			gap = 1;
+		const int totalGap = gap * (channelCount - 1);
+		const int laneBudget = (std::max)(1, totalThickness - totalGap);
+		const int baseLane = laneBudget / channelCount;
+		int remainder = laneBudget % channelCount;
+		int offset = 0;
+		for (int ch = 0; ch < channelCount; ch++) {
+			int laneThickness = baseLane + (remainder > 0 ? 1 : 0);
+			if (remainder > 0)
+				remainder--;
+			if (laneThickness <= 0)
+				continue;
+			if (isHorizontal)
+				draw_meter_lane(barX, barY + offset, laneThickness, channelLevels[ch],
+						channelHoldLevels[ch]);
+			else
+				draw_meter_lane(barX + offset, barY, laneThickness, channelLevels[ch],
+						channelHoldLevels[ch]);
+			offset += laneThickness + gap;
+		}
+	} else {
+		draw_meter_lane(barX, barY, barW, level, holdLevel);
+	}
 
 	/* ---- dB Scale ticks ---- */
 	if (vmSettings.scaleEnabled) {
