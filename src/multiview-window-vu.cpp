@@ -25,6 +25,17 @@ License: GPL-2.0-or-later
 /* Practical silence level in dB (below minimum display range) */
 #define VU_SILENCE_DB -200.0f
 
+static const char *default_vu_font_face()
+{
+#ifdef _WIN32
+	return "Arial";
+#elif __APPLE__
+	return "Helvetica";
+#else
+	return "Monospace";
+#endif
+}
+
 /* ---- helpers (same as OBS internal, duplicated for compilation unit) ---- */
 
 static inline void startRegion(int vX, int vY, int vCX, int vCY, float oL, float oR, float oT, float oB)
@@ -52,7 +63,12 @@ void MultiviewWindow::rebuild_scale_label_sources()
 	release_scale_label_sources();
 
 	/* Collect all unique dB tick values needed across cells */
-	std::vector<float> allTicks;
+	struct ScaleTextNeed {
+		float db = 0.0f;
+		int dbTenths = 0;
+		std::string fontFamily;
+	};
+	std::vector<ScaleTextNeed> allTicks;
 	for (size_t i = 0; i < effective_visuals_.size(); i++) {
 		const VuMeterSettings &vm = effective_visuals_[i].vuMeter;
 		if (!vm.enabled || !vm.scaleEnabled || !vm.scaleShowLabels)
@@ -71,16 +87,29 @@ void MultiviewWindow::rebuild_scale_label_sources()
 			pos = comma + 1;
 			try {
 				float val = std::stof(token);
-				if (val >= -96.0f && val <= 0.0f)
-					allTicks.push_back(val);
+				if (val >= -96.0f && val <= 0.0f) {
+					ScaleTextNeed need;
+					need.db = val;
+					need.dbTenths = (int)(val * 10.0f + (val < 0 ? -0.5f : 0.5f));
+					need.fontFamily = vm.fontFamily;
+					allTicks.push_back(std::move(need));
+				}
 			} catch (...) {
 			}
 		}
 	}
 
 	/* Deduplicate and cap at 20 unique entries */
-	std::sort(allTicks.begin(), allTicks.end());
-	allTicks.erase(std::unique(allTicks.begin(), allTicks.end()), allTicks.end());
+	std::sort(allTicks.begin(), allTicks.end(), [](const ScaleTextNeed &a, const ScaleTextNeed &b) {
+		if (a.dbTenths != b.dbTenths)
+			return a.dbTenths < b.dbTenths;
+		return a.fontFamily < b.fontFamily;
+	});
+	allTicks.erase(std::unique(allTicks.begin(), allTicks.end(),
+				   [](const ScaleTextNeed &a, const ScaleTextNeed &b) {
+					   return a.dbTenths == b.dbTenths && a.fontFamily == b.fontFamily;
+				   }),
+		       allTicks.end());
 	if (allTicks.size() > 20)
 		allTicks.resize(20);
 
@@ -88,8 +117,9 @@ void MultiviewWindow::rebuild_scale_label_sources()
 		return;
 
 	/* Create one text source per unique dB value */
-	for (float db : allTicks) {
-		int dbTenths = (int)(db * 10.0f + (db < 0 ? -0.5f : 0.5f));
+	for (const auto &need : allTicks) {
+		float db = need.db;
+		int dbTenths = need.dbTenths;
 
 		/* Format label text: integer if whole, one decimal otherwise */
 		char buf[16];
@@ -103,7 +133,8 @@ void MultiviewWindow::rebuild_scale_label_sources()
 #ifdef _WIN32
 		obs_data_t *fontObj = obs_data_create();
 		obs_data_set_int(fontObj, "size", 24);
-		obs_data_set_string(fontObj, "face", "Arial");
+		obs_data_set_string(fontObj, "face",
+				    need.fontFamily.empty() ? default_vu_font_face() : need.fontFamily.c_str());
 		obs_data_set_int(fontObj, "flags", 0);
 
 		obs_data_t *settings = obs_data_create();
@@ -119,11 +150,8 @@ void MultiviewWindow::rebuild_scale_label_sources()
 #else
 		obs_data_t *fontObj = obs_data_create();
 		obs_data_set_int(fontObj, "size", 24);
-#ifdef __APPLE__
-		obs_data_set_string(fontObj, "face", "Helvetica");
-#else
-		obs_data_set_string(fontObj, "face", "Monospace");
-#endif
+		obs_data_set_string(fontObj, "face",
+				    need.fontFamily.empty() ? default_vu_font_face() : need.fontFamily.c_str());
 		obs_data_set_int(fontObj, "flags", 0);
 
 		obs_data_t *settings = obs_data_create();
@@ -142,6 +170,7 @@ void MultiviewWindow::rebuild_scale_label_sources()
 		if (src) {
 			ScaleLabelEntry entry;
 			entry.dbTenths = dbTenths;
+			entry.fontFamily = need.fontFamily;
 			entry.source = src;
 			entry.width = obs_source_get_width(src);
 			entry.height = obs_source_get_height(src);
@@ -1556,7 +1585,7 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 			if (vmSettings.scaleShowLabels) {
 				int dbTenths = (int)(tickDB * 10.0f + (tickDB < 0 ? -0.5f : 0.5f));
 				for (auto &entry : scale_label_cache_) {
-					if (entry.dbTenths != dbTenths)
+					if (entry.dbTenths != dbTenths || entry.fontFamily != vmSettings.fontFamily)
 						continue;
 					if (!entry.source)
 						break;

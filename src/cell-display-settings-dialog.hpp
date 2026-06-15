@@ -100,6 +100,7 @@ private:
 	QComboBox *cmb_label_display_ = nullptr;
 	QComboBox *cmb_label_position_ = nullptr;
 	QPushButton *btn_label_font_ = nullptr;
+	QPushButton *btn_status_font_ = nullptr;
 	QSpinBox *spin_label_font_size_ = nullptr;
 	QComboBox *cmb_label_scale_mode_ = nullptr;
 	QSpinBox *spin_label_min_font_ = nullptr;
@@ -141,6 +142,7 @@ private:
 	QCheckBox *chk_vu_scale_ = nullptr;
 	QLineEdit *edit_vu_scale_ticks_ = nullptr;
 	QCheckBox *chk_vu_scale_labels_ = nullptr;
+	QPushButton *btn_vu_font_ = nullptr;
 	QComboBox *cmb_vu_scale_side_ = nullptr;
 
 	/* Overlay group */

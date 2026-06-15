@@ -63,12 +63,29 @@ static constexpr int STATUS_TEXT_RENDER_SIZE = 64;
  * top of any background image or fallback content. */
 static constexpr uint32_t STATUS_TEXT_COLOR = 0xFFFFFFFF;
 
+static const char *default_status_font_face()
+{
+#ifdef _WIN32
+	return "Arial";
+#elif __APPLE__
+	return "Helvetica";
+#else
+	return "Monospace";
+#endif
+}
+
 /* ---- private helpers ---- */
 
-void MultiviewWindow::ensure_status_text_source(StatusTextEntry &entry, const char *text)
+void MultiviewWindow::ensure_status_text_source(StatusTextEntry &entry, const char *text, const std::string &fontFamily)
 {
-	if (entry.source || !text || !*text)
+	if (!text || !*text)
 		return;
+	if (entry.source && entry.fontFamily == fontFamily)
+		return;
+	entry.source = nullptr;
+	entry.width = 0;
+	entry.height = 0;
+	entry.fontFamily = fontFamily;
 
 	/* Pad with spaces so the resulting source has a small horizontal margin
 	 * matching the OBS native multiview label aesthetic. */
@@ -80,9 +97,10 @@ void MultiviewWindow::ensure_status_text_source(StatusTextEntry &entry, const ch
 	/* Windows: text_gdiplus_v2 has solid CJK font fallback and matches what
 	 * `rebuild_label_sources()` already uses. Bold weight makes the overlay
 	 * stand out without needing an outline. */
+	const char *fontFace = fontFamily.empty() ? default_status_font_face() : fontFamily.c_str();
 	obs_data_t *fontObj = obs_data_create();
 	obs_data_set_int(fontObj, "size", STATUS_TEXT_RENDER_SIZE);
-	obs_data_set_string(fontObj, "face", "Arial");
+	obs_data_set_string(fontObj, "face", fontFace);
 	obs_data_set_int(fontObj, "flags", 1); /* Bold */
 
 	obs_data_t *settings = obs_data_create();
@@ -99,11 +117,7 @@ void MultiviewWindow::ensure_status_text_source(StatusTextEntry &entry, const ch
 #else
 	/* Mac/Linux: text_ft2_source_v2 is the canonical text source. Same
 	 * font fallback ladder as `rebuild_label_sources()`. */
-#ifdef __APPLE__
-	const char *fontFace = "Helvetica";
-#else
-	const char *fontFace = "Monospace";
-#endif
+	const char *fontFace = fontFamily.empty() ? default_status_font_face() : fontFamily.c_str();
 	obs_data_t *fontObj = obs_data_create();
 	obs_data_set_int(fontObj, "size", STATUS_TEXT_RENDER_SIZE);
 	obs_data_set_string(fontObj, "face", fontFace);
@@ -158,27 +172,35 @@ void MultiviewWindow::release_status_text_sources()
 	status_missing_source_.source = nullptr;
 	status_missing_source_.width = 0;
 	status_missing_source_.height = 0;
+	status_missing_source_.fontFamily.clear();
 	status_missing_scene_.source = nullptr;
 	status_missing_scene_.width = 0;
 	status_missing_scene_.height = 0;
+	status_missing_scene_.fontFamily.clear();
 	status_signal_lost_.source = nullptr;
 	status_signal_lost_.width = 0;
 	status_signal_lost_.height = 0;
+	status_signal_lost_.fontFamily.clear();
 	status_reconnecting_.source = nullptr;
 	status_reconnecting_.width = 0;
 	status_reconnecting_.height = 0;
+	status_reconnecting_.fontFamily.clear();
 	status_fallback_.source = nullptr;
 	status_fallback_.width = 0;
 	status_fallback_.height = 0;
+	status_fallback_.fontFamily.clear();
 	status_provider_missing_.source = nullptr;
 	status_provider_missing_.width = 0;
 	status_provider_missing_.height = 0;
+	status_provider_missing_.fontFamily.clear();
 	status_paused_.source = nullptr;
 	status_paused_.width = 0;
 	status_paused_.height = 0;
+	status_paused_.fontFamily.clear();
 	status_audio_only_.source = nullptr;
 	status_audio_only_.width = 0;
 	status_audio_only_.height = 0;
+	status_audio_only_.fontFamily.clear();
 }
 
 MultiviewWindow::StatusOverlayKind MultiviewWindow::status_overlay_kind_for_state(SignalRuntimeState state,
@@ -346,7 +368,13 @@ void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY,
 		return;
 	}
 
-	ensure_status_text_source(*entry, text);
+	const LabelSettings *labelSettings =
+		cellIndex < (int)effective_visuals_.size() ? &effective_visuals_[cellIndex].label : nullptr;
+	std::string fontFamily;
+	if (labelSettings)
+		fontFamily = labelSettings->statusFontFamily.empty() ? labelSettings->fontFamily
+								     : labelSettings->statusFontFamily;
+	ensure_status_text_source(*entry, text, fontFamily);
 	if (!entry->source)
 		return;
 

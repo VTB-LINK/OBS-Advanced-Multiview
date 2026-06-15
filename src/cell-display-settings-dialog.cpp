@@ -178,9 +178,12 @@ static QWidget *build_file_picker(QLineEdit *edit, QWidget *parent, const QStrin
 static void font_picker_refresh(QPushButton *btn)
 {
 	QString family = btn->property("fontFamily").toString();
+	QString defaultText = btn->property("fontDefaultText").toString();
+	if (defaultText.isEmpty())
+		defaultText = amv::text("AMVPlugin.Common.FontDefault");
 	QFont f = btn->font();
 	if (family.isEmpty()) {
-		btn->setText(amv::text("AMVPlugin.Common.FontDefault"));
+		btn->setText(defaultText);
 		f.setFamily(QApplication::font().family());
 	} else {
 		btn->setText(family);
@@ -189,11 +192,13 @@ static void font_picker_refresh(QPushButton *btn)
 	btn->setFont(f);
 }
 
-static QPushButton *build_font_picker(QWidget *parent, std::function<void()> on_changed)
+static QPushButton *build_font_picker(QWidget *parent, std::function<void()> on_changed,
+				      const QString &defaultText = QString())
 {
 	auto *btn = new QPushButton(parent);
 	btn->setCursor(Qt::PointingHandCursor);
 	btn->setProperty("fontFamily", QString());
+	btn->setProperty("fontDefaultText", defaultText);
 	font_picker_refresh(btn);
 
 	QObject::connect(btn, &QPushButton::clicked, btn, [btn, parent, on_changed]() {
@@ -455,6 +460,14 @@ QGroupBox *CellDisplaySettingsDialog::create_label_group()
 		emit settings_changed();
 	});
 	typographyForm->addRow(amv::text("AMVPlugin.Visual.Label.FontFamily"), btn_label_font_);
+	btn_status_font_ = build_font_picker(
+		grp_label_,
+		[this]() {
+			dirty_ = true;
+			emit settings_changed();
+		},
+		amv::text("AMVPlugin.Visual.Status.FontFollowLabel"));
+	typographyForm->addRow(amv::text("AMVPlugin.Visual.Status.FontFamily"), btn_status_font_);
 
 	spin_label_font_size_ = new QSpinBox(grp_label_);
 	spin_label_font_size_->setRange(6, 96);
@@ -727,6 +740,12 @@ QGroupBox *CellDisplaySettingsDialog::create_vu_meter_group()
 
 	chk_vu_scale_labels_ = new QCheckBox(grp_vu_meter_);
 	scaleForm->addRow(amv::text("AMVPlugin.Visual.VUMeter.ShowLabels"), chk_vu_scale_labels_);
+
+	btn_vu_font_ = build_font_picker(grp_vu_meter_, [this]() {
+		dirty_ = true;
+		emit settings_changed();
+	});
+	scaleForm->addRow(amv::text("AMVPlugin.Visual.VUMeter.FontFamily"), btn_vu_font_);
 
 	cmb_vu_scale_side_ = new QComboBox(grp_vu_meter_);
 	cmb_vu_scale_side_->addItem(amv::text("AMVPlugin.Common.Auto"), (int)VuMeterScaleSide::Auto);
@@ -1029,6 +1048,7 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	cmb_label_position_->setCurrentIndex((int)gs.label.position);
 	spin_label_font_size_->setValue(gs.label.fontSize);
 	font_picker_set(btn_label_font_, QString::fromStdString(gs.label.fontFamily));
+	font_picker_set(btn_status_font_, QString::fromStdString(gs.label.statusFontFamily));
 	cmb_label_scale_mode_->setCurrentIndex((int)gs.label.fontScaleMode);
 	spin_label_min_font_->setValue(gs.label.minFontSize);
 	spin_label_max_font_->setValue(gs.label.maxFontSize);
@@ -1073,6 +1093,7 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	chk_vu_scale_->setChecked(gs.vuMeter.scaleEnabled);
 	edit_vu_scale_ticks_->setText(QString::fromStdString(gs.vuMeter.scaleTicks));
 	chk_vu_scale_labels_->setChecked(gs.vuMeter.scaleShowLabels);
+	font_picker_set(btn_vu_font_, QString::fromStdString(gs.vuMeter.fontFamily));
 	cmb_vu_scale_side_->setCurrentIndex((int)gs.vuMeter.scaleSide);
 
 	/* Overlay */
@@ -1113,6 +1134,7 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 	gs.label.position = (LabelPosition)cmb_label_position_->currentIndex();
 	gs.label.fontSize = spin_label_font_size_->value();
 	gs.label.fontFamily = font_picker_get(btn_label_font_).toStdString();
+	gs.label.statusFontFamily = font_picker_get(btn_status_font_).toStdString();
 	gs.label.fontScaleMode = (FontScaleMode)cmb_label_scale_mode_->currentIndex();
 	gs.label.minFontSize = spin_label_min_font_->value();
 	gs.label.maxFontSize = spin_label_max_font_->value();
@@ -1149,6 +1171,7 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 	gs.vuMeter.scaleEnabled = chk_vu_scale_->isChecked();
 	gs.vuMeter.scaleTicks = edit_vu_scale_ticks_->text().toStdString();
 	gs.vuMeter.scaleShowLabels = chk_vu_scale_labels_->isChecked();
+	gs.vuMeter.fontFamily = font_picker_get(btn_vu_font_).toStdString();
 	gs.vuMeter.scaleSide = (VuMeterScaleSide)cmb_vu_scale_side_->currentIndex();
 
 	/* Overlay */
@@ -1198,6 +1221,7 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	cmb_label_position_->setCurrentIndex((int)is.label.position);
 	spin_label_font_size_->setValue(is.label.fontSize);
 	font_picker_set(btn_label_font_, QString::fromStdString(is.label.fontFamily));
+	font_picker_set(btn_status_font_, QString::fromStdString(is.label.statusFontFamily));
 	cmb_label_scale_mode_->setCurrentIndex((int)is.label.fontScaleMode);
 	spin_label_min_font_->setValue(is.label.minFontSize);
 	spin_label_max_font_->setValue(is.label.maxFontSize);
@@ -1240,6 +1264,7 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	chk_vu_scale_->setChecked(is.vuMeter.scaleEnabled);
 	edit_vu_scale_ticks_->setText(QString::fromStdString(is.vuMeter.scaleTicks));
 	chk_vu_scale_labels_->setChecked(is.vuMeter.scaleShowLabels);
+	font_picker_set(btn_vu_font_, QString::fromStdString(is.vuMeter.fontFamily));
 	cmb_vu_scale_side_->setCurrentIndex((int)is.vuMeter.scaleSide);
 
 	chk_overlay_enabled_->setChecked(is.overlay.enabled);
@@ -1293,6 +1318,7 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 	is.label.position = (LabelPosition)cmb_label_position_->currentIndex();
 	is.label.fontSize = spin_label_font_size_->value();
 	is.label.fontFamily = font_picker_get(btn_label_font_).toStdString();
+	is.label.statusFontFamily = font_picker_get(btn_status_font_).toStdString();
 	is.label.fontScaleMode = (FontScaleMode)cmb_label_scale_mode_->currentIndex();
 	is.label.minFontSize = spin_label_min_font_->value();
 	is.label.maxFontSize = spin_label_max_font_->value();
@@ -1329,6 +1355,7 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 	is.vuMeter.scaleEnabled = chk_vu_scale_->isChecked();
 	is.vuMeter.scaleTicks = edit_vu_scale_ticks_->text().toStdString();
 	is.vuMeter.scaleShowLabels = chk_vu_scale_labels_->isChecked();
+	is.vuMeter.fontFamily = font_picker_get(btn_vu_font_).toStdString();
 	is.vuMeter.scaleSide = (VuMeterScaleSide)cmb_vu_scale_side_->currentIndex();
 
 	/* Overlay */
@@ -1380,6 +1407,7 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 	cmb_label_position_->setCurrentIndex((int)cs.label.position);
 	spin_label_font_size_->setValue(cs.label.fontSize);
 	font_picker_set(btn_label_font_, QString::fromStdString(cs.label.fontFamily));
+	font_picker_set(btn_status_font_, QString::fromStdString(cs.label.statusFontFamily));
 	cmb_label_scale_mode_->setCurrentIndex((int)cs.label.fontScaleMode);
 	spin_label_min_font_->setValue(cs.label.minFontSize);
 	spin_label_max_font_->setValue(cs.label.maxFontSize);
@@ -1422,6 +1450,7 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 	chk_vu_scale_->setChecked(cs.vuMeter.scaleEnabled);
 	edit_vu_scale_ticks_->setText(QString::fromStdString(cs.vuMeter.scaleTicks));
 	chk_vu_scale_labels_->setChecked(cs.vuMeter.scaleShowLabels);
+	font_picker_set(btn_vu_font_, QString::fromStdString(cs.vuMeter.fontFamily));
 	cmb_vu_scale_side_->setCurrentIndex((int)cs.vuMeter.scaleSide);
 
 	chk_overlay_enabled_->setChecked(cs.overlay.enabled);
@@ -1480,6 +1509,7 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.label.position = (LabelPosition)cmb_label_position_->currentIndex();
 	cs.label.fontSize = spin_label_font_size_->value();
 	cs.label.fontFamily = font_picker_get(btn_label_font_).toStdString();
+	cs.label.statusFontFamily = font_picker_get(btn_status_font_).toStdString();
 	cs.label.fontScaleMode = (FontScaleMode)cmb_label_scale_mode_->currentIndex();
 	cs.label.minFontSize = spin_label_min_font_->value();
 	cs.label.maxFontSize = spin_label_max_font_->value();
@@ -1516,6 +1546,7 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.vuMeter.scaleEnabled = chk_vu_scale_->isChecked();
 	cs.vuMeter.scaleTicks = edit_vu_scale_ticks_->text().toStdString();
 	cs.vuMeter.scaleShowLabels = chk_vu_scale_labels_->isChecked();
+	cs.vuMeter.fontFamily = font_picker_get(btn_vu_font_).toStdString();
 	cs.vuMeter.scaleSide = (VuMeterScaleSide)cmb_vu_scale_side_->currentIndex();
 
 	/* Overlay */

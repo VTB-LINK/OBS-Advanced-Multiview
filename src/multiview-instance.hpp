@@ -96,7 +96,8 @@ struct BackgroundSettings {
 struct LabelSettings {
 	LabelDisplayMode displayMode = LabelDisplayMode::Overlay;
 	LabelPosition position = LabelPosition::Bottom;
-	std::string fontFamily; /* empty = system default */
+	std::string fontFamily;       /* empty = system default */
+	std::string statusFontFamily; /* empty = follow label font */
 	int fontSize = 14;
 	FontScaleMode fontScaleMode = FontScaleMode::ScaleWithCell;
 	int minFontSize = 8;
@@ -157,6 +158,7 @@ struct VuMeterSettings {
 	bool scaleEnabled = true;
 	std::string scaleTicks; /* CSV dB values; empty = default "-60,-40,-20,-9,0" */
 	bool scaleShowLabels = true;
+	std::string fontFamily;           /* empty = system default */
 	uint32_t scaleColor = 0x80FFFFFF; /* ARGB half-transparent white */
 	VuMeterScaleSide scaleSide = VuMeterScaleSide::Same;
 

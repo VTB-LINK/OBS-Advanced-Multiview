@@ -456,6 +456,7 @@ private:
 		OBSSource source;   /* private text_gdiplus / text_ft2_source_v2 */
 		uint32_t width = 0; /* cached after first non-zero query */
 		uint32_t height = 0;
+		std::string fontFamily;
 	};
 	enum class StatusOverlayKind {
 		None,
@@ -476,7 +477,7 @@ private:
 	StatusTextEntry status_provider_missing_; /* M6.2 host-plugin missing */
 	StatusTextEntry status_paused_;           /* M6.6 user-paused media */
 	StatusTextEntry status_audio_only_;       /* direct OBS audio input/output capture */
-	void ensure_status_text_source(StatusTextEntry &entry, const char *text);
+	void ensure_status_text_source(StatusTextEntry &entry, const char *text, const std::string &fontFamily);
 	void release_status_text_sources();
 	StatusOverlayKind status_overlay_kind_for_state(SignalRuntimeState state, const std::string &cellType,
 							SignalProviderType providerType) const;
@@ -485,6 +486,7 @@ private:
 	/* dB scale label text sources (cached per unique dB value) */
 	struct ScaleLabelEntry {
 		int dbTenths = 0; /* dB * 10, used as key */
+		std::string fontFamily;
 		OBSSource source;
 		uint32_t width = 0;
 		uint32_t height = 0;

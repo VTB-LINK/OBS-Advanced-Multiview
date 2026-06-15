@@ -471,6 +471,7 @@ obs_data_t *LabelSettings::to_obs_data() const
 
 	obs_data_t *typography = obs_data_create();
 	obs_data_set_string(typography, "fontFamily", fontFamily.c_str());
+	obs_data_set_string(typography, "statusFontFamily", statusFontFamily.c_str());
 	obs_data_set_int(typography, "fontSize", fontSize);
 	obs_data_set_string(typography, "scaleMode", font_scale_mode_to_str(fontScaleMode));
 	obs_data_set_int(typography, "minFontSize", minFontSize);
@@ -510,6 +511,7 @@ LabelSettings LabelSettings::from_obs_data(obs_data_t *data)
 	obs_data_t *typography = obs_data_get_obj(data, "typography");
 	if (typography) {
 		s.fontFamily = obs_data_get_string(typography, "fontFamily");
+		s.statusFontFamily = obs_data_get_string(typography, "statusFontFamily");
 		s.fontSize = (int)obs_data_get_int(typography, "fontSize");
 		if (obs_data_has_user_value(typography, "scaleMode"))
 			s.fontScaleMode = font_scale_mode_from_str(obs_data_get_string(typography, "scaleMode"));
@@ -523,6 +525,8 @@ LabelSettings LabelSettings::from_obs_data(obs_data_t *data)
 	 * from a manually edited config from breaking Qt font enumeration. */
 	if (s.fontFamily.size() > 128)
 		s.fontFamily.resize(128);
+	if (s.statusFontFamily.size() > 128)
+		s.statusFontFamily.resize(128);
 	if (s.fontSize < 1)
 		s.fontSize = 14;
 	if (s.fontSize > 200)
@@ -683,6 +687,7 @@ obs_data_t *VuMeterSettings::to_obs_data() const
 	obs_data_set_bool(scale, "enabled", scaleEnabled);
 	obs_data_set_string(scale, "ticksDb", scaleTicks.c_str());
 	obs_data_set_bool(scale, "showLabels", scaleShowLabels);
+	obs_data_set_string(scale, "fontFamily", fontFamily.c_str());
 	obs_data_set_int(scale, "color", (long long)scaleColor);
 	obs_data_set_string(scale, "side", vu_meter_scale_side_to_str(scaleSide));
 	obs_data_set_obj(data, "scale", scale);
@@ -811,12 +816,16 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 			s.scaleTicks = obs_data_get_string(scale, "ticksDb");
 		if (obs_data_has_user_value(scale, "showLabels"))
 			s.scaleShowLabels = obs_data_get_bool(scale, "showLabels");
+		if (obs_data_has_user_value(scale, "fontFamily"))
+			s.fontFamily = obs_data_get_string(scale, "fontFamily");
 		if (obs_data_has_user_value(scale, "color"))
 			s.scaleColor = (uint32_t)obs_data_get_int(scale, "color");
 		if (obs_data_has_user_value(scale, "side"))
 			s.scaleSide = vu_meter_scale_side_from_str(obs_data_get_string(scale, "side"));
 		obs_data_release(scale);
 	}
+	if (s.fontFamily.size() > 128)
+		s.fontFamily.resize(128);
 	return s;
 }
 

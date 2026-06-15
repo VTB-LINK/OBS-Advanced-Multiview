@@ -916,6 +916,7 @@ void MultiviewWindow::refresh_visual_settings()
 		}
 
 		rebuild_label_sources();
+		release_status_text_sources();
 	}
 
 	/* Image rebuild involves obs_enter_graphics() which must be called
