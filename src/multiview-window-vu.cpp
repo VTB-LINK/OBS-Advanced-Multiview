@@ -1211,7 +1211,9 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		barFullLen = (int)(anchorW * vmSettings.lengthRatio + 0.5);
 		int offset;
 		if (vmSettings.alignment == VuMeterAlignment::Start) {
-			offset = 0; /* anchor at -∞ end (left for horizontal) */
+			/* Anchor the -∞ root to the cell edge it actually renders against.
+			   Normal: root on left -> left-align. Flip: root on right -> right-align. */
+			offset = vmSettings.flip ? (anchorW - barFullLen) : 0;
 		} else {
 			offset = (anchorW - barFullLen) / 2; /* center */
 		}
@@ -1221,7 +1223,8 @@ void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int v
 		barFullLen = (int)(anchorH * vmSettings.lengthRatio + 0.5);
 		int offset;
 		if (vmSettings.alignment == VuMeterAlignment::Start) {
-			offset = anchorH - barFullLen; /* anchor at -∞ end (bottom for vertical) */
+			/* Normal: root on bottom -> bottom-align. Flip: root on top -> top-align. */
+			offset = vmSettings.flip ? 0 : (anchorH - barFullLen);
 		} else {
 			offset = (anchorH - barFullLen) / 2; /* center */
 		}
