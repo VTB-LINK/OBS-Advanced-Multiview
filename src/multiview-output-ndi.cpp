@@ -8,6 +8,7 @@ License: GPL-2.0-or-later
 #ifdef AMV_ENABLE_NDI_OUTPUT
 
 #include "multiview-output-ndi.hpp"
+#include "amv-frontend-cache.hpp"
 #include "multiview-ndi-runtime.hpp"
 #include "amv-logging.hpp"
 
@@ -243,12 +244,9 @@ private:
 
 		/* FollowStreaming: lowest set bit of the streaming output's mixer mask
 		 * (single-track semantics, matching the VU meter's AutoFollowStreaming).
-		 * obs_frontend_get_streaming_output returns +1 ref; release after use. */
-		uint32_t mask = 0;
-		if (obs_output_t *so = obs_frontend_get_streaming_output()) {
-			mask = (uint32_t)obs_output_get_mixers(so);
-			obs_output_release(so);
-		}
+		 * Read from the main-thread-updated frontend cache — never call
+		 * obs_frontend_* on the render/graphics thread (issue #10 isolation F2). */
+		uint32_t mask = amv_frontend::streaming_mixers();
 		for (int i = 0; i < 6; i++) {
 			if (mask & (1u << i))
 				return (size_t)i;

@@ -8,6 +8,7 @@ License: GPL-2.0-or-later
 */
 
 #include "amv-instance-core.hpp"
+#include "amv-frontend-cache.hpp"
 #include "amv-logging.hpp"
 
 #include <obs-module.h>
@@ -254,14 +255,11 @@ uint32_t AmvInstanceCore::compute_active_track_bit()
 		return 1u << (idx - 1);
 	}
 
-	/* AutoFollow: query streaming output mixer mask.
-	 * obs_frontend_get_streaming_output() returns +1 ref; release after use. */
-	obs_output_t *so = obs_frontend_get_streaming_output();
-	uint32_t mask = 0;
-	if (so) {
-		mask = (uint32_t)obs_output_get_mixers(so);
-		obs_output_release(so);
-	}
+	/* AutoFollow: streaming output mixer mask, read from the main-thread-updated
+	 * frontend cache (never call obs_frontend_* on the render thread — issue #10
+	 * isolation F2). The cache reads obs_output_get_mixers live, so mid-stream
+	 * track edits are still followed. */
+	uint32_t mask = amv_frontend::streaming_mixers();
 	if (mask == 0)
 		return 0x1; /* Track 1 fallback */
 	/* Lowest set bit only (single track semantics) */
@@ -568,17 +566,17 @@ void AmvInstanceCore::rebuild_volmeters()
 		bool isPgm = false;
 
 		if (cs.type == "pgm") {
-			cellSrc = obs_frontend_get_current_scene();
+			cellSrc = amv_frontend::current_program_scene();
 			isPgm = true;
 			has_pgm_cell_ = true;
 		} else if (cs.type == "prvw") {
-			cellSrc = obs_frontend_get_current_preview_scene();
+			cellSrc = amv_frontend::current_preview_scene();
 			if (!cellSrc) {
 				/* Studio Mode disabled: PRVW has no separate scene, so it
 				 * 100% mirrors PGM (matches render() fallback). Treat the
 				 * cell as PGM for VU purposes — also enables the global
 				 * channel 1..5 sweep below. */
-				cellSrc = obs_frontend_get_current_scene();
+				cellSrc = amv_frontend::current_program_scene();
 				isPgm = (cellSrc != nullptr);
 				if (isPgm)
 					has_pgm_cell_ = true;
@@ -714,11 +712,11 @@ void AmvInstanceCore::rebuild_volmeters()
 
 	/* Track current PGM/PRVW scenes for change detection */
 	if (has_pgm_cell_) {
-		OBSSourceAutoRelease pgm = obs_frontend_get_current_scene();
+		OBSSourceAutoRelease pgm = amv_frontend::current_program_scene();
 		last_pgm_scene_ = pgm ? OBSGetWeakRef(pgm) : nullptr;
 	}
 	if (has_prvw_cell_) {
-		OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
+		OBSSourceAutoRelease prvw = amv_frontend::current_preview_scene();
 		last_prvw_scene_ = prvw ? OBSGetWeakRef(prvw) : nullptr;
 	}
 
@@ -753,13 +751,13 @@ void AmvInstanceCore::check_scene_change_for_volmeters()
 	bool needRebuild = false;
 
 	if (has_pgm_cell_) {
-		OBSSourceAutoRelease pgm = obs_frontend_get_current_scene();
+		OBSSourceAutoRelease pgm = amv_frontend::current_program_scene();
 		OBSWeakSource currentWeak = pgm ? OBSGetWeakRef(pgm) : nullptr;
 		if (currentWeak != last_pgm_scene_)
 			needRebuild = true;
 	}
 	if (!needRebuild && has_prvw_cell_) {
-		OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
+		OBSSourceAutoRelease prvw = amv_frontend::current_preview_scene();
 		OBSWeakSource currentWeak = prvw ? OBSGetWeakRef(prvw) : nullptr;
 		if (currentWeak != last_prvw_scene_)
 			needRebuild = true;
@@ -869,15 +867,15 @@ void AmvInstanceCore::collect_active_source_pointers(std::vector<void *> &out, u
 		obs_source_t *cellSrc = nullptr;
 		bool isPgm = false;
 		if (cs.type == "pgm") {
-			cellSrc = obs_frontend_get_current_scene();
+			cellSrc = amv_frontend::current_program_scene();
 			isPgm = true;
 		} else if (cs.type == "prvw") {
-			cellSrc = obs_frontend_get_current_preview_scene();
+			cellSrc = amv_frontend::current_preview_scene();
 			if (!cellSrc) {
 				/* Studio Mode off: PRVW mirrors PGM. Match rebuild path so
 				 * the polling-based set comparison stays consistent across
 				 * studio-mode toggles. */
-				cellSrc = obs_frontend_get_current_scene();
+				cellSrc = amv_frontend::current_program_scene();
 				isPgm = (cellSrc != nullptr);
 			}
 		} else {

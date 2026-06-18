@@ -8,6 +8,7 @@ License: GPL-2.0-or-later
 */
 
 #include "amv-instance-core.hpp"
+#include "amv-frontend-cache.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -53,10 +54,10 @@ void AmvInstanceCore::refresh_highlight_tree_sets()
 {
 	pgm_tree_set_.clear();
 	prvw_tree_set_.clear();
-	OBSSourceAutoRelease pgm = obs_frontend_get_current_scene();
+	OBSSourceAutoRelease pgm = amv_frontend::current_program_scene();
 	if (pgm)
 		collect_tree_sources(pgm, pgm_tree_set_);
-	OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
+	OBSSourceAutoRelease prvw = amv_frontend::current_preview_scene();
 	if (prvw)
 		collect_tree_sources(prvw, prvw_tree_set_);
 }
@@ -86,8 +87,8 @@ AmvInstanceCore::HighlightKind AmvInstanceCore::compute_cell_highlight(int cellI
 	if (!cellSrc)
 		return HighlightKind::None;
 
-	OBSSourceAutoRelease pgm = obs_frontend_get_current_scene();
-	OBSSourceAutoRelease prvw = obs_frontend_get_current_preview_scene();
+	OBSSourceAutoRelease pgm = amv_frontend::current_program_scene();
+	OBSSourceAutoRelease prvw = amv_frontend::current_preview_scene();
 
 	if (pgm && cellSrc == pgm.Get())
 		return HighlightKind::PgmDirect;

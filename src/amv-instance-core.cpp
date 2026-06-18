@@ -12,6 +12,7 @@ License: GPL-2.0-or-later
 */
 
 #include "amv-instance-core.hpp"
+#include "amv-frontend-cache.hpp"
 #include "multiview-output.hpp"
 
 #include <obs.h>
@@ -26,6 +27,11 @@ AmvInstanceCore::AmvInstanceCore(ConfigManager *config, const std::string &uuid)
 	obs_video_info ovi;
 	if (obs_get_video_info(&ovi))
 		canvas_aspect_ = (double)ovi.base_width / (double)ovi.base_height;
+
+	/* Safety net (F2): cores are created on the main thread (window open /
+	 * output enable). Prime the frontend cache so the first render pass has a
+	 * valid program/preview scene even if no frontend event fired since load. */
+	amv_frontend::refresh();
 }
 
 AmvInstanceCore::~AmvInstanceCore()

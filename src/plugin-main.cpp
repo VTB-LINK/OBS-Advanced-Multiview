@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <plugin-support.h>
 
+#include "amv-frontend-cache.hpp"
 #include "config-manager.hpp"
 #include "manager-dialog.hpp"
 #include "multiview-window.hpp"
@@ -522,6 +523,14 @@ static void unregister_source_list_signals()
 
 static void on_frontend_event(enum obs_frontend_event event, void *)
 {
+	/* Issue #10 isolation F2: keep the frontend cache (program/preview scene +
+	 * streaming output) current from the MAIN thread. The render/graphics
+	 * thread reads this cache instead of calling obs_frontend_* directly, which
+	 * would race OBS's main-thread scene switch (potential UAF). Frontend events
+	 * are coarse (scene/preview/studio/streaming/collection/load) and infrequent,
+	 * so refreshing on every event is cheap and guarantees freshness. */
+	amv_frontend::refresh();
+
 	if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
 		if (config_manager) {
 			config_manager->on_scene_collection_changed();
@@ -597,6 +606,10 @@ void obs_module_unload(void)
 	}
 
 	signal_provider_registry_shutdown();
+
+	/* Release the frontend cache's cached scene/output refs (F2). Done after all
+	 * windows/cores are gone, so no render pass can read it concurrently. */
+	amv_frontend::shutdown();
 
 	obs_log(LOG_INFO, "plugin unloaded");
 }

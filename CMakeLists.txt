@@ -56,6 +56,8 @@ target_sources(
     src/external-output-settings-dialog.cpp
     src/signal-lost-settings-dialog.hpp
     src/signal-lost-settings-dialog.cpp
+    src/amv-frontend-cache.hpp
+    src/amv-frontend-cache.cpp
     src/amv-instance-core.hpp
     src/amv-instance-core.cpp
     src/amv-instance-core-sources.cpp

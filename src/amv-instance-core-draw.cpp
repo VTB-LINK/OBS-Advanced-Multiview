@@ -13,6 +13,7 @@ License: GPL-2.0-or-later
 */
 
 #include "amv-instance-core.hpp"
+#include "amv-frontend-cache.hpp"
 #include "amv-logging.hpp"
 #include "amv-i18n.hpp"
 
@@ -141,15 +142,15 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 				/* PGM: we use obs_render_main_texture() for
 				 * composited output (includes transitions).
 				 * Still get current scene to verify non-null. */
-				srcHolder = obs_frontend_get_current_scene();
+				srcHolder = amv_frontend::current_program_scene();
 				src = srcHolder;
 				isPgm = true;
 			} else if (cs.type == "prvw") {
 				/* Resolve PRVW fresh each frame */
-				srcHolder = obs_frontend_get_current_preview_scene();
+				srcHolder = amv_frontend::current_preview_scene();
 				if (!srcHolder) {
 					/* No Studio Mode → fallback to PGM */
-					srcHolder = obs_frontend_get_current_scene();
+					srcHolder = amv_frontend::current_program_scene();
 					isPrvwFallback = (srcHolder != nullptr);
 				}
 				src = srcHolder;
@@ -323,7 +324,7 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 				const LostSignalSettings &eff = cs.effective_lost;
 				const std::string &ft = eff.fallbackType;
 				if (ft == "pgm") {
-					srcHolder = obs_frontend_get_current_scene();
+					srcHolder = amv_frontend::current_program_scene();
 					if (srcHolder && !obs_source_removed(srcHolder)) {
 						src = srcHolder;
 						isPgm = true;
@@ -332,9 +333,9 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 						srcHolder = nullptr;
 					}
 				} else if (ft == "prvw") {
-					srcHolder = obs_frontend_get_current_preview_scene();
+					srcHolder = amv_frontend::current_preview_scene();
 					if (!srcHolder)
-						srcHolder = obs_frontend_get_current_scene();
+						srcHolder = amv_frontend::current_program_scene();
 					if (srcHolder && !obs_source_removed(srcHolder)) {
 						src = srcHolder;
 						isFallback = true;
