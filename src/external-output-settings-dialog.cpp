@@ -167,6 +167,7 @@ QWidget *ExternalOutputSettingsDialog::build_backend_tab(BackendWidgets &w, bool
 	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.FollowStreaming"),
 			     (int)OutputAudioMode::FollowStreaming);
 	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.ManualTrack"), (int)OutputAudioMode::ManualTrack);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.None"), (int)OutputAudioMode::None);
 	form->addRow(amv::text("AMVPlugin.Output.Audio"), w.audioMode);
 
 	w.audioTrack = new QSpinBox(tab);

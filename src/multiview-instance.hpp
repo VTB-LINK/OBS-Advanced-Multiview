@@ -539,9 +539,11 @@ bool obs_record_rescale_dimensions(uint32_t &w, uint32_t &h);
 /* Which OBS audio the backend transmits alongside video (issue #11).
  *   FollowStreaming: the track(s) OBS sends to its streaming output.
  *   ManualTrack:     a fixed mixer track 1..6 (audioTrackIndex).
+ *   None:            video-only (no audio transmitted) — also sidesteps the
+ *                    audio-leads-video desync when NDI double-buffer is on.
  * Mirrors the VU meter's VuMeterTrackMode source selection. Spout carries no
  * audio, so its audio controls are disabled in the dialog. */
-enum class OutputAudioMode { FollowStreaming, ManualTrack };
+enum class OutputAudioMode { FollowStreaming, ManualTrack, None };
 
 struct OutputBackendSettings {
 	bool enabled = false;

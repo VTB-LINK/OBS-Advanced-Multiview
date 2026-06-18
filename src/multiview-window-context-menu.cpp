@@ -33,6 +33,8 @@ License: GPL-2.0-or-later
 #include <QApplication>
 #include <QInputDialog>
 #include <QMenu>
+
+#include <functional>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QScreen>
@@ -188,52 +190,56 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 	onTopAction->setChecked(is_always_on_top_);
 	connect(onTopAction, &QAction::triggered, this, &MultiviewWindow::on_toggle_always_on_top);
 
-	{
-		MultiviewInstance *inst = config_->find_instance(uuid_);
-		if (inst) {
-			bool safeEnabled = false;
-			if (inst->visualSettings.safeAreaMode == InheritanceMode::Override)
-				safeEnabled = inst->visualSettings.safeArea.enabled;
-			else
-				safeEnabled = config_->global_settings().visualSettings.safeArea.enabled;
+	/* Safe Area + VU Meter are tri-state per instance: Inherit (follow the global
+	 * default) / On / Off. A plain checkbox could only flip On<->Off and force
+	 * Override, with no way back to Inherit — so each is a submenu of three radio
+	 * items. The Inherit item shows what the global currently resolves to. */
+	auto add_tristate = [this, &menu](const char *titleKey, InheritanceMode mode, bool overrideEnabled,
+					  bool globalEnabled, std::function<void(InheritanceMode, bool)> apply) {
+		QMenu *sub = menu.addMenu(amv::text(titleKey));
+		QAction *aInherit = sub->addAction(
+			amv::text("AMVPlugin.ContextMenu.InheritGlobal")
+				.arg(amv::text(globalEnabled ? "AMVPlugin.Common.On" : "AMVPlugin.Common.Off")));
+		aInherit->setCheckable(true);
+		aInherit->setChecked(mode == InheritanceMode::Inherit);
+		QAction *aOn = sub->addAction(amv::text("AMVPlugin.Common.On"));
+		aOn->setCheckable(true);
+		aOn->setChecked(mode == InheritanceMode::Override && overrideEnabled);
+		QAction *aOff = sub->addAction(amv::text("AMVPlugin.Common.Off"));
+		aOff->setCheckable(true);
+		aOff->setChecked(mode == InheritanceMode::Override && !overrideEnabled);
+		connect(aInherit, &QAction::triggered, this, [apply]() { apply(InheritanceMode::Inherit, false); });
+		connect(aOn, &QAction::triggered, this, [apply]() { apply(InheritanceMode::Override, true); });
+		connect(aOff, &QAction::triggered, this, [apply]() { apply(InheritanceMode::Override, false); });
+	};
 
-			QAction *safeAreaAction = menu.addAction(amv::text("AMVPlugin.Visual.SafeArea.Title"));
-			safeAreaAction->setCheckable(true);
-			safeAreaAction->setChecked(safeEnabled);
-			connect(safeAreaAction, &QAction::triggered, this, [this, safeEnabled]() {
-				MultiviewInstance *inst = config_->find_instance(uuid_);
-				if (!inst)
-					return;
-				inst->visualSettings.safeAreaMode = InheritanceMode::Override;
-				inst->visualSettings.safeArea.enabled = !safeEnabled;
-				config_->save();
-				refresh_visual_settings();
-			});
-		}
-	}
-
-	{
-		MultiviewInstance *inst = config_->find_instance(uuid_);
-		if (inst) {
-			bool vuEnabled = false;
-			if (inst->visualSettings.vuMeterMode == InheritanceMode::Override)
-				vuEnabled = inst->visualSettings.vuMeter.enabled;
-			else
-				vuEnabled = config_->global_settings().visualSettings.vuMeter.enabled;
-
-			QAction *vuAction = menu.addAction(amv::text("AMVPlugin.Visual.VUMeter.Title"));
-			vuAction->setCheckable(true);
-			vuAction->setChecked(vuEnabled);
-			connect(vuAction, &QAction::triggered, this, [this, vuEnabled]() {
-				MultiviewInstance *inst = config_->find_instance(uuid_);
-				if (!inst)
-					return;
-				inst->visualSettings.vuMeterMode = InheritanceMode::Override;
-				inst->visualSettings.vuMeter.enabled = !vuEnabled;
-				config_->save();
-				refresh_visual_settings();
-			});
-		}
+	if (MultiviewInstance *inst = config_->find_instance(uuid_)) {
+		add_tristate("AMVPlugin.Visual.SafeArea.Title", inst->visualSettings.safeAreaMode,
+			     inst->visualSettings.safeArea.enabled,
+			     config_->global_settings().visualSettings.safeArea.enabled,
+			     [this](InheritanceMode m, bool en) {
+				     MultiviewInstance *i = config_->find_instance(uuid_);
+				     if (!i)
+					     return;
+				     i->visualSettings.safeAreaMode = m;
+				     if (m == InheritanceMode::Override)
+					     i->visualSettings.safeArea.enabled = en;
+				     config_->save();
+				     refresh_visual_settings();
+			     });
+		add_tristate("AMVPlugin.Visual.VUMeter.Title", inst->visualSettings.vuMeterMode,
+			     inst->visualSettings.vuMeter.enabled,
+			     config_->global_settings().visualSettings.vuMeter.enabled,
+			     [this](InheritanceMode m, bool en) {
+				     MultiviewInstance *i = config_->find_instance(uuid_);
+				     if (!i)
+					     return;
+				     i->visualSettings.vuMeterMode = m;
+				     if (m == InheritanceMode::Override)
+					     i->visualSettings.vuMeter.enabled = en;
+				     config_->save();
+				     refresh_visual_settings();
+			     });
 	}
 
 	/* External output (Spout/NDI) is configured per-instance from the manager's

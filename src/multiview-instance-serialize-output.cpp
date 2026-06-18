@@ -57,6 +57,8 @@ static const char *output_audio_mode_to_str(OutputAudioMode m)
 	switch (m) {
 	case OutputAudioMode::ManualTrack:
 		return "manualTrack";
+	case OutputAudioMode::None:
+		return "none";
 	default:
 		return "followStreaming";
 	}
@@ -66,6 +68,8 @@ static OutputAudioMode output_audio_mode_from_str(const char *s)
 {
 	if (s && strcmp(s, "manualTrack") == 0)
 		return OutputAudioMode::ManualTrack;
+	if (s && strcmp(s, "none") == 0)
+		return OutputAudioMode::None;
 	return OutputAudioMode::FollowStreaming;
 }
 

@@ -168,6 +168,15 @@ public:
 		want_audio_mode_ = cfg.audioMode;
 		want_audio_track_ = cfg.audioTrackIndex;
 
+		/* None: transmit video only — drop any existing capture and never
+		 * connect. (Also avoids the audio-leads-video desync when the readback
+		 * double-buffer is on.) */
+		if (cfg.audioMode == OutputAudioMode::None) {
+			if (audio_connected_)
+				disconnect_audio();
+			return;
+		}
+
 		/* Reconnect immediately on a settings change or first connect; for
 		 * FollowStreaming, also re-poll the streaming track periodically so we
 		 * track the user re-assigning it mid-session (the per-frame frontend
