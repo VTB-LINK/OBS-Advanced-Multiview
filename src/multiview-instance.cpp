@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "multiview-instance.hpp"
 
 #include <QUuid>
+#include <obs.h>
 #include <obs-data.h>
 #include <plugin-support.h>
 
@@ -1162,6 +1163,102 @@ SceneClickSwitchSettings SceneClickSwitchSettings::from_obs_data(obs_data_t *dat
 	return s;
 }
 
+/* ---------- External output settings (issue #11) ---------- */
+
+static const char *output_res_mode_to_str(OutputResolutionMode m)
+{
+	switch (m) {
+	case OutputResolutionMode::ObsOutput:
+		return "obsOutput";
+	case OutputResolutionMode::Custom:
+		return "custom";
+	default:
+		return "canvasBase";
+	}
+}
+
+static OutputResolutionMode output_res_mode_from_str(const char *s)
+{
+	if (s && strcmp(s, "obsOutput") == 0)
+		return OutputResolutionMode::ObsOutput;
+	if (s && strcmp(s, "custom") == 0)
+		return OutputResolutionMode::Custom;
+	return OutputResolutionMode::CanvasBase;
+}
+
+obs_data_t *OutputBackendSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_bool(data, "enabled", enabled);
+	obs_data_set_string(data, "resMode", output_res_mode_to_str(resMode));
+	obs_data_set_int(data, "customWidth", customWidth);
+	obs_data_set_int(data, "customHeight", customHeight);
+	obs_data_set_int(data, "fpsDivisor", fpsDivisor);
+	return data;
+}
+
+OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
+{
+	OutputBackendSettings s;
+	if (!data)
+		return s;
+	if (obs_data_has_user_value(data, "enabled"))
+		s.enabled = obs_data_get_bool(data, "enabled");
+	if (obs_data_has_user_value(data, "resMode"))
+		s.resMode = output_res_mode_from_str(obs_data_get_string(data, "resMode"));
+	if (obs_data_has_user_value(data, "customWidth"))
+		s.customWidth = (uint32_t)obs_data_get_int(data, "customWidth");
+	if (obs_data_has_user_value(data, "customHeight"))
+		s.customHeight = (uint32_t)obs_data_get_int(data, "customHeight");
+	if (obs_data_has_user_value(data, "fpsDivisor"))
+		s.fpsDivisor = (int)obs_data_get_int(data, "fpsDivisor");
+	/* Only full (1) and half (2) are legal divisors. */
+	if (s.fpsDivisor != 1 && s.fpsDivisor != 2)
+		s.fpsDivisor = 1;
+	return s;
+}
+
+obs_data_t *InstanceOutputSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_t *sp = spout.to_obs_data();
+	obs_data_set_obj(data, "spout", sp);
+	obs_data_release(sp);
+	obs_data_t *nd = ndi.to_obs_data();
+	obs_data_set_obj(data, "ndi", nd);
+	obs_data_release(nd);
+	return data;
+}
+
+InstanceOutputSettings InstanceOutputSettings::from_obs_data(obs_data_t *data)
+{
+	InstanceOutputSettings s;
+	if (!data)
+		return s;
+	obs_data_t *sp = obs_data_get_obj(data, "spout");
+	s.spout = OutputBackendSettings::from_obs_data(sp);
+	obs_data_release(sp);
+	obs_data_t *nd = obs_data_get_obj(data, "ndi");
+	s.ndi = OutputBackendSettings::from_obs_data(nd);
+	obs_data_release(nd);
+	return s;
+}
+
+std::pair<uint32_t, uint32_t> resolve_output_dimensions(const OutputBackendSettings &s)
+{
+	if (s.resMode == OutputResolutionMode::Custom)
+		return {s.customWidth, s.customHeight};
+
+	struct obs_video_info ovi;
+	if (!obs_get_video_info(&ovi))
+		return {0, 0};
+
+	if (s.resMode == OutputResolutionMode::ObsOutput)
+		return {ovi.output_width, ovi.output_height};
+
+	return {ovi.base_width, ovi.base_height}; /* CanvasBase */
+}
+
 /* ========== GlobalVisualSettings ========== */
 
 obs_data_t *GlobalVisualSettings::to_obs_data() const
@@ -1805,6 +1902,10 @@ obs_data_t *MultiviewInstance::to_obs_data() const
 	obs_data_set_obj(data, "sceneClickSwitch", scs);
 	obs_data_release(scs);
 
+	obs_data_t *os = outputSettings.to_obs_data();
+	obs_data_set_obj(data, "outputSettings", os);
+	obs_data_release(os);
+
 	obs_data_t *layoutData = layout.to_obs_data();
 	obs_data_set_obj(data, "layout", layoutData);
 	obs_data_release(layoutData);
@@ -1887,6 +1988,12 @@ MultiviewInstance MultiviewInstance::from_obs_data(obs_data_t *data)
 	inst.sceneClickSwitch = SceneClickSwitchSettings::from_obs_data(scs);
 	if (scs)
 		obs_data_release(scs);
+
+	/* External output (issue #11). Absent key -> all-default (disabled). */
+	obs_data_t *os = obs_data_get_obj(data, "outputSettings");
+	inst.outputSettings = InstanceOutputSettings::from_obs_data(os);
+	if (os)
+		obs_data_release(os);
 
 	obs_data_t *layoutData = obs_data_get_obj(data, "layout");
 	if (layoutData) {
