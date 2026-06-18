@@ -28,7 +28,7 @@ public:
 
 	const char *kind() const override { return "ndi"; }
 
-	void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h) override
+	void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h, int fpsDivisor) override
 	{
 		if (!tex || w == 0 || h == 0)
 			return;
@@ -71,16 +71,18 @@ public:
 		frame.FourCC = NDIlib_FourCC_video_type_BGRA;
 
 		/* OBS has one global frame rate; output rescale doesn't change it.
-		 * The manager's fpsDivisor halves the actual cadence by skipping
-		 * compose passes, but the per-frame timecode is synthesized by NDI,
-		 * so a nominally-full frame_rate here is fine (refined in hardening). */
+		 * The manager halves our actual cadence at fpsDivisor==2 by skipping
+		 * compose passes, so declare the true sent rate (OBS fps / divisor) —
+		 * otherwise NDI receivers (e.g. Studio Monitor) report the nominal
+		 * full rate while frames arrive at half. */
+		const int divisor = (fpsDivisor >= 1) ? fpsDivisor : 1;
 		struct obs_video_info ovi;
 		if (obs_get_video_info(&ovi) && ovi.fps_den != 0) {
 			frame.frame_rate_N = (int)ovi.fps_num;
-			frame.frame_rate_D = (int)ovi.fps_den;
+			frame.frame_rate_D = (int)ovi.fps_den * divisor;
 		} else {
 			frame.frame_rate_N = 30;
-			frame.frame_rate_D = 1;
+			frame.frame_rate_D = divisor;
 		}
 
 		frame.frame_format_type = NDIlib_frame_format_type_progressive;

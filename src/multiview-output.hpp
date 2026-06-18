@@ -37,8 +37,13 @@ public:
 	 * match `name` and the texture's dimensions/format, then sends `tex`
 	 * (a GS_BGRA texture owned by the manager's texrender). The backend
 	 * must not retain `tex` past the call: Spout copies it on the GPU; NDI
-	 * will read it back to CPU here. */
-	virtual void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h) = 0;
+	 * reads it back to CPU here.
+	 *
+	 * `fpsDivisor` is this backend's frame-rate divisor (1=full, 2=half) so
+	 * the backend can declare its true sent rate (OBS fps / divisor). Spout
+	 * carries no frame-rate metadata and ignores it. */
+	virtual void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h,
+				  int fpsDivisor) = 0;
 
 	/* Release the sender and all GPU/OS resources. Called on the graphics
 	 * thread. Safe to call when never started. */

@@ -151,7 +151,7 @@ void MultiviewOutputManager::render_one_resolution(const std::string &name, uint
 	BackendEntry *entries[] = {&spout_, &ndi_};
 	for (BackendEntry *e : entries) {
 		if (e->enabled && e->w == w && e->h == h && (e->frame % e->fpsDivisor) == 0)
-			e->backend->submit_frame(name, tex, w, h);
+			e->backend->submit_frame(name, tex, w, h, e->fpsDivisor);
 	}
 }
 

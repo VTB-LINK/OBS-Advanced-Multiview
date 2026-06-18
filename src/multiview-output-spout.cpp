@@ -33,8 +33,11 @@ public:
 
 	const char *kind() const override { return "spout"; }
 
-	void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h) override
+	void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h, int fpsDivisor) override
 	{
+		/* Spout shares a bare GPU texture with no frame-rate metadata. */
+		(void)fpsDivisor;
+
 		if (!tex || w == 0 || h == 0)
 			return;
 
