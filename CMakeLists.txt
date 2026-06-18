@@ -42,7 +42,10 @@ target_sources(
     src/amv-logging.cpp
     src/multiview-instance.hpp
     src/multiview-instance.cpp
+    src/multiview-instance-serialize.hpp
     src/multiview-instance-serialize-output.cpp
+    src/multiview-instance-serialize-signal.cpp
+    src/multiview-instance-serialize-visual.cpp
     src/config-manager.hpp
     src/config-manager.cpp
     src/layout-engine.hpp
