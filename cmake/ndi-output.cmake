@@ -32,7 +32,6 @@ find_path(
     "C:/Program Files/NewTek/NDI 5 SDK/Include"
     "/Library/NDI SDK for Apple/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ndi/include"
-  NO_CACHE
 )
 
 if(NDI_SDK_INCLUDE_DIR)

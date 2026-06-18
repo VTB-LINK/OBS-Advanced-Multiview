@@ -164,7 +164,8 @@ QWidget *ExternalOutputSettingsDialog::build_backend_tab(BackendWidgets &w, bool
 	 * manual track 1..6). Spout shares only a GPU texture and has no audio path,
 	 * so its controls are present but disabled (supportsAudio == false). */
 	w.audioMode = new QComboBox(tab);
-	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.FollowStreaming"), (int)OutputAudioMode::FollowStreaming);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.FollowStreaming"),
+			     (int)OutputAudioMode::FollowStreaming);
 	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.ManualTrack"), (int)OutputAudioMode::ManualTrack);
 	form->addRow(amv::text("AMVPlugin.Output.Audio"), w.audioMode);
 

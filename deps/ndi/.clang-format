@@ -1,0 +1,4 @@
+# Vendored third-party NDI SDK headers — never reformat them. clang-format
+# walks up from each file to the nearest .clang-format, so this shadows the
+# project root style for everything under deps/ndi/.
+DisableFormat: true
