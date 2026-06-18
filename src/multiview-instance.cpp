@@ -2279,6 +2279,9 @@ obs_data_t *GlobalSettings::to_obs_data() const
 	 * fresh OBS startup respects whatever the user picked last session. */
 	obs_data_set_bool(data, "detailedLogs", detailedLogs);
 
+	/* Issue #10: NDI readback double-buffer toggle (default on). */
+	obs_data_set_bool(data, "ndiOutputDoubleBuffer", ndiOutputDoubleBuffer);
+
 	return data;
 }
 
@@ -2331,6 +2334,13 @@ GlobalSettings GlobalSettings::from_obs_data(obs_data_t *data)
 		gs.detailedLogs = obs_data_get_bool(data, "detailedLogs");
 	else
 		gs.detailedLogs = false;
+
+	/* Issue #10: NDI readback double-buffer. Default ON when the key is absent
+	 * (new config / upgrade) — protects the main program output by default. */
+	if (obs_data_has_user_value(data, "ndiOutputDoubleBuffer"))
+		gs.ndiOutputDoubleBuffer = obs_data_get_bool(data, "ndiOutputDoubleBuffer");
+	else
+		gs.ndiOutputDoubleBuffer = true;
 
 	return gs;
 }

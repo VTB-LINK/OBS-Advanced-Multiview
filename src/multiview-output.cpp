@@ -158,13 +158,18 @@ void MultiviewOutputManager::render_one_resolution(const std::string &name, uint
 }
 
 void MultiviewOutputManager::render_all(const std::string &name, const InstanceOutputSettings &cfg,
-					const std::function<void(int w, int h)> &draw)
+					const std::function<void(int w, int h)> &draw, bool ndiDoubleBuffer)
 {
 	if (!draw)
 		return;
 
 	reconcile(spout_, cfg.spout, Kind::Spout);
 	reconcile(ndi_, cfg.ndi, Kind::Ndi);
+
+	/* Push the user's global NDI readback double-buffer choice to the backend
+	 * (graphics thread; no-op on Spout). Cheap to set every frame. */
+	if (ndi_.backend)
+		ndi_.backend->set_double_buffer(ndiDoubleBuffer);
 
 	BackendEntry *entries[] = {&spout_, &ndi_};
 

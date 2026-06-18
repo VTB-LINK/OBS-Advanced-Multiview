@@ -1444,18 +1444,21 @@ void AmvInstanceCore::render_output_only()
 	 * from output_settings_ each frame. No-op when output is disabled. */
 	if (!output_)
 		return;
-	output_->render_all(instance_display_name(), output_settings_, [this](int w, int h) {
-		/* Output renders at its own (canvas/config) resolution via the core's
+	output_->render_all(
+		instance_display_name(), output_settings_,
+		[this](int w, int h) {
+			/* Output renders at its own (canvas/config) resolution via the core's
 		 * own engine, independent of any view's viewport cache. */
-		if (w != output_cached_vpW_ || h != output_cached_vpH_) {
-			output_engine_.set_layout(layout_);
-			output_engine_.set_viewport(w, h);
-			output_engine_.compute();
-			output_cached_vpW_ = w;
-			output_cached_vpH_ = h;
-		}
-		draw_cells(output_engine_.cells(), 0, 0, w, h, /*diag=*/false);
-	});
+			if (w != output_cached_vpW_ || h != output_cached_vpH_) {
+				output_engine_.set_layout(layout_);
+				output_engine_.set_viewport(w, h);
+				output_engine_.compute();
+				output_cached_vpW_ = w;
+				output_cached_vpH_ = h;
+			}
+			draw_cells(output_engine_.cells(), 0, 0, w, h, /*diag=*/false);
+		},
+		output_ndi_double_buffer_.load(std::memory_order_relaxed));
 }
 
 std::string AmvInstanceCore::instance_display_name() const
@@ -1470,6 +1473,11 @@ void AmvInstanceCore::apply_output_settings()
 {
 	MultiviewInstance *inst = config_->find_instance(uuid_);
 	InstanceOutputSettings next = inst ? inst->outputSettings : InstanceOutputSettings{};
+
+	/* Cache the global NDI readback double-buffer choice for the graphics thread
+	 * (read in render_output_only). Refreshed here so a Settings-tab change takes
+	 * effect once the output is re-applied (notify_multiview_output_settings_changed). */
+	output_ndi_double_buffer_.store(config_->global_settings().ndiOutputDoubleBuffer, std::memory_order_relaxed);
 
 	/* Serialize against the render thread: the display draw callback holds the
 	 * OBS graphics context while render() reads output_ / output_settings_, so

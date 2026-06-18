@@ -59,21 +59,58 @@ public:
 		if (!ensure_stage(w, h))
 			return;
 
-		/* GPU -> CPU readback. gs_stage_texture queues the copy; the map
-		 * blocks until it lands (a ~1-frame stall — double-buffering is a
-		 * noted hardening follow-up). */
-		gs_stage_texture(stage_, tex);
+		if (double_buffer_) {
+			/* Double-buffered readback (user setting ON, default). Queue
+			 * frame N's copy into stage_[idx] (gs_stage_texture is async),
+			 * then map+send the OTHER surface staged on frame N-1 — the GPU
+			 * has had a full frame to finish it, so the map doesn't stall the
+			 * graphics thread. Protects the main program output on slow GPUs at
+			 * the cost of +1 frame of NDI latency (and, with audio, audio
+			 * leading video by a frame — documented in the setting). */
+			gs_stage_texture(stage_[stage_idx_], tex);
+			const int prev = 1 - stage_idx_;
+			if (stage_have_prev_) {
+				uint8_t *data = nullptr;
+				uint32_t linesize = 0;
+				if (gs_stagesurface_map(stage_[prev], &data, &linesize)) {
+					send_video(data, linesize, w, h, fpsDivisor);
+					gs_stagesurface_unmap(stage_[prev]);
+					active_ = true;
+					warned_map_failed_ = false;
+				} else if (!warned_map_failed_) {
+					obs_log(LOG_WARNING, "[multiview-output/ndi] gs_stagesurface_map failed");
+					warned_map_failed_ = true;
+				}
+			}
+			stage_idx_ = prev;
+			stage_have_prev_ = true;
+			return;
+		}
 
+		/* Synchronous readback (setting OFF): stage + map + send the SAME
+		 * frame. The map blocks until the GPU copy lands (~1 frame stall on a
+		 * slow GPU), but keeps the output lowest-latency and A/V in sync. */
+		gs_stage_texture(stage_[0], tex);
 		uint8_t *data = nullptr;
 		uint32_t linesize = 0;
-		if (!gs_stagesurface_map(stage_, &data, &linesize)) {
+		if (!gs_stagesurface_map(stage_[0], &data, &linesize)) {
 			if (!warned_map_failed_) {
 				obs_log(LOG_WARNING, "[multiview-output/ndi] gs_stagesurface_map failed");
 				warned_map_failed_ = true;
 			}
 			return;
 		}
+		send_video(data, linesize, w, h, fpsDivisor);
+		gs_stagesurface_unmap(stage_[0]);
+		active_ = true;
+		warned_map_failed_ = false;
+	}
 
+	/* Build + send one BGRA video frame from mapped staging memory. Caller holds
+	 * the mapping for the duration. Runs on the graphics thread (sole sender_
+	 * writer); NDI allows concurrent video/audio sends, so no lock needed. */
+	void send_video(uint8_t *data, uint32_t linesize, uint32_t w, uint32_t h, int fpsDivisor)
+	{
 		NDIlib_video_frame_v2_t frame = {};
 		frame.xres = (int)w;
 		frame.yres = (int)h;
@@ -99,14 +136,18 @@ public:
 		frame.p_data = data;
 		frame.line_stride_in_bytes = (int)linesize;
 
-		/* Video sends on the graphics thread; sender_ is only ever mutated
-		 * here (same thread), and NDI permits concurrent video/audio sends,
-		 * so no lock is needed on this hot path. */
 		runtime_->lib()->send_send_video_v2(sender_, &frame);
+	}
 
-		gs_stagesurface_unmap(stage_);
-		active_ = true;
-		warned_map_failed_ = false;
+	/* Toggle readback double-buffering (issue #10 global setting). Reset the
+	 * ping-pong so a mode change doesn't send a stale/half-staged buffer. */
+	void set_double_buffer(bool enabled) override
+	{
+		if (enabled == double_buffer_)
+			return;
+		double_buffer_ = enabled;
+		stage_idx_ = 0;
+		stage_have_prev_ = false;
 	}
 
 	void configure_audio(const OutputBackendSettings &cfg) override
@@ -154,11 +195,7 @@ public:
 			runtime_.reset();
 		}
 
-		if (stage_) {
-			gs_stagesurface_destroy(stage_);
-			stage_ = nullptr;
-			stage_w_ = stage_h_ = 0;
-		}
+		destroy_stages();
 
 		active_ = false;
 		current_name_.clear();
@@ -201,19 +238,35 @@ private:
 		}
 	}
 
+	void destroy_stages()
+	{
+		for (auto *&s : stage_) {
+			if (s) {
+				gs_stagesurface_destroy(s);
+				s = nullptr;
+			}
+		}
+		stage_w_ = stage_h_ = 0;
+		stage_idx_ = 0;
+		/* No completed copy survives a teardown/resize, so the next frame must
+		 * restart the ping-pong rather than send stale / wrong-sized pixels. */
+		stage_have_prev_ = false;
+	}
+
 	bool ensure_stage(uint32_t w, uint32_t h)
 	{
-		if (stage_ && stage_w_ == w && stage_h_ == h)
+		/* Always keep both surfaces allocated (the second is unused in
+		 * synchronous mode but lets set_double_buffer() flip modes without a
+		 * recreate). One extra BGRA staging surface is a few MB — negligible. */
+		if (stage_[0] && stage_[1] && stage_w_ == w && stage_h_ == h)
 			return true;
 
-		if (stage_) {
-			gs_stagesurface_destroy(stage_);
-			stage_ = nullptr;
-		}
+		destroy_stages();
 
-		stage_ = gs_stagesurface_create(w, h, GS_BGRA);
-		if (!stage_) {
-			stage_w_ = stage_h_ = 0;
+		stage_[0] = gs_stagesurface_create(w, h, GS_BGRA);
+		stage_[1] = gs_stagesurface_create(w, h, GS_BGRA);
+		if (!stage_[0] || !stage_[1]) {
+			destroy_stages();
 			if (!warned_stage_failed_) {
 				obs_log(LOG_WARNING, "[multiview-output/ndi] gs_stagesurface_create(%ux%u) failed", w,
 					h);
@@ -346,8 +399,14 @@ private:
 	std::mutex sender_mutex_;
 	NDIlib_send_instance_t sender_ = nullptr;
 
-	gs_stagesurf_t *stage_ = nullptr;
+	/* Readback surfaces. In double-buffer mode (default) the two are ping-ponged
+	 * (stage frame N, map+send N-1) so the map never stalls the graphics thread;
+	 * in synchronous mode only stage_[0] is used (stage+map+send same frame). */
+	gs_stagesurf_t *stage_[2] = {nullptr, nullptr};
 	uint32_t stage_w_ = 0, stage_h_ = 0;
+	int stage_idx_ = 0;            /* buffer to stage INTO this frame (double-buffer) */
+	bool stage_have_prev_ = false; /* stage_[1 - idx] holds last frame's completed copy */
+	bool double_buffer_ = true;    /* global setting, pushed via set_double_buffer() */
 	std::string current_name_;
 	bool active_ = false;
 	bool warned_map_failed_ = false;

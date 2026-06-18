@@ -51,6 +51,11 @@ public:
 	 * when the selected track changes. */
 	virtual void configure_audio(const OutputBackendSettings &cfg) { (void)cfg; }
 
+	/* Issue #10: toggle GPU->CPU readback double-buffering. Called on the
+	 * graphics thread during reconcile with the user's global setting. Only the
+	 * NDI backend implements it (Spout has no readback). */
+	virtual void set_double_buffer(bool enabled) { (void)enabled; }
+
 	/* Release the sender and all GPU/OS resources. Called on the graphics
 	 * thread. Safe to call when never started. */
 	virtual void stop() = 0;
@@ -78,7 +83,7 @@ public:
 	 * render itself — a resolution with no backend due this frame is skipped
 	 * entirely, so half-rate halves the compose cost, not just the send. */
 	void render_all(const std::string &name, const InstanceOutputSettings &cfg,
-			const std::function<void(int w, int h)> &draw);
+			const std::function<void(int w, int h)> &draw, bool ndiDoubleBuffer = true);
 
 	/* Stop all backends + destroy all texrenders. Caller must hold the OBS
 	 * graphics context (used by apply_output_settings under obs_enter_graphics). */

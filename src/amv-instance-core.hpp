@@ -421,6 +421,11 @@ private:
 	/* External output (issue #11). */
 	std::unique_ptr<MultiviewOutputManager> output_;
 	InstanceOutputSettings output_settings_;
+	/* Issue #10: cached global NDI readback double-buffer flag. Written on the
+	 * main thread in apply_output_settings(), read on the graphics thread in
+	 * render_output_only() — atomic so the graphics thread never reads
+	 * main-thread-mutated GlobalSettings directly (mirrors the F2 discipline). */
+	std::atomic<bool> output_ndi_double_buffer_{true};
 	LayoutEngine output_engine_;
 	int output_cached_vpW_ = 0;
 	int output_cached_vpH_ = 0;

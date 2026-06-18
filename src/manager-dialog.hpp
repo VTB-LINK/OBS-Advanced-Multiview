@@ -129,6 +129,7 @@ private:
 	QDoubleSpinBox *spin_re_resolve_fps_;
 	QLabel *lbl_re_resolve_effective_;
 	QCheckBox *chk_detailed_logs_;
+	QCheckBox *chk_ndi_double_buffer_;
 
 	/* Scene-click switch (global, immediate save) */
 	QCheckBox *chk_scene_click_switch_;

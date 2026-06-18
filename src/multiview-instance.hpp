@@ -655,6 +655,16 @@ struct GlobalSettings {
 	 * so static-context provider code can read it cheaply. */
 	bool detailedLogs = false;
 
+	/* Issue #10 hardening: double-buffer the NDI output's GPU->CPU readback.
+	 * ON (default) protects the MAIN program output (stream/record/preview) from
+	 * the synchronous readback stalling the graphics thread on slow GPUs, at the
+	 * cost of +1 frame of NDI output latency AND — when NDI audio is enabled —
+	 * audio leading video by ~1 frame (the readback delays only video). OFF =
+	 * synchronous: lowest latency + A/V in sync, but the readback can stall the
+	 * graphics thread on a GPU that can't finish it within frame budget. Only
+	 * affects the NDI backend (Spout shares the texture on-GPU, no readback). */
+	bool ndiOutputDoubleBuffer = true;
+
 	obs_data_t *to_obs_data() const;
 	static GlobalSettings from_obs_data(obs_data_t *data);
 };
