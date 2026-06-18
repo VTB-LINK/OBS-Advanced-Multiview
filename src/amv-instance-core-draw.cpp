@@ -724,7 +724,9 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 				 * between resolve and render even within one frame
 				 * (other plugins / scripts can mark it removed). */
 				obs_source_video_render(src);
-				if (i < (int)cell_sources_.size())
+				/* Count display renders only; the output pass (diag=false)
+				 * would otherwise double-count and inflate render_fps. */
+				if (diag && i < (int)cell_sources_.size())
 					cell_sources_[i].render_calls++;
 			}
 			endRegion();
