@@ -12,7 +12,7 @@ Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 #include "multiview-instance.hpp"
 
 #include <obs-module.h>
@@ -24,7 +24,7 @@ License: GPL-2.0-or-later
 
 /* ---- helper: resolve the path the cell currently wants (under lock) ---- */
 
-std::string MultiviewWindow::compute_wanted_lost_image_path(int cellIndex)
+std::string AmvInstanceCore::compute_wanted_lost_image_path(int cellIndex)
 {
 	if (cellIndex < 0 || cellIndex >= (int)cell_sources_.size())
 		return std::string();
@@ -128,7 +128,7 @@ std::string MultiviewWindow::compute_wanted_lost_image_path(int cellIndex)
 
 /* ---- rebuild ---- */
 
-void MultiviewWindow::rebuild_lost_signal_images()
+void AmvInstanceCore::rebuild_lost_signal_images()
 {
 	/* Mirror rebuild_bg_images() exactly: 4-phase
 	 *   1. snapshot intentions under lock
@@ -235,7 +235,7 @@ void MultiviewWindow::rebuild_lost_signal_images()
 		gs_image_file_free(&li.imgFile);
 }
 
-void MultiviewWindow::release_lost_signal_images()
+void AmvInstanceCore::release_lost_signal_images()
 {
 	/* Same convention as release_bg_images: actual texture destruction is
 	 * driven from release_source_refs() which already collects textures
@@ -264,7 +264,7 @@ void MultiviewWindow::release_lost_signal_images()
 
 /* ---- per-cell render ---- */
 
-void MultiviewWindow::render_lost_signal_image(int cellIndex, int contentX, int contentY, int contentW, int contentH)
+void AmvInstanceCore::render_lost_signal_image(int cellIndex, int contentX, int contentY, int contentW, int contentH)
 {
 	if (cellIndex < 0 || cellIndex >= (int)lost_signal_images_.size())
 		return;

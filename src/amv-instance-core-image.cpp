@@ -1,13 +1,13 @@
 /*
 OBS Advanced Multiview - Background and overlay image texture management
 Split from multiview-window.cpp for maintainability.
-All functions remain members of MultiviewWindow.
+All functions remain members of AmvInstanceCore.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -21,11 +21,11 @@ License: GPL-2.0-or-later
 #include <cmath>
 /* ---- Background image management ---- */
 
-void MultiviewWindow::rebuild_bg_images()
+void AmvInstanceCore::rebuild_bg_images()
 {
 	LayoutEngine tmpEngine;
 	tmpEngine.set_layout(layout_);
-	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+	tmpEngine.set_viewport(ref_vp_width(), ref_vp_height());
 	tmpEngine.compute();
 
 	size_t cellCount = tmpEngine.cells().size();
@@ -139,7 +139,7 @@ void MultiviewWindow::rebuild_bg_images()
 		gs_image_file_free(&li.imgFile);
 }
 
-void MultiviewWindow::release_bg_images()
+void AmvInstanceCore::release_bg_images()
 {
 	/* Called only from release_source_refs() which already handles
 	 * texture destruction outside the mutex. This is now a no-op stub
@@ -148,11 +148,11 @@ void MultiviewWindow::release_bg_images()
 
 /* ---- Overlay image management ---- */
 
-void MultiviewWindow::rebuild_overlay_images()
+void AmvInstanceCore::rebuild_overlay_images()
 {
 	LayoutEngine tmpEngine;
 	tmpEngine.set_layout(layout_);
-	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+	tmpEngine.set_viewport(ref_vp_width(), ref_vp_height());
 	tmpEngine.compute();
 
 	size_t cellCount = tmpEngine.cells().size();
@@ -263,7 +263,7 @@ void MultiviewWindow::rebuild_overlay_images()
 		gs_image_file_free(&li.imgFile);
 }
 
-void MultiviewWindow::release_overlay_images()
+void AmvInstanceCore::release_overlay_images()
 {
 	/* Called only from release_source_refs() which already handles
 	 * texture destruction outside the mutex. This is now a no-op stub

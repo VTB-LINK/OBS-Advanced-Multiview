@@ -1,9 +1,11 @@
 /*
 OBS Advanced Multiview - per-instance render/state core (issue #10)
 
-Skeleton (Phase 1, commit 1): compiles and links but is not yet wired in.
-Shared state + content-render logic migrate here from MultiviewWindow in
-subsequent commits.
+Construction / destruction. The bulk of the logic lives in the sibling
+translation units: source resolution / refresh / tick / output dispatch in
+amv-instance-core-sources.cpp, the grid composition in
+amv-instance-core-draw.cpp, and the per-feature render helpers in
+amv-instance-core-{vu,label,image,safe-area,highlight,status,health,lost-image}.cpp.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
@@ -14,7 +16,10 @@ License: GPL-2.0-or-later
 
 #include <obs.h>
 
-AmvInstanceCore::AmvInstanceCore(ConfigManager *config, const std::string &uuid) : config_(config), uuid_(uuid)
+AmvInstanceCore::AmvInstanceCore(ConfigManager *config, const std::string &uuid)
+	: QObject(nullptr),
+	  config_(config),
+	  uuid_(uuid)
 {
 	/* Canvas aspect ratio from OBS base resolution (a per-instance/global
 	 * property, not a window property). */
@@ -23,24 +28,12 @@ AmvInstanceCore::AmvInstanceCore(ConfigManager *config, const std::string &uuid)
 		canvas_aspect_ = (double)ovi.base_width / (double)ovi.base_height;
 }
 
-AmvInstanceCore::~AmvInstanceCore() = default;
-
-void AmvInstanceCore::tick_once_per_frame()
+AmvInstanceCore::~AmvInstanceCore()
 {
-	/* Migrates from MultiviewWindow::tick_frame with a frame-token gate. */
-}
-
-void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, int vpY, int vpW, int vpH)
-{
-	(void)cells;
-	(void)vpX;
-	(void)vpY;
-	(void)vpW;
-	(void)vpH;
-	/* Migrates from the per-cell half of MultiviewWindow::draw_grid. */
-}
-
-void AmvInstanceCore::render_output_only()
-{
-	/* Migrates from MultiviewWindow::render_output_only. */
+	/* Release all source refs (dec_showing/dec_active pairing + textures +
+	 * volmeters), then tear down the output sender/texrender. Mirrors the old
+	 * MultiviewWindow dtor; the caller has already removed any display draw
+	 * callback so no render is in flight. */
+	release_source_refs();
+	output_.reset();
 }

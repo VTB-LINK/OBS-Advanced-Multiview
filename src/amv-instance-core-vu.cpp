@@ -1,13 +1,13 @@
 /*
 OBS Advanced Multiview - VU Meter rendering and audio metering
 Split from multiview-window.cpp for maintainability.
-All functions remain members of MultiviewWindow.
+All functions remain members of AmvInstanceCore.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 #include "amv-logging.hpp"
 
 #include <obs-module.h>
@@ -53,12 +53,12 @@ static inline void endRegion()
 }
 /* ---- dB Scale Label Sources ---- */
 
-void MultiviewWindow::release_scale_label_sources()
+void AmvInstanceCore::release_scale_label_sources()
 {
 	scale_label_cache_.clear();
 }
 
-void MultiviewWindow::rebuild_scale_label_sources()
+void AmvInstanceCore::rebuild_scale_label_sources()
 {
 	release_scale_label_sources();
 
@@ -182,7 +182,7 @@ void MultiviewWindow::rebuild_scale_label_sources()
 
 /* ---- VU Meter ---- */
 
-void MultiviewWindow::volmeter_callback(void *data, const float magnitude[MAX_AUDIO_CHANNELS],
+void AmvInstanceCore::volmeter_callback(void *data, const float magnitude[MAX_AUDIO_CHANNELS],
 					const float peak[MAX_AUDIO_CHANNELS], const float inputPeak[MAX_AUDIO_CHANNELS])
 {
 	UNUSED_PARAMETER(inputPeak);
@@ -200,7 +200,7 @@ void MultiviewWindow::volmeter_callback(void *data, const float magnitude[MAX_AU
  * before the volmeter callback. UI mute on the other hand leaves the volmeter
  * data unchanged, so we must zero the display ourselves to keep WYSIWYG with
  * what audience hears. */
-void MultiviewWindow::source_mute_callback(void *data, calldata_t *cd)
+void AmvInstanceCore::source_mute_callback(void *data, calldata_t *cd)
 {
 	auto *sv = static_cast<SingleVolmeter *>(data);
 	bool muted = calldata_bool(cd, "muted");
@@ -212,10 +212,10 @@ void MultiviewWindow::source_mute_callback(void *data, calldata_t *cd)
  * audio_mixers & active_track_bit == 0 are excluded), request a deferred
  * rebuild — actual rebuild happens on the next render frame via
  * check_active_track_change() to coalesce bursts and stay on the render thread. */
-void MultiviewWindow::source_audio_mixers_callback(void *data, calldata_t *cd)
+void AmvInstanceCore::source_audio_mixers_callback(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(cd);
-	auto *self = static_cast<MultiviewWindow *>(data);
+	auto *self = static_cast<AmvInstanceCore *>(data);
 	self->volmeters_rebuild_requested_.store(true, std::memory_order_release);
 }
 
@@ -233,7 +233,7 @@ void MultiviewWindow::source_audio_mixers_callback(void *data, calldata_t *cd)
  *   streaming output missing OR mixers == 0 → Track 1 (bit 0).
  * Per OBS UI invariant, Settings → Output → Streaming Audio Track requires
  * at least 1 of 6 selected, so mixers == 0 should be unreachable in practice. */
-uint32_t MultiviewWindow::compute_active_track_bit()
+uint32_t AmvInstanceCore::compute_active_track_bit()
 {
 	MultiviewInstance *inst = config_ ? config_->find_instance(uuid_) : nullptr;
 
@@ -383,7 +383,7 @@ static bool collect_audio_sources(obs_source_t *src, std::vector<obs_source_t *>
 	return ctx.depth_exceeded;
 }
 
-void MultiviewWindow::rebuild_volmeters()
+void AmvInstanceCore::rebuild_volmeters()
 {
 	struct CellVolmeterBallistics {
 		bool valid = false;
@@ -748,7 +748,7 @@ void MultiviewWindow::rebuild_volmeters()
 	}
 }
 
-void MultiviewWindow::check_scene_change_for_volmeters()
+void AmvInstanceCore::check_scene_change_for_volmeters()
 {
 	bool needRebuild = false;
 
@@ -787,7 +787,7 @@ void MultiviewWindow::check_scene_change_for_volmeters()
  *      candidate vector, no signal subscriptions to manage.
  *   3. AutoFollow streaming-track mask change (Settings → Output → Streaming
  *      Audio Track has no event), checked alongside the source set poll. */
-void MultiviewWindow::check_active_track_change()
+void AmvInstanceCore::check_active_track_change()
 {
 	const uint64_t now_ns = os_gettime_ns();
 	/* Phase 3 / M5.4 hardening: throttle to at most ~4 Hz. Repeated delete +
@@ -856,7 +856,7 @@ void MultiviewWindow::check_active_track_change()
  *   - rebuild_volmeters() to record the snapshot used by polling
  *   - check_active_track_change() to compare against that snapshot
  */
-void MultiviewWindow::collect_active_source_pointers(std::vector<void *> &out, uint32_t track_bit)
+void AmvInstanceCore::collect_active_source_pointers(std::vector<void *> &out, uint32_t track_bit)
 {
 	out.clear();
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
@@ -925,7 +925,7 @@ void MultiviewWindow::collect_active_source_pointers(std::vector<void *> &out, u
 	out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
-void MultiviewWindow::release_volmeters()
+void AmvInstanceCore::release_volmeters()
 {
 	/* Protect cell_volmeters_ vector against concurrent read from
 	 * the render thread (render_vu_meter()). source_mutex_ is recursive
@@ -966,7 +966,7 @@ void MultiviewWindow::release_volmeters()
 	cell_volmeters_.clear();
 }
 
-void MultiviewWindow::render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY, int sigX, int sigY,
+void AmvInstanceCore::render_vu_meter(int cellIndex, const CellRect &cell, int vpX, int vpY, int sigX, int sigY,
 				      int sigW, int sigH)
 {
 	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())

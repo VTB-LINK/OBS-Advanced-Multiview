@@ -58,17 +58,19 @@ target_sources(
     src/signal-lost-settings-dialog.cpp
     src/amv-instance-core.hpp
     src/amv-instance-core.cpp
+    src/amv-instance-core-sources.cpp
+    src/amv-instance-core-draw.cpp
+    src/amv-instance-core-vu.cpp
+    src/amv-instance-core-label.cpp
+    src/amv-instance-core-image.cpp
+    src/amv-instance-core-safe-area.cpp
+    src/amv-instance-core-highlight.cpp
+    src/amv-instance-core-status.cpp
+    src/amv-instance-core-lost-image.cpp
+    src/amv-instance-core-health.cpp
     src/multiview-window.hpp
     src/multiview-window.cpp
     src/multiview-window-context-menu.cpp
-    src/multiview-window-vu.cpp
-    src/multiview-window-label.cpp
-    src/multiview-window-image.cpp
-    src/multiview-window-safe-area.cpp
-    src/multiview-window-highlight.cpp
-    src/multiview-window-status.cpp
-    src/multiview-window-lost-image.cpp
-    src/multiview-window-health.cpp
     src/multiview-output.hpp
     src/multiview-output.cpp
     src/multiview-output-spout.hpp

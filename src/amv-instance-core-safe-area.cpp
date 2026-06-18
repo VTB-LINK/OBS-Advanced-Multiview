@@ -1,13 +1,13 @@
 /*
 OBS Advanced Multiview - Safe area vertex buffer and rendering
 Split from multiview-window.cpp for maintainability.
-All functions remain members of MultiviewWindow.
+All functions remain members of AmvInstanceCore.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -38,7 +38,7 @@ static inline void endRegion()
 #define GRAPHICS_SAFE_PERCENT 0.05f
 #define FOURBYTHREE_SAFE_PERCENT 0.1625f
 #define CENTER_LINE_LENGTH 0.02f
-void MultiviewWindow::init_safe_area_vbs()
+void AmvInstanceCore::init_safe_area_vbs()
 {
 	if (safe_area_vb_init_)
 		return;
@@ -91,7 +91,7 @@ void MultiviewWindow::init_safe_area_vbs()
 	safe_area_vb_init_ = true;
 }
 
-void MultiviewWindow::release_safe_area_vbs()
+void AmvInstanceCore::release_safe_area_vbs()
 {
 	if (!safe_area_vb_init_)
 		return;
@@ -111,7 +111,7 @@ void MultiviewWindow::release_safe_area_vbs()
 	safe_area_vb_init_ = false;
 }
 
-void MultiviewWindow::render_safe_area(int cellIndex, int cellX, int cellY, int cellW, int cellH, int vrX, int vrY,
+void AmvInstanceCore::render_safe_area(int cellIndex, int cellX, int cellY, int cellW, int cellH, int vrX, int vrY,
 				       int vrW, int vrH)
 {
 	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())

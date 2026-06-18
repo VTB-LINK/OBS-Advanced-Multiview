@@ -1,13 +1,13 @@
 /*
 OBS Advanced Multiview - Label text source management and rendering
 Split from multiview-window.cpp for maintainability.
-All functions remain members of MultiviewWindow.
+All functions remain members of AmvInstanceCore.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -35,14 +35,14 @@ static inline void endRegion()
 	gs_viewport_pop();
 	gs_projection_pop();
 }
-void MultiviewWindow::rebuild_label_sources()
+void AmvInstanceCore::rebuild_label_sources()
 {
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
 	/* We create private text sources for each cell that needs a label. */
 	LayoutEngine tmpEngine;
 	tmpEngine.set_layout(layout_);
-	tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
+	tmpEngine.set_viewport(ref_vp_width(), ref_vp_height());
 	tmpEngine.compute();
 
 	const auto &cells = tmpEngine.cells();
@@ -202,7 +202,7 @@ void MultiviewWindow::rebuild_label_sources()
 	}
 }
 
-void MultiviewWindow::render_label(int cellIndex, const CellRect &cell, int vpX, int vpY)
+void AmvInstanceCore::render_label(int cellIndex, const CellRect &cell, int vpX, int vpY)
 {
 	if (cellIndex < 0 || cellIndex >= (int)effective_visuals_.size())
 		return;

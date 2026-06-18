@@ -1,13 +1,13 @@
 /*
 OBS Advanced Multiview - Phase 3 / M5 status overlay (Missing Source, Signal Lost, ...)
 Split from multiview-window.cpp for maintainability.
-All functions remain members of MultiviewWindow.
+All functions remain members of AmvInstanceCore.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 #include "amv-i18n.hpp"
 #include "signal-provider.hpp"
 
@@ -23,7 +23,7 @@ License: GPL-2.0-or-later
  * even when several windows are open in parallel. Resolved each call so
  * instance renames take effect immediately; the lookup is a single
  * config_->find_instance(uuid_) which is cheap. */
-std::string MultiviewWindow::log_prefix() const
+std::string AmvInstanceCore::log_prefix() const
 {
 	const std::string short_uuid = uuid_.size() > 8 ? uuid_.substr(0, 8) : uuid_;
 	MultiviewInstance *inst = config_ ? config_->find_instance(uuid_) : nullptr;
@@ -76,7 +76,7 @@ static const char *default_status_font_face()
 
 /* ---- private helpers ---- */
 
-void MultiviewWindow::ensure_status_text_source(StatusTextEntry &entry, const char *text, const std::string &fontFamily)
+void AmvInstanceCore::ensure_status_text_source(StatusTextEntry &entry, const char *text, const std::string &fontFamily)
 {
 	if (!text || !*text)
 		return;
@@ -164,7 +164,7 @@ void MultiviewWindow::ensure_status_text_source(StatusTextEntry &entry, const ch
 	obs_source_release(src);
 }
 
-void MultiviewWindow::release_status_text_sources()
+void AmvInstanceCore::release_status_text_sources()
 {
 	/* OBSSource (RAII wrapper) drops its strong ref on assignment. We're
 	 * either on the UI thread inside `release_source_refs()` or on window
@@ -203,7 +203,7 @@ void MultiviewWindow::release_status_text_sources()
 	status_audio_only_.fontFamily.clear();
 }
 
-MultiviewWindow::StatusOverlayKind MultiviewWindow::status_overlay_kind_for_state(SignalRuntimeState state,
+AmvInstanceCore::StatusOverlayKind AmvInstanceCore::status_overlay_kind_for_state(SignalRuntimeState state,
 										  const std::string &cellType,
 										  SignalProviderType providerType) const
 {
@@ -264,7 +264,7 @@ MultiviewWindow::StatusOverlayKind MultiviewWindow::status_overlay_kind_for_stat
 
 /* ---- public render hook ---- */
 
-void MultiviewWindow::render_status_overlay(int cellIndex, int cellX, int cellY, int cellW, int cellH)
+void AmvInstanceCore::render_status_overlay(int cellIndex, int cellX, int cellY, int cellW, int cellH)
 {
 	if (cellIndex < 0 || cellIndex >= (int)cell_sources_.size())
 		return;

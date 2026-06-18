@@ -1,13 +1,13 @@
 /*
 OBS Advanced Multiview - PGM/PRVW highlight border rendering
 Split from multiview-window.cpp for maintainability.
-All functions remain members of MultiviewWindow.
+All functions remain members of AmvInstanceCore.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -49,7 +49,7 @@ static inline void endRegion()
 	gs_viewport_pop();
 	gs_projection_pop();
 }
-void MultiviewWindow::refresh_highlight_tree_sets()
+void AmvInstanceCore::refresh_highlight_tree_sets()
 {
 	pgm_tree_set_.clear();
 	prvw_tree_set_.clear();
@@ -61,7 +61,7 @@ void MultiviewWindow::refresh_highlight_tree_sets()
 		collect_tree_sources(prvw, prvw_tree_set_);
 }
 
-MultiviewWindow::HighlightKind MultiviewWindow::compute_cell_highlight(int cellIndex)
+AmvInstanceCore::HighlightKind AmvInstanceCore::compute_cell_highlight(int cellIndex)
 {
 	if (cellIndex < 0 || cellIndex >= (int)cell_sources_.size())
 		return HighlightKind::None;
@@ -102,7 +102,7 @@ MultiviewWindow::HighlightKind MultiviewWindow::compute_cell_highlight(int cellI
 	return HighlightKind::None;
 }
 
-void MultiviewWindow::render_cell_highlight(const CellRect &cell, int vpX, int vpY, HighlightKind kind,
+void AmvInstanceCore::render_cell_highlight(const CellRect &cell, int vpX, int vpY, HighlightKind kind,
 					    const HighlightSettings &hs)
 {
 	if (kind == HighlightKind::None || !hs.enabled)
@@ -241,15 +241,4 @@ void MultiviewWindow::render_cell_highlight(const CellRect &cell, int vpX, int v
 			segLen = vSpan - off;
 		draw_rect(outerX + outerW - t, outerY + t + off, t, segLen);
 	}
-}
-
-/* ---- Events ---- */
-
-bool MultiviewWindow::event(QEvent *event)
-{
-	if (event->type() == QEvent::Expose) {
-		if (!display_created_)
-			create_display();
-	}
-	return QWidget::event(event);
 }

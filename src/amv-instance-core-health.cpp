@@ -30,7 +30,7 @@ Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
 */
 
-#include "multiview-window.hpp"
+#include "amv-instance-core.hpp"
 #include "signal-provider.hpp"
 #include "amv-logging.hpp"
 
@@ -59,7 +59,7 @@ constexpr uint64_t kMinRecreateCooldownNs = 5 * NS_PER_SEC;
 
 } // namespace
 
-MultiviewWindow::SignalRuntimeState MultiviewWindow::tick_external_cell_health(int cellIndex, int cellRow, int cellCol,
+AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(int cellIndex, int cellRow, int cellCol,
 									       uint64_t now_ns)
 {
 	if (cellIndex < 0 || cellIndex >= (int)cell_sources_.size())

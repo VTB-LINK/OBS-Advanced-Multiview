@@ -69,11 +69,11 @@ int MultiviewWindow::cell_index_at_widget_pos(const QPointF &position)
 	int vpX = 0, vpY = 0;
 	int vpW = totalW, vpH = totalH;
 
-	if (windowAspect > canvas_aspect_) {
-		vpW = (int)((double)totalH * canvas_aspect_);
+	if (windowAspect > core_->canvas_aspect()) {
+		vpW = (int)((double)totalH * core_->canvas_aspect());
 		vpX = (totalW - vpW) / 2;
-	} else if (windowAspect < canvas_aspect_) {
-		vpH = (int)((double)totalW / canvas_aspect_);
+	} else if (windowAspect < core_->canvas_aspect()) {
+		vpH = (int)((double)totalW / core_->canvas_aspect());
 		vpY = (totalH - vpH) / 2;
 	}
 
@@ -91,7 +91,7 @@ int MultiviewWindow::cell_index_at_widget_pos(const QPointF &position)
 	 * regression). A grid layout is proportional, so hit-testing at window
 	 * size still maps clicks to the right cell. */
 	LayoutEngine hitEngine;
-	hitEngine.set_layout(layout_);
+	hitEngine.set_layout(core_->layout());
 	hitEngine.set_viewport(vpW, vpH);
 	hitEngine.compute();
 
@@ -278,12 +278,10 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			CellDisplaySettingsDialog dlg(CellDisplaySettingsDialog::Mode::Cell, this);
 			dlg.set_cell_position(row, col);
 			{
-				std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-				if (cellIndex >= 0 && cellIndex < (int)cell_sources_.size()) {
-					const auto &cs = cell_sources_[cellIndex];
-					dlg.set_external_cell(cs.provider_type != SignalProviderType::Unknown &&
-							      !signal_provider_is_internal(cs.provider_type));
-				}
+				AmvInstanceCore::CellRuntimeSnapshot snap = core_->snapshot_cell(cellIndex);
+				if (snap.valid)
+					dlg.set_external_cell(snap.provider_type != SignalProviderType::Unknown &&
+							      !signal_provider_is_internal(snap.provider_type));
 			}
 			dlg.set_cell_settings(*cvs);
 			if (dlg.exec() == QDialog::Accepted) {
@@ -368,19 +366,16 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 		bool hasSource = false;
 		bool isExternal = false;
 		{
-			std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-			if (cellIndex < (int)cell_sources_.size()) {
-				const auto &cs = cell_sources_[cellIndex];
-				/* Phase 3 / M6.1: external-provider cells leave
-				 * cs.type empty (type/name are the legacy internal
-				 * binding fields). Treat the cell as occupied if
-				 * either an internal type or an external provider
-				 * is set so the menu shows Change/Clear/Reconnect
-				 * instead of Add Source. */
-				if (!cs.type.empty() || cs.provider_type != SignalProviderType::Unknown)
+			/* External-provider cells leave type empty (type/name are the
+			 * legacy internal binding fields). Treat the cell as occupied if
+			 * either an internal type or an external provider is set so the
+			 * menu shows Change/Clear/Reconnect instead of Add Source. */
+			AmvInstanceCore::CellRuntimeSnapshot snap = core_->snapshot_cell(cellIndex);
+			if (snap.valid) {
+				if (!snap.type.empty() || snap.provider_type != SignalProviderType::Unknown)
 					hasSource = true;
-				if (cs.provider_type != SignalProviderType::Unknown &&
-				    !signal_provider_is_internal(cs.provider_type))
+				if (snap.provider_type != SignalProviderType::Unknown &&
+				    !signal_provider_is_internal(snap.provider_type))
 					isExternal = true;
 			}
 		}
@@ -429,51 +424,39 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			OBSSource vlcSourceSnapshot;
 			OBSSource ffmpegLocalSourceSnapshot;
 			{
-				std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-				if (cellIndex < (int)cell_sources_.size()) {
-					const auto &cs = cell_sources_[cellIndex];
+				AmvInstanceCore::CellRuntimeSnapshot snap = core_->snapshot_cell(cellIndex);
+				if (snap.valid) {
+					using S = AmvInstanceCore::SignalRuntimeState;
 					const bool isExternalForReconnect =
-						cs.provider_type != SignalProviderType::Unknown &&
-						!signal_provider_is_internal(cs.provider_type);
-					canReconnect =
-						cs.state == SignalRuntimeState::MissingInternal ||
-						cs.state == SignalRuntimeState::Lost ||
-						cs.state == SignalRuntimeState::Connecting ||
-						cs.state == SignalRuntimeState::RetryScheduled ||
-						cs.state == SignalRuntimeState::FallbackActive ||
-						cs.state == SignalRuntimeState::Error ||
-						(isExternalForReconnect && cs.state == SignalRuntimeState::Active);
+						snap.provider_type != SignalProviderType::Unknown &&
+						!signal_provider_is_internal(snap.provider_type);
+					canReconnect = snap.state == S::MissingInternal || snap.state == S::Lost ||
+						       snap.state == S::Connecting || snap.state == S::RetryScheduled ||
+						       snap.state == S::FallbackActive || snap.state == S::Error ||
+						       (isExternalForReconnect && snap.state == S::Active);
 
-					if (isExternalForReconnect && cs.private_source) {
-						obs_data_t *cur = obs_source_get_settings(cs.private_source);
+					if (isExternalForReconnect && snap.private_source) {
+						obs_data_t *cur = obs_source_get_settings(snap.private_source);
 						if (cur) {
 							isExternalLocalFile = obs_data_get_bool(cur, "is_local_file");
 							obs_data_release(cur);
 						}
 					}
 
-					if (cs.provider_type == SignalProviderType::Vlc) {
+					/* Snapshot already holds a strong private_source ref, so the
+					 * media_* calls below run safely without source_mutex_ (no
+					 * lock inversion with libVLC). */
+					if (snap.provider_type == SignalProviderType::Vlc) {
 						isVlcCell = true;
-						/* Snapshot the source under the lock so the
-						 * media_* calls below can run without holding
-						 * source_mutex_ (those calls go through libVLC
-						 * and we don't want lock inversion). */
-						vlcSourceSnapshot = cs.private_source;
+						vlcSourceSnapshot = snap.private_source;
 					}
 
-					/* Phase 3 / M6.4: FFmpeg local-file cells get a
-					 * Play/Pause action too. Network streams (RTMP/HLS/
-					 * SRT/...) deliberately don't \u2014 ffmpeg_source's
-					 * pause behavior on a live network stream is
-					 * effectively "stall the decoder, then race a
-					 * reconnect when unpaused", which produces a
-					 * confusing UX (cell freezes for a while, then
-					 * jumps to whatever the stream is doing now).
-					 * Replay Now still covers the use case of kicking
-					 * a stuck network stream. */
-					if (cs.provider_type == SignalProviderType::Ffmpeg && isExternalLocalFile) {
+					/* FFmpeg local-file cells get a Play/Pause action too;
+					 * network streams deliberately don't (pausing a live
+					 * stream is a confusing stall-then-reconnect UX). */
+					if (snap.provider_type == SignalProviderType::Ffmpeg && isExternalLocalFile) {
 						isFfmpegLocalFileCell = true;
-						ffmpegLocalSourceSnapshot = cs.private_source;
+						ffmpegLocalSourceSnapshot = snap.private_source;
 					}
 				}
 			}
@@ -577,7 +560,7 @@ void MultiviewWindow::on_add_source(int cellIndex)
 	int r, c;
 	{
 		LayoutEngine tmpEngine;
-		tmpEngine.set_layout(layout_);
+		tmpEngine.set_layout(core_->layout());
 		tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
 		tmpEngine.compute();
 		const auto &cells = tmpEngine.cells();
@@ -637,7 +620,7 @@ void MultiviewWindow::on_edit_source(int cellIndex)
 	int r, c;
 	{
 		LayoutEngine tmpEngine;
-		tmpEngine.set_layout(layout_);
+		tmpEngine.set_layout(core_->layout());
 		tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
 		tmpEngine.compute();
 		const auto &cells = tmpEngine.cells();
@@ -695,7 +678,7 @@ void MultiviewWindow::on_clear_cell(int cellIndex)
 	int r, c;
 	{
 		LayoutEngine tmpEngine;
-		tmpEngine.set_layout(layout_);
+		tmpEngine.set_layout(core_->layout());
 		tmpEngine.set_viewport(cached_vpW_ > 0 ? cached_vpW_ : 800, cached_vpH_ > 0 ? cached_vpH_ : 600);
 		tmpEngine.compute();
 		const auto &cells = tmpEngine.cells();
@@ -718,49 +701,6 @@ void MultiviewWindow::on_clear_cell(int cellIndex)
 	 * private source is released, the rest of the window untouched. */
 	if (!refresh_cell(r, c))
 		refresh_sources();
-}
-
-void MultiviewWindow::apply_clear_cell_for_rowcols(const std::vector<std::pair<int, int>> &rowCols)
-{
-	if (rowCols.empty())
-		return;
-
-	MultiviewInstance *inst = config_->find_instance(uuid_);
-	if (!inst)
-		return;
-
-	auto &assignments = inst->cellAssignments;
-	bool any_removed = false;
-	for (const auto &rc : rowCols) {
-		const int r = rc.first;
-		const int c = rc.second;
-		auto before = assignments.size();
-		assignments.erase(std::remove_if(assignments.begin(), assignments.end(),
-						 [r, c](const CellAssignment &a) { return a.row == r && a.col == c; }),
-				  assignments.end());
-		if (assignments.size() != before) {
-			any_removed = true;
-			obs_log(LOG_INFO, "ClearCell: dropped assignment at (row=%d, col=%d) for instance '%s'", r, c,
-				inst->name.c_str());
-		}
-	}
-
-	if (!any_removed)
-		return;
-
-	inst->signalDirty = true;
-	config_->save();
-
-	/* Phase 3 / M6.1+ task 9.1.A: incremental path per cleared cell.
-	 * If the count somehow changed (shouldn't — ClearCell does not edit
-	 * the layout grid), fall back to the heavy refresh once and break
-	 * out so we don't run it for every entry in rowCols. */
-	for (const auto &rc : rowCols) {
-		if (!refresh_cell(rc.first, rc.second)) {
-			refresh_sources();
-			break;
-		}
-	}
 }
 
 void MultiviewWindow::on_save_assignments()
@@ -878,13 +818,10 @@ OBSSourceAutoRelease MultiviewWindow::resolve_scene_cell_source_for_switch(int c
 {
 	OBSSourceAutoRelease scene;
 	{
-		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
-		if (cellIndex < 0 || cellIndex >= (int)cell_sources_.size())
+		AmvInstanceCore::CellRuntimeSnapshot snap = core_->snapshot_cell(cellIndex);
+		if (!snap.valid || snap.type != "scene")
 			return scene;
-		const auto &cs = cell_sources_[cellIndex];
-		if (cs.type != "scene")
-			return scene;
-		scene = OBSGetStrongRef(cs.weak_ref);
+		scene = OBSGetStrongRef(snap.weak_ref);
 	}
 
 	/* Defensive: a scene cell's weak_ref should always point at a scene,
