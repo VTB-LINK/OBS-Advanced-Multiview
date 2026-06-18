@@ -12,6 +12,7 @@ License: GPL-2.0-or-later
 */
 
 #include "amv-instance-core.hpp"
+#include "amv-frontend-cache.hpp"
 #include "amv-logging.hpp"
 #include "amv-i18n.hpp"
 #include "signal-provider.hpp"
@@ -1422,13 +1423,33 @@ void AmvInstanceCore::tick_once_per_frame()
 	if (has_pgm_cell_ || has_prvw_cell_)
 		check_scene_change_for_volmeters();
 
-	/* Snapshot PGM / PRVW scene trees once per frame for cell-highlight
-	 * classification. We always do this (independent of has_pgm_cell_ /
-	 * has_prvw_cell_) because a regular "scene" cell can be highlighted
-	 * when its source happens to be the current PGM/PRVW scene or is
-	 * nested inside one. Studio Mode OFF → prvw_tree_set_ stays empty
-	 * → no green borders anywhere, automatically. */
-	refresh_highlight_tree_sets();
+	/* Snapshot PGM / PRVW scene trees for cell-highlight classification. A
+	 * regular "scene" cell can be highlighted when its source is (or is nested
+	 * inside) the current PGM/PRVW scene. Studio Mode OFF → prvw_tree_set_ stays
+	 * empty → no green borders, automatically.
+	 *
+	 * Perf: this is a full recursive scene enumeration (obs_source_enum_active_
+	 * tree over PGM + PRVW); doing it every frame is wasted graphics-thread CPU
+	 * for complex scenes and competes with the PGM render. The tree only changes
+	 * on scene switch or scene edit, so re-walk only when the PGM/PRVW scene
+	 * changed (instant border update) or every kHighlightWalkIntervalNs (catches
+	 * in-scene source add/remove). Comparing weak refs + a timer is far cheaper
+	 * than the enumeration itself. */
+	{
+		constexpr uint64_t kHighlightWalkIntervalNs = 250000000ull; /* 250 ms */
+		OBSSourceAutoRelease hlPgm = amv_frontend::current_program_scene();
+		OBSSourceAutoRelease hlPrvw = amv_frontend::current_preview_scene();
+		OBSWeakSource hlPgmW = hlPgm ? OBSGetWeakRef(hlPgm) : OBSWeakSource();
+		OBSWeakSource hlPrvwW = hlPrvw ? OBSGetWeakRef(hlPrvw) : OBSWeakSource();
+		const bool sceneChanged = (hlPgmW != last_hl_pgm_) || (hlPrvwW != last_hl_prvw_);
+		if (sceneChanged || last_highlight_walk_ns_ == 0 ||
+		    (now - last_highlight_walk_ns_) >= kHighlightWalkIntervalNs) {
+			refresh_highlight_tree_sets();
+			last_hl_pgm_ = hlPgmW;
+			last_hl_prvw_ = hlPrvwW;
+			last_highlight_walk_ns_ = now;
+		}
+	}
 
 	/* Handle deferred rebuild requested from non-render threads
 	 * (audio_mixers signal) and poll for AutoFollow streaming-track changes

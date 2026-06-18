@@ -414,6 +414,14 @@ private:
 	std::unordered_set<obs_source_t *> pgm_tree_set_;
 	std::unordered_set<obs_source_t *> prvw_tree_set_;
 	void refresh_highlight_tree_sets();
+	/* Perf: refresh_highlight_tree_sets() does a full recursive PGM+PRVW scene
+	 * enumeration; running it every frame is wasted graphics-thread CPU (the
+	 * composition only changes on scene switch / scene edit). Re-walk only on a
+	 * PGM/PRVW scene change or every kHighlightWalkIntervalNs (catches in-scene
+	 * source add/remove). These cache the gating state. */
+	uint64_t last_highlight_walk_ns_ = 0;
+	OBSWeakSource last_hl_pgm_;
+	OBSWeakSource last_hl_prvw_;
 	HighlightKind compute_cell_highlight(int cellIndex);
 	void render_cell_highlight(const CellRect &cell, int vpX, int vpY, HighlightKind kind,
 				   const HighlightSettings &hs);
