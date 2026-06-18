@@ -104,14 +104,20 @@ items are the user runtime self-tests above and the two scheduled hardening fixe
 
 ## Hardening results (post-Phase-2)
 
-### F1 — NDI readback double-buffer — DONE (commit e39bddd)
-`multiview-output-ndi.cpp` now ping-pongs two staging surfaces: frame N is staged
-into `stage_[idx]` (async `gs_stage_texture`) while the surface staged on frame
-N-1 is mapped+sent (its GPU copy finished a frame ago, so the map doesn't block
-the graphics thread). One frame of added output latency; the per-frame readback
-stall is gone. `stage_have_prev_` suppresses the send on the first frame / after
-a resize; `destroy_stages()` resets the ping-pong on teardown/resize. Spout is
-unaffected (on-GPU share, no readback).
+### F1 — NDI readback double-buffer — TRIED, then REVERTED (e39bddd -> 02c4fb8)
+Implemented a two-surface ping-pong (stage frame N, map+send frame N-1) to remove
+the synchronous `gs_stagesurface_map` stall on the graphics thread. **Reverted
+after runtime testing** because it traded a stall that wasn't actually dropping
+frames on real hardware for two worse regressions for low-latency broadcast:
+(1) +1 frame of video latency, clearly noticeable at 30fps (~33ms); (2) A/V
+desync — only video was delayed a frame while audio (`on_audio`) sent
+immediately, so with `timecode_synthesize` the receiver plays audio ~1 frame
+ahead of video. **Decision: keep the synchronous single-buffer readback** — it's
+low-latency and A/V-synced, the right trade here. The ~1-frame map stall remains
+a documented theoretical risk for very slow GPUs only (not observed on an
+RTX 3080). If ever revisited, a correct double-buffer MUST also delay audio by
+one frame to preserve sync — but that re-adds the latency, so it's not worth it
+for this use case.
 
 ### F5 — Lock-order audit + doc — DONE (audited, no code change needed)
 
