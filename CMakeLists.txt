@@ -56,6 +56,8 @@ target_sources(
     src/external-output-settings-dialog.cpp
     src/signal-lost-settings-dialog.hpp
     src/signal-lost-settings-dialog.cpp
+    src/amv-instance-core.hpp
+    src/amv-instance-core.cpp
     src/multiview-window.hpp
     src/multiview-window.cpp
     src/multiview-window-context-menu.cpp
