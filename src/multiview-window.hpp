@@ -176,6 +176,13 @@ private:
 	static void render_callback(void *data, uint32_t cx, uint32_t cy);
 	void render(uint32_t cx, uint32_t cy);
 
+	/* Draw the full multiview composition (gutter, cells, overlays, VU,
+	 * highlights) into the current render target, mapped to the given
+	 * viewport rect. Split out of render() so the same pipeline can paint
+	 * both the on-screen display and an offscreen target for Spout/NDI
+	 * output (issue #11). Acquires source_mutex_ (recursive). */
+	void draw_grid(int vpX, int vpY, int vpW, int vpH);
+
 	/* Context menu */
 	int cell_index_at_widget_pos(const QPointF &position);
 	void show_context_menu(const QPoint &pos, int cellIndex);

@@ -1584,6 +1584,19 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		vpY = ((int)cy - vpH) / 2;
 	}
 
+	/* Draw the whole composition into the centered viewport. Extracted into
+	 * draw_grid() so the same grid can be rendered into an offscreen target
+	 * (Spout / NDI output, issue #11) without duplicating the cell pipeline. */
+	draw_grid(vpX, vpY, vpW, vpH);
+}
+
+void MultiviewWindow::draw_grid(int vpX, int vpY, int vpW, int vpH)
+{
+	/* Re-entrant: render() already holds source_mutex_ when it calls us, but
+	 * the output path (issue #11) drives draw_grid() on its own, so acquire
+	 * here too. source_mutex_ is recursive, so the nested lock is cheap. */
+	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
 	/* Recompute layout only when viewport size actually changed */
 	if (vpW != cached_vpW_ || vpH != cached_vpH_) {
 		engine_.set_layout(layout_);
