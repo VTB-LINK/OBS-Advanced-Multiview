@@ -236,17 +236,9 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 		}
 	}
 
-	/* Spout output toggle (issue #11). Gated on the existing Spout platform
-	 * detection (Windows-only), reused from the Spout input provider. The
-	 * sender name follows the instance name. Runtime-only for now —
-	 * persistence + a settings-dialog control land in a later milestone. */
-	if (MultiviewOutputManager::spout_supported()) {
-		QAction *spoutAction = menu.addAction(amv::text("AMVPlugin.ContextMenu.SpoutOutput"));
-		spoutAction->setCheckable(true);
-		spoutAction->setChecked(spout_output_enabled());
-		connect(spoutAction, &QAction::triggered, this,
-			[this]() { set_spout_output_enabled(!spout_output_enabled()); });
-	}
+	/* External output (Spout/NDI) is configured per-instance from the manager's
+	 * "External Output…" dialog (resolution / frame-rate / audio per backend),
+	 * which is the single source of truth — no quick toggle here (issue #11). */
 
 	/* ---------- Section 2: cell display & lost (cell hit only) ---------- */
 

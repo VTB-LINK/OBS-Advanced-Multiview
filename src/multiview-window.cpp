@@ -2573,27 +2573,6 @@ void MultiviewWindow::apply_output_settings()
 	obs_leave_graphics();
 }
 
-void MultiviewWindow::set_spout_output_enabled(bool enabled)
-{
-	MultiviewInstance *inst = config_->find_instance(uuid_);
-	if (!inst)
-		return;
-	inst->outputSettings.spout.enabled = enabled;
-	config_->save();
-	apply_output_settings();
-	/* This is a visible window (right-click source), so the host already
-	 * exists — just refresh the global driver so it starts/stops driving
-	 * this host's output. */
-	multiview_refresh_output_driver();
-	obs_log(LOG_INFO, "%sSpout output %s", log_prefix().c_str(), enabled ? "ON" : "OFF");
-}
-
-bool MultiviewWindow::spout_output_enabled() const
-{
-	MultiviewInstance *inst = config_->find_instance(uuid_);
-	return inst && inst->outputSettings.spout.enabled;
-}
-
 void MultiviewWindow::enter_headless()
 {
 	if (is_headless())

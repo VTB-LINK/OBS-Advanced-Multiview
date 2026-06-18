@@ -519,6 +519,13 @@ enum class OutputResolutionMode {
 bool obs_stream_rescale_dimensions(uint32_t &w, uint32_t &h);
 bool obs_record_rescale_dimensions(uint32_t &w, uint32_t &h);
 
+/* Which OBS audio the backend transmits alongside video (issue #11).
+ *   FollowStreaming: the track(s) OBS sends to its streaming output.
+ *   ManualTrack:     a fixed mixer track 1..6 (audioTrackIndex).
+ * Mirrors the VU meter's VuMeterTrackMode source selection. Spout carries no
+ * audio, so its audio controls are disabled in the dialog. */
+enum class OutputAudioMode { FollowStreaming, ManualTrack };
+
 struct OutputBackendSettings {
 	bool enabled = false;
 	OutputResolutionMode resMode = OutputResolutionMode::CanvasBase;
@@ -527,6 +534,11 @@ struct OutputBackendSettings {
 	/* Integer frame-rate divisor: 1 = follow OBS fps, 2 = half. Only these two
 	 * are offered (half only when base fps > 30). */
 	int fpsDivisor = 1;
+
+	/* Audio source selection. Persisted + UI now; actual audio transmission
+	 * (NDI only) lands in a later milestone — Spout has no audio path. */
+	OutputAudioMode audioMode = OutputAudioMode::FollowStreaming;
+	int audioTrackIndex = 1; /* 1..6, only used when audioMode == ManualTrack */
 
 	obs_data_t *to_obs_data() const;
 	static OutputBackendSettings from_obs_data(obs_data_t *data);

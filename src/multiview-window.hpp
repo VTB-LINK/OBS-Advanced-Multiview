@@ -157,13 +157,9 @@ public:
 
 	/* Spout/NDI output (issue #11). apply_output_settings() (re)builds the
 	 * output manager from the instance's persisted InstanceOutputSettings —
-	 * call after the config changes (settings dialog, right-click toggle,
-	 * notify). set_spout_output_enabled() is the right-click quick toggle:
-	 * it flips spout.enabled in config, saves, then applies. The sender name
-	 * follows the instance name. */
+	 * call after the config changes (External Output dialog, notify). The
+	 * sender name follows the instance name. */
 	void apply_output_settings();
-	void set_spout_output_enabled(bool enabled);
-	bool spout_output_enabled() const;
 
 	/* Phase 2 headless driver hooks (issue #11). Called by the global
 	 * obs_add_main_render_callback on the graphics thread:

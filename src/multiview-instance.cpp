@@ -1198,6 +1198,23 @@ static OutputResolutionMode output_res_mode_from_str(const char *s)
 	return OutputResolutionMode::CanvasBase;
 }
 
+static const char *output_audio_mode_to_str(OutputAudioMode m)
+{
+	switch (m) {
+	case OutputAudioMode::ManualTrack:
+		return "manualTrack";
+	default:
+		return "followStreaming";
+	}
+}
+
+static OutputAudioMode output_audio_mode_from_str(const char *s)
+{
+	if (s && strcmp(s, "manualTrack") == 0)
+		return OutputAudioMode::ManualTrack;
+	return OutputAudioMode::FollowStreaming;
+}
+
 /* Shared reader for an OBS advanced-mode encoder "Rescale Output" setting.
  * filterKey/resKey are the [AdvOut] config keys: streaming uses
  * RescaleFilter/RescaleRes, recording uses RecRescaleFilter/RecRescaleRes. */
@@ -1249,6 +1266,8 @@ obs_data_t *OutputBackendSettings::to_obs_data() const
 	obs_data_set_int(data, "customWidth", customWidth);
 	obs_data_set_int(data, "customHeight", customHeight);
 	obs_data_set_int(data, "fpsDivisor", fpsDivisor);
+	obs_data_set_string(data, "audioMode", output_audio_mode_to_str(audioMode));
+	obs_data_set_int(data, "audioTrackIndex", audioTrackIndex);
 	return data;
 }
 
@@ -1283,6 +1302,15 @@ OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
 	/* Only full (1) and half (2) are legal divisors. */
 	if (s.fpsDivisor != 1 && s.fpsDivisor != 2)
 		s.fpsDivisor = 1;
+	if (obs_data_has_user_value(data, "audioMode"))
+		s.audioMode = output_audio_mode_from_str(obs_data_get_string(data, "audioMode"));
+	if (obs_data_has_user_value(data, "audioTrackIndex"))
+		s.audioTrackIndex = (int)obs_data_get_int(data, "audioTrackIndex");
+	/* OBS mixer tracks are 1..6. */
+	if (s.audioTrackIndex < 1)
+		s.audioTrackIndex = 1;
+	else if (s.audioTrackIndex > 6)
+		s.audioTrackIndex = 6;
 	return s;
 }
 

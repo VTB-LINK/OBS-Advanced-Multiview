@@ -62,13 +62,16 @@ void ExternalOutputSettingsDialog::setup_ui()
 	if (!spoutAvailable)
 		spoutReason = QString::fromUtf8(signal_provider_unsupported_platform_reason(SignalProviderType::Spout));
 
-	tabs->addTab(build_backend_tab(spout_, spoutAvailable, spoutReason), amv::text("AMVPlugin.Output.Tab.Spout"));
+	/* Spout shares only a GPU texture — no audio path (supportsAudio = false). */
+	tabs->addTab(build_backend_tab(spout_, spoutAvailable, spoutReason, /*supportsAudio=*/false),
+		     amv::text("AMVPlugin.Output.Tab.Spout"));
 
 	/* NDI requires the runtime DLL to be installed; grey the tab out with a
 	 * hint when it isn't (or when the plugin was built without NDI support). */
 	const bool ndiAvailable = MultiviewOutputManager::ndi_supported();
 	const QString ndiReason = ndiAvailable ? QString() : amv::text("AMVPlugin.Output.NDI.Unavailable");
-	tabs->addTab(build_backend_tab(ndi_, ndiAvailable, ndiReason), amv::text("AMVPlugin.Output.Tab.NDI"));
+	tabs->addTab(build_backend_tab(ndi_, ndiAvailable, ndiReason, /*supportsAudio=*/true),
+		     amv::text("AMVPlugin.Output.Tab.NDI"));
 
 	mainLayout->addWidget(tabs);
 
@@ -79,7 +82,7 @@ void ExternalOutputSettingsDialog::setup_ui()
 }
 
 QWidget *ExternalOutputSettingsDialog::build_backend_tab(BackendWidgets &w, bool available,
-							 const QString &unavailableReason)
+							 const QString &unavailableReason, bool supportsAudio)
 {
 	auto *tab = new QWidget(this);
 	auto *form = new QFormLayout(tab);
@@ -157,6 +160,31 @@ QWidget *ExternalOutputSettingsDialog::build_backend_tab(BackendWidgets &w, bool
 		w.fps->addItem(amv::text("AMVPlugin.Output.Fps.Half").arg(QString::number(base / 2.0, 'g', 5)), 2);
 	form->addRow(amv::text("AMVPlugin.Output.Framerate"), w.fps);
 
+	/* Audio source — mirrors the VU meter's track selection (follow streaming /
+	 * manual track 1..6). Spout shares only a GPU texture and has no audio path,
+	 * so its controls are present but disabled (supportsAudio == false). */
+	w.audioMode = new QComboBox(tab);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.FollowStreaming"), (int)OutputAudioMode::FollowStreaming);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.ManualTrack"), (int)OutputAudioMode::ManualTrack);
+	form->addRow(amv::text("AMVPlugin.Output.Audio"), w.audioMode);
+
+	w.audioTrack = new QSpinBox(tab);
+	w.audioTrack->setRange(1, 6);
+	w.audioTrack->setPrefix(amv::text("AMVPlugin.Output.Audio.TrackPrefix"));
+	form->addRow(amv::text("AMVPlugin.Output.Audio.ManualTrackLabel"), w.audioTrack);
+
+	/* Manual track only matters in ManualTrack mode; whole block off for Spout. */
+	auto syncAudio = [&w, supportsAudio]() {
+		const bool manual = w.audioMode->currentData().toInt() == (int)OutputAudioMode::ManualTrack;
+		w.audioMode->setEnabled(supportsAudio);
+		w.audioTrack->setEnabled(supportsAudio && manual);
+	};
+	connect(w.audioMode, QOverload<int>::of(&QComboBox::currentIndexChanged), tab,
+		[syncAudio](int) { syncAudio(); });
+	syncAudio();
+	if (!supportsAudio)
+		w.audioMode->setToolTip(amv::text("AMVPlugin.Output.Audio.Unsupported"));
+
 	if (!available) {
 		tab->setEnabled(false);
 		if (!unavailableReason.isEmpty())
@@ -178,6 +206,10 @@ void ExternalOutputSettingsDialog::load_backend(const BackendWidgets &w, const O
 
 	int fpsIdx = w.fps->findData(s.fpsDivisor);
 	w.fps->setCurrentIndex(fpsIdx >= 0 ? fpsIdx : 0); /* Half may be absent (<=30 fps) -> Full */
+
+	int audIdx = w.audioMode->findData((int)s.audioMode);
+	w.audioMode->setCurrentIndex(audIdx >= 0 ? audIdx : 0);
+	w.audioTrack->setValue(s.audioTrackIndex);
 }
 
 OutputBackendSettings ExternalOutputSettingsDialog::read_backend(const BackendWidgets &w)
@@ -188,6 +220,8 @@ OutputBackendSettings ExternalOutputSettingsDialog::read_backend(const BackendWi
 	s.customWidth = (uint32_t)w.customW->value();
 	s.customHeight = (uint32_t)w.customH->value();
 	s.fpsDivisor = w.fps->currentData().toInt() == 2 ? 2 : 1;
+	s.audioMode = (OutputAudioMode)w.audioMode->currentData().toInt();
+	s.audioTrackIndex = w.audioTrack->value();
 	return s;
 }
 

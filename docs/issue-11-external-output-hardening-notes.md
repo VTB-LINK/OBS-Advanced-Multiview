@@ -122,9 +122,10 @@
   情形下，对话框会把 NDI 显示为可用、用户启用后 `acquire()` 的 `initialize()` 失败 → 后端静默
   休眠（`acquire` 已一次性 warn）。让 `available()` 跑 `initialize()` 需在 UI 线程 init/destroy
   往返，得不偿失；保持轻量探测，记录在案。
-- **NDI 帧 `frame_rate` 取 OBS 全局 fps**：half-rate 由 manager 的 `fpsDivisor` 跳过整次合成实现，
-  但帧结构里的标称 `frame_rate_N/D` 仍是全速；NDI 按合成时间戳（`timecode_synthesize`）容忍抖动，
-  接收端表现正常。若需精确标称帧率，可在硬化中按 divisor 修正。
+- ~~**NDI 帧 `frame_rate` 取 OBS 全局 fps**~~ **（已修复）**：原先标称 `frame_rate_N/D` 恒为全速，
+  half-rate 下 Studio Monitor 等接收端显示 60fps（实际只发 30）。修复：`submit_frame` 增加
+  `fpsDivisor` 参数，NDI 后端声明真实发送速率 `fps / divisor`（Spout 无帧率元数据，忽略此参）。
+  用户实测撞上此项，已随该修复解决。
 - **运行时引用计数销毁顺序依赖后端先析构 sender**：`NdiRuntime` 经 `shared_ptr` 引用计数，末个
   持有者析构时 `NDIlib destroy` + `FreeLibrary`；后端 `stop()` 保证先 `send_destroy` 再释放
   `shared_ptr`，满足"所有 sender 先于 destroy"的 SDK 约束。后端的 `stop()`/析构、stagesurface

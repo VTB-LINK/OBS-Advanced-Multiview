@@ -37,12 +37,17 @@ private:
 		QSpinBox *customW = nullptr;
 		QSpinBox *customH = nullptr;
 		QComboBox *fps = nullptr;
+		QComboBox *audioMode = nullptr;
+		QSpinBox *audioTrack = nullptr;
 	};
 
 	void setup_ui();
 	/* Builds one backend tab. `available` false => whole tab disabled with a
-	 * tooltip (non-Windows Spout, or not-yet-implemented NDI). */
-	QWidget *build_backend_tab(BackendWidgets &w, bool available, const QString &unavailableReason);
+	 * tooltip (non-Windows Spout, or NDI runtime missing). `supportsAudio`
+	 * false => the audio controls are present but disabled (Spout has no
+	 * audio path). */
+	QWidget *build_backend_tab(BackendWidgets &w, bool available, const QString &unavailableReason,
+				   bool supportsAudio);
 	static void load_backend(const BackendWidgets &w, const OutputBackendSettings &s);
 	static OutputBackendSettings read_backend(const BackendWidgets &w);
 
