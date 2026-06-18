@@ -102,6 +102,8 @@ void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSetti
 		e.w = dims.first;
 		e.h = dims.second;
 		e.fpsDivisor = (s.fpsDivisor == 2) ? 2 : 1;
+		/* (Re)connect audio capture to the selected track (NDI only). */
+		e.backend->configure_audio(s);
 	}
 }
 

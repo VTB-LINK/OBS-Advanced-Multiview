@@ -45,6 +45,12 @@ public:
 	virtual void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h,
 				  int fpsDivisor) = 0;
 
+	/* Configure audio transmission from the backend's settings (audio source
+	 * track). Called on the graphics thread during reconcile. Backends without
+	 * an audio path (Spout) ignore it; NDI (re)connects its OBS audio capture
+	 * when the selected track changes. */
+	virtual void configure_audio(const OutputBackendSettings &cfg) { (void)cfg; }
+
 	/* Release the sender and all GPU/OS resources. Called on the graphics
 	 * thread. Safe to call when never started. */
 	virtual void stop() = 0;
