@@ -171,7 +171,7 @@ cmake --build build_x64 --config RelWithDebInfo --target obs-advanced-multiview
 
 ### NDI 输出
 
-内置的 **NDI 外部输出**（视频 + 音频）在 **Windows 与 macOS** 上开箱即可构建：[NDI SDK](https://ndi.video/for-developers/ndi-sdk/) 的头文件已 vendored 于 [`deps/ndi/`](deps/ndi/README.md)（仅头文件——不含导入库、不打包库），因此 CI 与贡献者均无需安装 SDK。若想改用本机已装的 SDK，设置环境变量 `NDI_SDK_DIR`（或安装到默认路径）即可，其优先级高于 vendored 头。
+内置的 **NDI 外部输出**（视频 + 音频）在 **Windows、macOS 与 Linux** 上开箱即可构建：[NDI SDK](https://ndi.video/for-developers/ndi-sdk/) 的头文件已 vendored 于 [`deps/ndi/`](deps/ndi/README.md)（仅头文件——不含导入库、不打包库），因此 CI 与贡献者均无需安装 SDK。若想改用本机已装的 SDK，设置环境变量 `NDI_SDK_DIR`（或安装到默认路径）即可，其优先级高于 vendored 头。
 
 运行时插件**动态加载** NDI 运行时库（不打包任何东西），因此终端用户需安装 [NDI 运行时](http://ndi.link/NDIRedistV6)（或 NDI Tools）。NDI 5 与 NDI 6 运行时均可。
 

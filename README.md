@@ -171,7 +171,7 @@ See [docs/setup/README.md](docs/setup/README.md) for first-time setup and troubl
 
 ### NDI output
 
-The built-in **NDI external output** (video + audio) builds out of the box on **Windows and macOS**: the [NDI SDK](https://ndi.video/for-developers/ndi-sdk/) headers are vendored in [`deps/ndi/`](deps/ndi/README.md) (headers only — no import library, no bundled library), so neither CI nor contributors need to install the SDK. To build against a locally installed SDK instead, set the `NDI_SDK_DIR` environment variable (or install to the default path); it takes precedence over the vendored headers.
+The built-in **NDI external output** (video + audio) builds out of the box on **Windows, macOS, and Linux**: the [NDI SDK](https://ndi.video/for-developers/ndi-sdk/) headers are vendored in [`deps/ndi/`](deps/ndi/README.md) (headers only — no import library, no bundled library), so neither CI nor contributors need to install the SDK. To build against a locally installed SDK instead, set the `NDI_SDK_DIR` environment variable (or install to the default path); it takes precedence over the vendored headers.
 
 At runtime the plugin loads the NDI runtime library dynamically (nothing is bundled), so end users need the [NDI runtime](http://ndi.link/NDIRedistV6) (or NDI Tools) installed. An NDI 5 or NDI 6 runtime both work.
 

@@ -46,6 +46,12 @@ QStringList candidate_paths()
 	/* The NDI runtime/Tools installer symlinks the dylib into these dirs. */
 	paths << QStringLiteral("/usr/local/lib/") + libName;
 	paths << QStringLiteral("/Library/NDI SDK for Apple/lib/macOS/") + libName;
+#elif defined(Q_OS_LINUX)
+	/* Common locations the NDI redist / SDK drops libndi.so on Linux. */
+	paths << QStringLiteral("/usr/lib/") + libName;
+	paths << QStringLiteral("/usr/lib/x86_64-linux-gnu/") + libName;
+	paths << QStringLiteral("/usr/lib64/") + libName;
+	paths << QStringLiteral("/usr/local/lib/") + libName;
 #endif
 
 	/* Bare name last: let the OS loader search its standard paths. */

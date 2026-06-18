@@ -14,8 +14,8 @@
 # non-fatal disable branch below only triggers if the vendored headers are also
 # missing (e.g. a partial checkout).
 #
-# Windows + macOS (the runtime loads cross-platform via Qt's QLibrary). Set the
-# NDI_SDK_DIR environment variable to override and use a specific installed SDK.
+# Windows + macOS + Linux (the runtime loads cross-platform via Qt's QLibrary).
+# Set the NDI_SDK_DIR environment variable to override and use an installed SDK.
 
 # `Processing.NDI.Lib.h` is the umbrella header; finding it pins the Include dir.
 # Search order: explicit NDI_SDK_DIR override, then the default installer

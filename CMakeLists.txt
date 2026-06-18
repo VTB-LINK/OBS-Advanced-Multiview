@@ -117,9 +117,10 @@ if(ENABLE_SPOUT_OUTPUT)
 endif()
 
 # NDI is cross-platform (unlike Spout's DirectX). The runtime is loaded via Qt's
-# QLibrary, so the backend builds on Windows and macOS (Linux is a future step).
-if(OS_WINDOWS OR OS_MACOS)
-  option(ENABLE_NDI_OUTPUT "Build multiview NDI output (Windows/macOS)" ON)
+# QLibrary and the backend uses only libobs + the NDI table, so it builds on
+# every platform NDI ships a runtime for: Windows, macOS, and Linux.
+if(OS_WINDOWS OR OS_MACOS OR OS_LINUX)
+  option(ENABLE_NDI_OUTPUT "Build multiview NDI output (Windows/macOS/Linux)" ON)
 else()
   set(ENABLE_NDI_OUTPUT OFF)
 endif()
