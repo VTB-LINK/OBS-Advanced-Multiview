@@ -34,49 +34,44 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 /* A projector VIEW onto one AMV instance. Holds a per-window OBS display +
  * LayoutEngine and renders the shared AmvInstanceCore at this window's size.
- * Issue #10 will allow N views per core; for now each window owns its core 1:1
- * (the core ownership moves to plugin-main in the multi-window phase).
  *
- * Most of the public methods are thin forwarders to the core so the existing
- * plugin-main / manager / context-menu call sites keep working unchanged during
- * the refactor. */
+ * Issue #10: N views attach to one core. The core (sources / volmeters / output
+ * / render logic) is owned by plugin-main's g_cores registry; the view holds a
+ * NON-owning pointer to it. Closing a view never tears the core down — that
+ * happens in plugin-main only when the last view is gone and no output remains.
+ *
+ * Several public methods are thin forwarders to the core so the context-menu
+ * call sites keep working; because the core is shared, one call updates every
+ * view of the instance. */
 class MultiviewWindow : public QWidget {
 	Q_OBJECT
 
 public:
-	MultiviewWindow(ConfigManager *config, const std::string &uuid, QWidget *parent = nullptr,
-			bool startVisible = true);
+	MultiviewWindow(ConfigManager *config, AmvInstanceCore *core, QWidget *parent = nullptr);
 	~MultiviewWindow() override;
 
 	std::string instance_uuid() const { return uuid_; }
 
-	/* Update window title from config (view-specific). */
+	/* Window numbering (issue #10): plugin-main assigns the 1-based position of
+	 * this view in the instance's view list and re-assigns after any open/close
+	 * so the titles stay gap-free. set_window_number() refreshes the title. */
+	void set_window_number(int number);
 	void refresh_title();
 
-	/* ---- forwarders to the shared core ---- */
-	void refresh_layout();
+	/* Force this view's layout engine to recompute at its own size next frame
+	 * (after a shared layout/visual change fanned out from plugin-main). */
+	void invalidate_layout();
+
+	/* ---- forwarders to the shared core (context-menu call sites) ---- */
 	void refresh_sources();
-	void refresh_sources_lazy();
 	bool refresh_cell(int row, int col);
-	void on_source_being_removed(obs_source_t *source);
-	void on_source_just_created(obs_source_t *source);
 	void refresh_visual_settings();
-	void refresh_signal_settings();
 	bool force_reconnect_cell(int cellIndex);
-	void apply_output_settings();
 
 	QPaintEngine *paintEngine() const override { return nullptr; }
 
-	/* Phase 2 headless driver hooks (issue #11). */
-	bool has_output() const { return core_ && core_->has_output(); }
-	bool is_headless() const { return headless_.load(std::memory_order_relaxed); }
-	void tick_frame();
-	void render_output_only();
-	void enter_headless();
-	void exit_headless();
-
 signals:
-	void window_closed(const std::string &uuid);
+	void window_closed(MultiviewWindow *view, const std::string &uuid);
 
 protected:
 	bool event(QEvent *event) override;
@@ -111,10 +106,13 @@ private:
 	ConfigManager *config_;
 	std::string uuid_;
 
-	/* The shared per-instance state + render logic. Owned 1:1 by the window for
-	 * now (issue #10 Phase 1); ownership moves to plugin-main when N views per
-	 * instance land. */
-	std::unique_ptr<AmvInstanceCore> core_;
+	/* The shared per-instance state + render logic. NON-owning: the core lives
+	 * in plugin-main's g_cores and outlives / outdies this view independently
+	 * (N views share one core). Never reset or delete it here. */
+	AmvInstanceCore *core_ = nullptr;
+
+	/* 1-based position of this view in its instance's view list (title only). */
+	int window_number_ = 1;
 
 	/* OBS display (per-window). */
 	OBSDisplay display_;
@@ -127,8 +125,6 @@ private:
 
 	bool is_always_on_top_ = false;
 	std::atomic<bool> ready_{false};
-	/* Hidden, display-less render host (output without a visible projector). */
-	std::atomic<bool> headless_{false};
 };
 
 /* Global functions (defined in plugin-main) */

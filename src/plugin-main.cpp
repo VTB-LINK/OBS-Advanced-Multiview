@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 
 #include "amv-frontend-cache.hpp"
+#include "amv-instance-core.hpp"
 #include "config-manager.hpp"
 #include "manager-dialog.hpp"
 #include "multiview-window.hpp"
@@ -32,8 +33,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPointer>
 #include <QScreen>
 #include <QTimer>
+#include <algorithm>
 #include <atomic>
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -42,13 +45,58 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 static ConfigManager *config_manager = nullptr;
 static ManagerDialog *manager_dialog = nullptr;
-static std::map<std::string, MultiviewWindow *> open_windows;
 
-/* ---- Issue #11 Phase 2: global external-output driver ----
+/* ---- Issue #10: per-instance cores + their views ----
+ *
+ * g_cores owns exactly one AmvInstanceCore per AMV instance (keyed by uuid).
+ * The core holds the shared, stream-pulling, content-rendering state, so a
+ * single m3u8/NDI/Spout source is pulled ONCE no matter how many projector
+ * windows are open. g_views lists the open projector windows (views) for each
+ * instance; a core with zero views but output enabled is the issue-#11
+ * headless host generalized.
+ *
+ * Both maps are mutated only on the Qt/UI thread (open/close, config edits).
+ * The graphics thread never reads them — it iterates g_output_hosts, which is
+ * rebuilt under obs_enter_graphics. */
+static std::map<std::string, std::unique_ptr<AmvInstanceCore>> g_cores;
+static std::map<std::string, std::vector<MultiviewWindow *>> g_views;
+
+/* Create the core for `uuid` if absent (applying persisted layout + output);
+ * returns the (now-existing) core, or nullptr if there is no such instance. */
+static AmvInstanceCore *ensure_core(const std::string &uuid)
+{
+	auto it = g_cores.find(uuid);
+	if (it != g_cores.end())
+		return it->second.get();
+
+	auto core = std::make_unique<AmvInstanceCore>(config_manager, uuid);
+	core->refresh_layout();
+	/* Resume any persisted external output (issue #11) for this instance. */
+	core->apply_output_settings();
+	AmvInstanceCore *raw = core.get();
+	g_cores[uuid] = std::move(core);
+	return raw;
+}
+
+/* Re-number an instance's views 1..N (list order) and refresh their titles, so
+ * the "| Window n" suffix stays gap-free after any open/close. */
+static void refresh_view_numbers(const std::string &uuid)
+{
+	auto it = g_views.find(uuid);
+	if (it == g_views.end())
+		return;
+	int n = 1;
+	for (auto *v : it->second) {
+		if (v)
+			v->set_window_number(n++);
+	}
+}
+
+/* ---- Issue #11 / issue #10: global external-output driver ----
  *
  * External output runs even with no visible projector window. A single
- * obs_add_main_rendered_callback drives every output-enabled host each frame on
- * the graphics thread. The callback is registered ONLY while at least one host
+ * obs_add_main_rendered_callback drives every output-enabled core each frame on
+ * the graphics thread. The callback is registered ONLY while at least one core
  * emits output, so instances with no output cost nothing per frame.
  *
  * We use the *rendered* callback (fires after the main canvas texture is
@@ -57,24 +105,24 @@ static std::map<std::string, MultiviewWindow *> open_windows;
  * obs_render_main_texture(), which early-returns black until texture_rendered
  * is true — so the plain callback produced a black PGM in the output.
  *
- * g_output_hosts is the graphics-thread view of which hosts to drive. It is
- * rebuilt from open_windows under obs_enter_graphics (which serializes against
+ * g_output_hosts is the graphics-thread view of which cores to drive. It is
+ * rebuilt from g_cores under obs_enter_graphics (which serializes against
  * on_main_rendered, since that runs inside the graphics frame), so the callback
- * never iterates a list that is changing under it. */
+ * never iterates a list that is changing under it, and a core removed from
+ * g_cores is out of the driver before it is destroyed. */
 static bool g_main_render_registered = false;
-static std::vector<MultiviewWindow *> g_output_hosts;
+static std::vector<AmvInstanceCore *> g_output_hosts;
 
 static void on_main_rendered(void *)
 {
-	for (auto *w : g_output_hosts) {
-		if (!w || !w->has_output())
+	for (auto *core : g_output_hosts) {
+		if (!core || !core->has_output())
 			continue;
-		/* A headless host has no display callback to advance its
-		 * per-frame state, so tick it here. Visible hosts tick via
-		 * their own display render(). */
-		if (w->is_headless())
-			w->tick_frame();
-		w->render_output_only();
+		/* Idempotent within a frame via the core's tick token: if a visible
+		 * view already ticked this core this frame, this no-ops; a headless
+		 * core (no view, no display callback) ticks here. */
+		core->tick_once_per_frame();
+		core->render_output_only();
 	}
 }
 
@@ -82,9 +130,9 @@ void multiview_refresh_output_driver()
 {
 	obs_enter_graphics();
 	g_output_hosts.clear();
-	for (auto &[id, w] : open_windows) {
-		if (w && w->has_output())
-			g_output_hosts.push_back(w);
+	for (auto &[id, core] : g_cores) {
+		if (core && core->has_output())
+			g_output_hosts.push_back(core.get());
 	}
 	const bool need = !g_output_hosts.empty();
 	obs_leave_graphics();
@@ -98,44 +146,65 @@ void multiview_refresh_output_driver()
 	}
 }
 
-static void on_window_closed(const std::string &closedUuid)
+static void on_window_closed(MultiviewWindow *view, const std::string &uuid)
 {
-	auto it = open_windows.find(closedUuid);
-	if (it != open_windows.end()) {
-		it->second->deleteLater();
-		open_windows.erase(it);
+	/* The view's closeEvent already removed its display callback; here we drop
+	 * it from the instance's view list, re-number the survivors, and tear the
+	 * core down only if nothing references it anymore (no views, no output). */
+	auto vit = g_views.find(uuid);
+	if (vit != g_views.end()) {
+		auto &vec = vit->second;
+		vec.erase(std::remove(vec.begin(), vec.end(), view), vec.end());
+		if (view)
+			view->deleteLater();
+		if (vec.empty())
+			g_views.erase(vit);
+		else
+			refresh_view_numbers(uuid);
 	}
-	multiview_refresh_output_driver();
+
+	const bool hasViews = g_views.count(uuid) != 0;
+	auto cit = g_cores.find(uuid);
+	if (cit != g_cores.end() && !hasViews && !cit->second->has_output()) {
+		/* Last view gone and no output: remove from the driver first (under
+		 * the graphics lock, so no in-flight frame holds it), then destroy
+		 * the core (releases sources on this main thread). The just-closed
+		 * view is pending deleteLater and never dereferences core_ again. */
+		std::unique_ptr<AmvInstanceCore> dying = std::move(cit->second);
+		g_cores.erase(cit);
+		multiview_refresh_output_driver();
+		dying.reset();
+	} else {
+		multiview_refresh_output_driver();
+	}
 }
 
-/* Ensure a render host exists for `uuid` iff its instance has output enabled.
- * Creates a hidden headless host when output is enabled and no window exists;
- * tears a headless host down when output is disabled. Visible windows are left
- * alone (the user still has the projector) apart from re-applying config. */
-static void ensure_or_release_host(const std::string &uuid)
+/* Reconcile an instance's headless output host with its persisted settings:
+ * ensure a core exists (even with no window) while output is enabled, and tear
+ * a core with no views down once output is disabled. */
+static void reconcile_output_host(const std::string &uuid)
 {
 	MultiviewInstance *inst = config_manager ? config_manager->find_instance(uuid) : nullptr;
 	const bool want = inst && inst->outputSettings.any_enabled();
-	auto it = open_windows.find(uuid);
+	const bool hasViews = g_views.count(uuid) != 0;
+	auto cit = g_cores.find(uuid);
 
 	if (want) {
-		if (it == open_windows.end()) {
-			auto *host = new MultiviewWindow(config_manager, uuid, nullptr, /*startVisible=*/false);
-			QObject::connect(host, &MultiviewWindow::window_closed, on_window_closed);
-			open_windows[uuid] = host;
-			/* ctor already applied output settings -> output_ live */
-		} else {
-			it->second->apply_output_settings();
-		}
-	} else if (it != open_windows.end() && it->second) {
-		it->second->apply_output_settings(); /* tears output_ down */
-		if (it->second->is_headless()) {
-			/* Hidden host with nothing left to do — destroy it. */
-			it->second->disconnect();
-			it->second->deleteLater();
-			open_windows.erase(it);
+		AmvInstanceCore *core = ensure_core(uuid);
+		if (core)
+			core->apply_output_settings();
+	} else if (cit != g_cores.end()) {
+		cit->second->apply_output_settings(); /* tears output_ down */
+		if (!hasViews) {
+			/* No views and no output left — destroy the core (driver
+			 * rebuilt first so no in-flight frame holds it). */
+			std::unique_ptr<AmvInstanceCore> dying = std::move(cit->second);
+			g_cores.erase(cit);
+			multiview_refresh_output_driver();
+			return;
 		}
 	}
+	multiview_refresh_output_driver();
 }
 
 static bool init_config_path()
@@ -234,62 +303,69 @@ void open_manager_dialog_settings()
 
 void open_multiview_window(const std::string &uuid)
 {
-	auto it = open_windows.find(uuid);
-	if (it != open_windows.end() && it->second) {
-		/* A headless render host (output running without a window) is
-		 * promoted to a visible projector; an already-visible window is
-		 * just brought to front. */
-		if (it->second->is_headless()) {
-			it->second->exit_headless();
-		} else {
-			it->second->show();
-			it->second->raise();
-			it->second->activateWindow();
-		}
+	/* Issue #10: every open creates a NEW projector window onto the instance's
+	 * shared core (with N windows already open, "focus the existing one" is
+	 * ambiguous). The core is created on first open and reused thereafter, so
+	 * stream-pulling sources are never duplicated across windows. */
+	AmvInstanceCore *core = ensure_core(uuid);
+	if (!core)
 		return;
-	}
 
-	auto *window = new MultiviewWindow(config_manager, uuid, nullptr, /*startVisible=*/true);
+	auto *window = new MultiviewWindow(config_manager, core, nullptr);
 	QObject::connect(window, &MultiviewWindow::window_closed, on_window_closed);
-	open_windows[uuid] = window;
+	g_views[uuid].push_back(window);
+	refresh_view_numbers(uuid);
 
-	/* If this instance has output enabled (persisted), the ctor already
-	 * built output_ — make sure the global driver picks it up. */
+	/* If this instance has output enabled (persisted), make sure the global
+	 * driver picks the core up. */
 	multiview_refresh_output_driver();
 }
 
 void notify_multiview_layout_changed(const std::string &uuid)
 {
+	/* Layout change rebuilds the shared core's cells ONCE, then invalidates
+	 * every view's cached viewport so each recomputes at its own size. */
+	auto apply = [](const std::string &id, AmvInstanceCore *core) {
+		core->refresh_layout();
+		auto vit = g_views.find(id);
+		if (vit != g_views.end())
+			for (auto *v : vit->second)
+				if (v)
+					v->invalidate_layout();
+	};
 	if (uuid.empty()) {
-		/* Refresh all open windows */
-		for (auto &[id, window] : open_windows) {
-			if (window)
-				window->refresh_layout();
-		}
+		for (auto &[id, core] : g_cores)
+			if (core)
+				apply(id, core.get());
 	} else {
-		auto it = open_windows.find(uuid);
-		if (it != open_windows.end() && it->second)
-			it->second->refresh_layout();
+		auto it = g_cores.find(uuid);
+		if (it != g_cores.end() && it->second)
+			apply(uuid, it->second.get());
 	}
 }
 
 void notify_multiview_name_changed(const std::string &uuid)
 {
-	auto it = open_windows.find(uuid);
-	if (it != open_windows.end() && it->second)
-		it->second->refresh_title();
+	/* Fan the new name out to every view's title (each keeps its window n). */
+	auto vit = g_views.find(uuid);
+	if (vit != g_views.end())
+		for (auto *v : vit->second)
+			if (v)
+				v->refresh_title();
 }
 
 void notify_multiview_visual_settings_changed(const std::string &uuid)
 {
+	/* Visual settings rebuild shared resources on the core; cell rects are
+	 * unchanged, so views need no cache invalidation (they redraw next frame).
+	 * One call per core (not per view) avoids N redundant rebuilds. */
 	if (uuid.empty()) {
-		for (auto &[id, window] : open_windows) {
-			if (window)
-				window->refresh_visual_settings();
-		}
+		for (auto &[id, core] : g_cores)
+			if (core)
+				core->refresh_visual_settings();
 	} else {
-		auto it = open_windows.find(uuid);
-		if (it != open_windows.end() && it->second)
+		auto it = g_cores.find(uuid);
+		if (it != g_cores.end() && it->second)
 			it->second->refresh_visual_settings();
 	}
 }
@@ -300,82 +376,103 @@ void notify_multiview_signal_settings_changed(const std::string &uuid)
 	 * overlay/VU — only the runtime resolver and any image loaders that
 	 * read placeholder/signal-lost paths. refresh_signal_settings() is the
 	 * narrow hook for that and avoids the heavier label/source rebuild that
-	 * notify_multiview_visual_settings_changed() triggers. */
+	 * notify_multiview_visual_settings_changed() triggers. Once per core. */
 	if (uuid.empty()) {
-		for (auto &[id, window] : open_windows) {
-			if (window)
-				window->refresh_signal_settings();
-		}
+		for (auto &[id, core] : g_cores)
+			if (core)
+				core->refresh_signal_settings();
 	} else {
-		auto it = open_windows.find(uuid);
-		if (it != open_windows.end() && it->second)
+		auto it = g_cores.find(uuid);
+		if (it != g_cores.end() && it->second)
 			it->second->refresh_signal_settings();
 	}
 }
 
 void notify_multiview_output_settings_changed(const std::string &uuid)
 {
-	/* Issue #11 Phase 2: external-output config changed. Ensure a render host
-	 * exists for each instance that now has output enabled (creating a hidden
-	 * headless host if there is no open window), and tear down headless hosts
-	 * whose output was disabled. Then refresh the global driver. */
+	/* Issue #11: external-output config changed. Ensure a core exists for each
+	 * instance that now has output enabled (creating a headless core if there
+	 * is no open window), and tear down view-less cores whose output was
+	 * disabled. reconcile_output_host() refreshes the global driver itself. */
 	if (uuid.empty()) {
-		/* Reconcile every instance AND every existing host: the union
-		 * covers config instances that should gain a headless host and
-		 * stale hosts whose instance no longer has output (or was removed,
-		 * e.g. after a scene-collection switch). */
+		/* Reconcile every config instance AND every existing core: the union
+		 * covers instances that should gain a headless core and stale cores
+		 * whose instance no longer has output (or was removed, e.g. after a
+		 * scene-collection switch). Iterate a snapshot set — reconcile may
+		 * insert into / erase from g_cores. */
 		std::set<std::string> uuids;
 		if (config_manager) {
 			for (auto &inst : config_manager->instances())
 				uuids.insert(inst.uuid);
 		}
-		for (auto &[id, w] : open_windows)
+		for (auto &[id, core] : g_cores)
 			uuids.insert(id);
 		for (const auto &u : uuids)
-			ensure_or_release_host(u);
+			reconcile_output_host(u);
 	} else {
-		ensure_or_release_host(uuid);
+		reconcile_output_host(uuid);
 	}
-	multiview_refresh_output_driver();
 }
 
 void close_multiview_window(const std::string &uuid)
 {
-	auto it = open_windows.find(uuid);
-	if (it != open_windows.end() && it->second) {
-		MultiviewWindow *w = it->second;
-		w->disconnect();
-		/* Remove the host from open_windows and the graphics-thread driver
-		 * list BEFORE freeing it. multiview_refresh_output_driver() rebuilds
-		 * g_output_hosts under obs_enter_graphics (serialized with
-		 * on_main_rendered), so after it returns no render frame can hold a
-		 * pointer to this window — only then is it safe to delete. */
-		open_windows.erase(it);
-		multiview_refresh_output_driver();
-		w->close();
-		delete w;
+	/* Instance deletion: close ALL views of the instance and destroy the core.
+	 * UAF-safe order: (1) disconnect view signals so deleting them doesn't
+	 * re-enter on_window_closed; (2) move the core out of g_cores and rebuild
+	 * the driver under the graphics lock, so no in-flight frame holds it;
+	 * (3) delete the views (each removes its display callback) while the core
+	 * is still alive; (4) destroy the core last (releases its sources). */
+	auto vit = g_views.find(uuid);
+	auto cit = g_cores.find(uuid);
+
+	if (vit != g_views.end())
+		for (auto *v : vit->second)
+			if (v)
+				v->disconnect();
+
+	std::unique_ptr<AmvInstanceCore> dying;
+	if (cit != g_cores.end()) {
+		dying = std::move(cit->second);
+		g_cores.erase(cit);
 	}
+	multiview_refresh_output_driver();
+
+	if (vit != g_views.end()) {
+		for (auto *v : vit->second) {
+			if (v) {
+				v->close();
+				delete v;
+			}
+		}
+		g_views.erase(vit);
+	}
+
+	dying.reset();
 }
 
 static void close_all_multiview_windows()
 {
-	/* Issue #11: stop the global output driver before destroying hosts so no
-	 * on_main_render fires against freed windows. */
+	/* Issue #11: stop the global output driver before destroying anything so no
+	 * on_main_rendered fires against freed cores. */
 	if (g_main_render_registered) {
 		obs_remove_main_rendered_callback(on_main_rendered, nullptr);
 		g_main_render_registered = false;
 	}
 	g_output_hosts.clear();
 
-	for (auto &[uuid, window] : open_windows) {
-		if (window) {
-			/* Disconnect signal to avoid modifying map during iteration */
-			window->disconnect();
-			window->close();
-			delete window;
+	/* Delete all views first (each removes its display callback), then destroy
+	 * all cores (releases their sources). */
+	for (auto &[uuid, views] : g_views) {
+		for (auto *v : views) {
+			if (v) {
+				v->disconnect();
+				v->close();
+				delete v;
+			}
 		}
 	}
-	open_windows.clear();
+	g_views.clear();
+	g_cores.clear();
 }
 
 /* Phase 3 / M5: bridge OBS core source-list signals to all open MultiviewWindows.
@@ -396,9 +493,9 @@ static void on_qt_refresh_sources_all()
 {
 	if (!source_list_dirty_.exchange(false, std::memory_order_acquire))
 		return;
-	for (auto &[id, window] : open_windows) {
-		if (window)
-			window->refresh_sources_lazy();
+	for (auto &[id, core] : g_cores) {
+		if (core)
+			core->refresh_sources_lazy();
 	}
 }
 
@@ -460,9 +557,9 @@ static void on_obs_source_remove_precise(void *, calldata_t *cd)
 	obs_source_t *source = nullptr;
 	calldata_get_ptr(cd, "source", &source);
 	if (source) {
-		for (auto &[id, window] : open_windows) {
-			if (window)
-				window->on_source_being_removed(source);
+		for (auto &[id, core] : g_cores) {
+			if (core)
+				core->on_source_being_removed(source);
 		}
 	}
 	schedule_refresh_sources_all();
@@ -487,9 +584,9 @@ static void on_obs_source_create_precise(void *, calldata_t *cd)
 	obs_source_t *source = nullptr;
 	calldata_get_ptr(cd, "source", &source);
 	if (source) {
-		for (auto &[id, window] : open_windows) {
-			if (window)
-				window->on_source_just_created(source);
+		for (auto &[id, core] : g_cores) {
+			if (core)
+				core->on_source_just_created(source);
 		}
 	}
 	/* Still schedule the debounced refresh as a safety net for any state
@@ -536,9 +633,22 @@ static void on_frontend_event(enum obs_frontend_event event, void *)
 			config_manager->on_scene_collection_changed();
 			if (manager_dialog)
 				manager_dialog->refresh_instance_list();
-			/* Issue #11: the config reloaded for the new collection.
-			 * Spin up headless hosts for instances with output enabled
-			 * and tear down hosts whose instance is gone/disabled. */
+
+			/* Issue #10: the config reloaded for the new collection. Any
+			 * open window whose instance no longer exists is now an orphan —
+			 * close its views and destroy its core (close_multiview_window
+			 * handles the UAF-safe teardown). Collect first; the close
+			 * mutates g_views/g_cores. */
+			std::vector<std::string> orphans;
+			for (auto &[id, views] : g_views) {
+				if (!config_manager->find_instance(id))
+					orphans.push_back(id);
+			}
+			for (const auto &id : orphans)
+				close_multiview_window(id);
+
+			/* Spin up headless cores for instances with output enabled and
+			 * tear down view-less cores whose instance is gone/disabled. */
 			notify_multiview_output_settings_changed();
 		}
 	}

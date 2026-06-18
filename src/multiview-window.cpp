@@ -58,11 +58,11 @@ static inline QSize GetPixelSize(QWidget *widget)
 
 /* ---- MultiviewWindow implementation ---- */
 
-MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid, QWidget *parent, bool startVisible)
+MultiviewWindow::MultiviewWindow(ConfigManager *config, AmvInstanceCore *core, QWidget *parent)
 	: QWidget(parent, Qt::Window),
 	  config_(config),
-	  uuid_(uuid),
-	  headless_(!startVisible)
+	  uuid_(core ? core->uuid() : std::string()),
+	  core_(core)
 {
 	setAttribute(Qt::WA_PaintOnScreen);
 	setAttribute(Qt::WA_StaticContents);
@@ -76,7 +76,8 @@ MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid,
 	setMinimumSize(320, 180);
 	resize(960, 540);
 
-	/* Window title */
+	/* Window title (plugin-main assigns the final window number right after
+	 * construction; default to 1 until then). */
 	refresh_title();
 
 	/* Escape to close */
@@ -91,33 +92,26 @@ MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid,
 			create_display();
 	});
 
-	/* The shared per-instance core owns sources / volmeters / output / render
-	 * logic. Phase 1 (issue #10): one core per window (1:1). */
-	core_ = std::make_unique<AmvInstanceCore>(config_, uuid_);
-	core_->refresh_layout();
-
-	/* Resume any persisted external output (issue #11) for this instance. */
-	core_->apply_output_settings();
-
 	ready_ = true;
 
-	/* A headless render host (startVisible=false) stays hidden: no show(),
-	 * so visibleChanged never fires and no OBS display is created. It keeps
-	 * all cell state live and is driven by the global output callback. */
-	if (startVisible) {
-		show();
-		activateWindow();
+	/* Every projector opens at the default size, centered on its screen — OBS
+	 * projectors don't remember geometry (issue #10: each open is a fresh
+	 * window, so there is nothing to restore). */
+	show();
+	if (QScreen *scr = screen()) {
+		const QRect avail = scr->availableGeometry();
+		move(avail.x() + (avail.width() - width()) / 2, avail.y() + (avail.height() - height()) / 2);
 	}
+	activateWindow();
 }
 
 MultiviewWindow::~MultiviewWindow()
 {
 	ready_ = false;
 	destroy_display();
-	/* destroy_display() removed the draw callback, so no render is in flight;
-	 * the core dtor releases sources + tears the output sender/texrender down
-	 * (graphics thread). */
-	core_.reset();
+	/* destroy_display() removed the draw callback, so no render is in flight.
+	 * The core is owned by plugin-main and shared with other views — NEVER
+	 * release it here. */
 }
 
 void MultiviewWindow::create_display()
@@ -162,11 +156,26 @@ void MultiviewWindow::destroy_display()
 	display_created_ = false;
 }
 
+void MultiviewWindow::set_window_number(int number)
+{
+	window_number_ = number;
+	refresh_title();
+}
+
 void MultiviewWindow::refresh_title()
 {
 	MultiviewInstance *inst = config_->find_instance(uuid_);
 	if (inst)
-		setWindowTitle(amv::text("AMVPlugin.Multiview.Title").arg(QString::fromStdString(inst->name)));
+		setWindowTitle(amv::text("AMVPlugin.Multiview.TitleWindow")
+				       .arg(QString::fromStdString(inst->name))
+				       .arg(window_number_));
+}
+
+void MultiviewWindow::invalidate_layout()
+{
+	/* Force engine_.compute() at this view's own size on the next frame. */
+	cached_vpW_ = 0;
+	cached_vpH_ = 0;
 }
 
 void MultiviewWindow::render_callback(void *data, uint32_t cx, uint32_t cy)
@@ -216,65 +225,21 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 	core_->draw_cells(engine_.cells(), vpX, vpY, vpW, vpH);
 }
 
-void MultiviewWindow::enter_headless()
-{
-	if (is_headless())
-		return;
-	/* Drop to a hidden, display-less render host: remove the OBS display
-	 * (its draw callback) and hide the window, but keep cell_sources_ and
-	 * output_ alive so the global driver keeps emitting output. */
-	headless_.store(true, std::memory_order_relaxed);
-	destroy_display();
-	hide();
-}
-
-void MultiviewWindow::exit_headless()
-{
-	if (!is_headless())
-		return;
-	headless_.store(false, std::memory_order_relaxed);
-	/* Reopen at the default size, centered on the screen, rather than whatever
-	 * size/position it had before being closed-to-headless — OBS projectors
-	 * don't remember geometry. (Phase 2 makes every open a fresh window, which
-	 * removes this reuse path entirely.) */
-	showNormal();
-	resize(960, 540);
-	if (QScreen *scr = screen()) {
-		const QRect avail = scr->availableGeometry();
-		move(avail.x() + (avail.width() - width()) / 2, avail.y() + (avail.height() - height()) / 2);
-	}
-	activateWindow();
-	/* visibleChanged normally creates the display; create it directly too in
-	 * case the handle was already visible-without-display. */
-	if (!display_created_)
-		create_display();
-}
-
-/* ---- Label rendering ---- */
-
 void MultiviewWindow::closeEvent(QCloseEvent *event)
 {
-	/* Issue #11 Phase 2: if external output is still enabled for this
-	 * instance, closing the projector must NOT stop the output. Instead drop
-	 * to a headless render host — destroy the display + hide, but keep
-	 * cell_sources_ and output_ alive (the global driver keeps emitting). The
-	 * host is only fully torn down later when output is disabled. We keep the
-	 * source refs because the host must keep rendering the grid. */
-	if (has_output()) {
-		event->accept();
-		enter_headless();
-		return;
-	}
-
-	/* No output: full close. Stop rendering and release the core immediately
-	 * (its dtor calls obs_source_dec_showing), which stops screen-capture
-	 * sources from signaling the OS (yellow border) without waiting for the
-	 * deferred window deletion. */
+	/* Issue #10: a view is just one of N projectors onto a shared core. Closing
+	 * it tears down THIS window's display only — never the core. plugin-main's
+	 * on_window_closed decides whether the core can go (only when no views are
+	 * left AND output is disabled); if output is still on, the core lives on as
+	 * a headless host and the global driver keeps emitting.
+	 *
+	 * Remove the display callback BEFORE emitting, so no render is in flight
+	 * when plugin-main may destroy the core. After the emit, core_ may already
+	 * be dangling (if this was the last view) — do not touch it. */
 	ready_ = false;
 	destroy_display();
-	core_.reset();
 
-	emit window_closed(uuid_);
+	emit window_closed(this, uuid_);
 	event->accept();
 	hide();
 }
@@ -298,20 +263,11 @@ bool MultiviewWindow::event(QEvent *event)
 	return QWidget::event(event);
 }
 
-/* ---- forwarders to the shared core ----
+/* ---- forwarders to the shared core (context-menu call sites) ----
  *
- * The window holds the core 1:1 for now (issue #10 Phase 1). These keep the
- * existing plugin-main / manager / context-menu call sites working while the
- * shared state lives on the core. */
-
-void MultiviewWindow::refresh_layout()
-{
-	if (core_)
-		core_->refresh_layout();
-	/* Force this view's layout engine to recompute at its own size next frame. */
-	cached_vpW_ = 0;
-	cached_vpH_ = 0;
-}
+ * The core is shared by all N views of the instance, so a single forwarded call
+ * updates every view. plugin-main drives the broader notify_* / source-signal
+ * paths against the core directly (once per core), not through these. */
 
 void MultiviewWindow::refresh_sources()
 {
@@ -319,62 +275,19 @@ void MultiviewWindow::refresh_sources()
 		core_->refresh_sources();
 }
 
-void MultiviewWindow::refresh_sources_lazy()
-{
-	if (core_)
-		core_->refresh_sources_lazy();
-}
-
 bool MultiviewWindow::refresh_cell(int row, int col)
 {
 	return core_ ? core_->refresh_cell(row, col) : false;
-}
-
-void MultiviewWindow::on_source_being_removed(obs_source_t *source)
-{
-	if (core_)
-		core_->on_source_being_removed(source);
-}
-
-void MultiviewWindow::on_source_just_created(obs_source_t *source)
-{
-	if (core_)
-		core_->on_source_just_created(source);
 }
 
 void MultiviewWindow::refresh_visual_settings()
 {
 	if (core_)
 		core_->refresh_visual_settings();
-	cached_vpW_ = 0;
-	cached_vpH_ = 0;
-}
-
-void MultiviewWindow::refresh_signal_settings()
-{
-	if (core_)
-		core_->refresh_signal_settings();
+	invalidate_layout();
 }
 
 bool MultiviewWindow::force_reconnect_cell(int cellIndex)
 {
 	return core_ ? core_->force_reconnect_cell(cellIndex) : false;
-}
-
-void MultiviewWindow::apply_output_settings()
-{
-	if (core_)
-		core_->apply_output_settings();
-}
-
-void MultiviewWindow::tick_frame()
-{
-	if (core_)
-		core_->tick_once_per_frame();
-}
-
-void MultiviewWindow::render_output_only()
-{
-	if (core_)
-		core_->render_output_only();
 }
