@@ -26,7 +26,9 @@ endif()
 
 # Exactly the sources SpoutDX_static compiles (SpoutDX.cpp + the SpoutGL
 # subset it depends on). The full Spout_static (GL extensions) is not needed.
-add_library(spout-dx STATIC
+add_library(
+  spout-dx
+  STATIC
   "${_spout_dx_dir}/SpoutDX.cpp"
   "${_spout_gl_dir}/SpoutCopy.cpp"
   "${_spout_gl_dir}/SpoutDirectX.cpp"
