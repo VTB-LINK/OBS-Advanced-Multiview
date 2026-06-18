@@ -2,11 +2,11 @@
 OBS Advanced Multiview - multiview output layer (issue #11)
 
 Backend-agnostic transmission of the composed multiview frame, independent
-of OBS's source/scene system (Approach B). The window renders the grid once
-per frame into a shared offscreen target; the manager then fans that single
-texture out to every enabled backend. Spout lands first; NDI reuses the exact
-same interface later (it just reads the texture back to CPU inside its own
-submit_frame).
+of OBS's source/scene system (Approach B). Each enabled backend (Spout, and
+later NDI) picks its own output resolution + frame-rate divisor; backends that
+resolve to the same dimensions share a single offscreen render. The manager
+self-reconciles from the instance's InstanceOutputSettings every frame, so the
+window/UI only has to persist config and keep the manager alive.
 
 Copyright (C) 2025 VTB-LINK
 License: GPL-2.0-or-later
@@ -14,13 +14,15 @@ License: GPL-2.0-or-later
 
 #pragma once
 
+#include "multiview-instance.hpp"
+
 #include <obs.hpp>
 
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
-#include <vector>
-#include <cstdint>
 
 /* One output protocol (Spout / NDI / ...). All methods run on the OBS
  * graphics thread. */
@@ -46,8 +48,8 @@ public:
 	virtual bool is_active() const = 0;
 };
 
-/* Owns the shared offscreen render target and the active backends for one
- * multiview instance. */
+/* Owns one offscreen render target per unique output resolution and the active
+ * backends for one multiview instance. */
 class MultiviewOutputManager {
 public:
 	MultiviewOutputManager();
@@ -56,38 +58,58 @@ public:
 	MultiviewOutputManager(const MultiviewOutputManager &) = delete;
 	MultiviewOutputManager &operator=(const MultiviewOutputManager &) = delete;
 
-	/* Enable/disable the Spout backend. Returns the resulting enabled
-	 * state (false when Spout output is unavailable on this platform).
-	 * Idempotent. Enabling only allocates a lightweight backend object —
-	 * the actual D3D/Spout sender is created lazily on the first frame
-	 * (graphics thread). Disabling tears the sender down via the graphics
-	 * thread, so this is safe to call from the UI thread. */
-	bool set_spout_enabled(bool enabled);
-	bool spout_enabled() const { return spout_ != nullptr; }
+	/* Graphics-thread, once per frame. Reconcile backends against `cfg`
+	 * (create/stop Spout per cfg.spout.enabled; NDI inert for now), then for
+	 * each UNIQUE enabled output resolution that is due this frame: render the
+	 * grid into that resolution's texrender via `draw(w,h)` (which paints the
+	 * composition mapped to 0,0,w,h) and submit to each backend at that
+	 * resolution. Per-backend fpsDivisor (1=full, 2=half) gates submit AND the
+	 * render itself — a resolution with no backend due this frame is skipped
+	 * entirely, so half-rate halves the compose cost, not just the send. */
+	void render_all(const std::string &name, const InstanceOutputSettings &cfg,
+			const std::function<void(int w, int h)> &draw);
 
-	/* True when at least one backend is enabled, i.e. render() should do
-	 * the offscreen pass this frame. */
-	bool has_backends() const { return !backends_.empty(); }
+	/* True if any backend is currently enabled (valid after the first
+	 * render_all reconcile). */
+	bool has_backends() const { return spout_.enabled || ndi_.enabled; }
 
-	/* Graphics-thread: draw the grid once into a (w x h) BGRA target via
-	 * `draw` (which should paint the composition mapped to 0,0,w,h), then
-	 * dispatch the resulting texture to every backend. Returns that texture
-	 * so the caller can also blit it to its on-screen display, or nullptr
-	 * on failure / when no backend is enabled. */
-	gs_texture_t *render_and_dispatch(const std::string &name, uint32_t w, uint32_t h,
-					  const std::function<void()> &draw);
+	/* Stop all backends + destroy all texrenders. Caller must hold the OBS
+	 * graphics context (used by apply_output_settings under obs_enter_graphics). */
+	void teardown_locked();
 
-	/* Release the texrender and stop all backends. Wraps obs_enter_graphics
-	 * so it is safe to call from the UI thread (window close / destroy). */
+	/* teardown_locked() wrapped in obs_enter_graphics — safe from the UI
+	 * thread (window close / destroy). */
 	void shutdown_graphics();
 
-	/* Whether Spout output is even possible here. Reuses the existing
-	 * Spout platform detection (Windows-only); the D3D11-renderer check is
-	 * deferred to the backend on the graphics thread. */
+	/* Whether Spout output is even possible here. Reuses the existing Spout
+	 * platform detection (Windows-only); the D3D11-renderer check is deferred
+	 * to the backend on the graphics thread. */
 	static bool spout_supported();
 
 private:
-	gs_texrender_t *texrender_ = nullptr;
-	std::vector<std::unique_ptr<IMultiviewOutputBackend>> backends_;
-	IMultiviewOutputBackend *spout_ = nullptr; /* non-owning, points into backends_ */
+	enum class Kind { Spout, Ndi };
+
+	/* One backend slot. `enabled` + resolved {w,h} + fpsDivisor are refreshed
+	 * from cfg each frame by reconcile(); `frame` advances once per frame and
+	 * drives the divisor. */
+	struct BackendEntry {
+		std::unique_ptr<IMultiviewOutputBackend> backend;
+		bool enabled = false;
+		uint32_t w = 0, h = 0;
+		int fpsDivisor = 1;
+		uint64_t frame = 0;
+	};
+
+	static uint64_t res_key(uint32_t w, uint32_t h) { return ((uint64_t)w << 32) | (uint64_t)h; }
+	static bool backend_available(Kind k);
+	static std::unique_ptr<IMultiviewOutputBackend> create_backend(Kind k);
+
+	void reconcile(BackendEntry &e, const OutputBackendSettings &s, Kind kind);
+	gs_texrender_t *get_texrender(uint64_t key);
+	void render_one_resolution(const std::string &name, uint32_t w, uint32_t h,
+				   const std::function<void(int w, int h)> &draw);
+
+	BackendEntry spout_;
+	BackendEntry ndi_; /* inert until the NDI backend lands (Phase 3) */
+	std::map<uint64_t, gs_texrender_t *> texrenders_;
 };

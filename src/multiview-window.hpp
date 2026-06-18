@@ -150,9 +150,13 @@ public:
 
 	QPaintEngine *paintEngine() const override { return nullptr; }
 
-	/* Spout/NDI output (issue #11). Toggles the Spout backend for this
-	 * instance; the sender name follows the instance name. Runtime-only in
-	 * this milestone (persistence + settings UI land later). */
+	/* Spout/NDI output (issue #11). apply_output_settings() (re)builds the
+	 * output manager from the instance's persisted InstanceOutputSettings —
+	 * call after the config changes (settings dialog, right-click toggle,
+	 * notify). set_spout_output_enabled() is the right-click quick toggle:
+	 * it flips spout.enabled in config, saves, then applies. The sender name
+	 * follows the instance name. */
+	void apply_output_settings();
 	void set_spout_output_enabled(bool enabled);
 	bool spout_output_enabled() const;
 
@@ -190,14 +194,13 @@ private:
 	 * output (issue #11). Acquires source_mutex_ (recursive). */
 	void draw_grid(int vpX, int vpY, int vpW, int vpH);
 
-	/* Output pipeline (issue #11). When at least one backend is enabled,
-	 * render() draws the grid once into the manager's offscreen target at
-	 * canvas resolution, dispatches it to the backends, and blits the
-	 * result into the on-screen viewport (so each source is rendered only
-	 * once per frame regardless of how many outputs are active). */
+	/* Output pipeline (issue #11). Display always renders natively; the
+	 * output is a separate offscreen pass driven from the persisted
+	 * InstanceOutputSettings. output_ is created only while output is enabled
+	 * (so an instance with no output costs nothing); the manager renders one
+	 * texrender per unique resolution and dispatches to each enabled backend. */
 	std::unique_ptr<MultiviewOutputManager> output_;
-	void blit_texture_to_viewport(gs_texture_t *tex, int vpX, int vpY, int vpW, int vpH, uint32_t texW,
-				      uint32_t texH);
+	InstanceOutputSettings output_settings_; /* cached copy, updated by apply_output_settings() */
 	std::string instance_display_name() const;
 
 	/* Context menu */

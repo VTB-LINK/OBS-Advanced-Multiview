@@ -171,6 +171,9 @@ MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid,
 
 	refresh_layout();
 
+	/* Resume any persisted external output (issue #11) for this instance. */
+	apply_output_settings();
+
 	ready_ = true;
 	show();
 	activateWindow();
@@ -1587,33 +1590,21 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		vpY = ((int)cy - vpH) / 2;
 	}
 
-	/* Draw the whole composition into the centered viewport. Extracted into
-	 * draw_grid() so the same grid can be rendered into an offscreen target
-	 * (Spout / NDI output, issue #11) without duplicating the cell pipeline.
-	 *
-	 * When an output backend is enabled, render the grid once into the
-	 * manager's offscreen target at canvas resolution, fan it out to the
-	 * backends, then blit that texture into the on-screen viewport. Falls
-	 * back to drawing straight to the display if the offscreen pass is
-	 * unavailable this frame. */
-	gs_texture_t *out_tex = nullptr;
-	uint32_t out_w = 0, out_h = 0;
-	if (output_ && output_->has_backends()) {
-		struct obs_video_info ovi;
-		if (obs_get_video_info(&ovi) && ovi.base_width > 0 && ovi.base_height > 0) {
-			out_w = ovi.base_width;
-			out_h = ovi.base_height;
-			const std::string name = instance_display_name();
-			out_tex = output_->render_and_dispatch(name, out_w, out_h, [this, out_w, out_h]() {
-				draw_grid(0, 0, (int)out_w, (int)out_h);
-			});
-		}
-	}
+	/* Display ALWAYS renders natively into the centered viewport at full
+	 * window resolution — output never downgrades the on-screen image
+	 * (issue #11). The Spout/NDI output is a separate offscreen pass below
+	 * that does not feed the display. */
+	draw_grid(vpX, vpY, vpW, vpH);
 
-	if (out_tex)
-		blit_texture_to_viewport(out_tex, vpX, vpY, vpW, vpH, out_w, out_h);
-	else
-		draw_grid(vpX, vpY, vpW, vpH);
+	/* Output pass: render the grid into the manager's per-resolution
+	 * offscreen target(s) and dispatch to each enabled backend. Driven from
+	 * the persisted InstanceOutputSettings; the manager self-reconciles from
+	 * the config each frame. Costs nothing when output_ is null (the common
+	 * case — no instance has output enabled). */
+	if (output_) {
+		output_->render_all(instance_display_name(), output_settings_,
+				    [this](int w, int h) { draw_grid(0, 0, w, h); });
+	}
 }
 
 void MultiviewWindow::draw_grid(int vpX, int vpY, int vpW, int vpH)
@@ -2544,36 +2535,42 @@ std::string MultiviewWindow::instance_display_name() const
 	return "OBS Advanced Multiview";
 }
 
-void MultiviewWindow::blit_texture_to_viewport(gs_texture_t *tex, int vpX, int vpY, int vpW, int vpH, uint32_t texW,
-					       uint32_t texH)
+void MultiviewWindow::apply_output_settings()
 {
-	if (!tex || texW == 0 || texH == 0)
-		return;
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	InstanceOutputSettings next = inst ? inst->outputSettings : InstanceOutputSettings{};
 
-	gs_effect_t *def = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-	gs_eparam_t *image = gs_effect_get_param_by_name(def, "image");
-	gs_effect_set_texture(image, tex);
-
-	startRegion(vpX, vpY, vpW, vpH, 0.0f, (float)texW, 0.0f, (float)texH);
-	while (gs_effect_loop(def, "Draw"))
-		gs_draw_sprite(tex, 0, texW, texH);
-	endRegion();
+	/* Serialize against the render thread: the display draw callback holds the
+	 * OBS graphics context while render() reads output_ / output_settings_, so
+	 * mutate them under obs_enter_graphics. The manager itself reconciles
+	 * backends from the config on the graphics thread inside render_all(). */
+	obs_enter_graphics();
+	output_settings_ = next;
+	if (next.any_enabled()) {
+		if (!output_)
+			output_ = std::make_unique<MultiviewOutputManager>();
+	} else if (output_) {
+		output_->teardown_locked();
+		output_.reset();
+	}
+	obs_leave_graphics();
 }
 
 void MultiviewWindow::set_spout_output_enabled(bool enabled)
 {
-	if (enabled && !output_)
-		output_ = std::make_unique<MultiviewOutputManager>();
-	if (!output_)
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
 		return;
-
-	const bool now = output_->set_spout_enabled(enabled);
-	obs_log(LOG_INFO, "%sSpout output %s", log_prefix().c_str(), now ? "ON" : "OFF");
+	inst->outputSettings.spout.enabled = enabled;
+	config_->save();
+	apply_output_settings();
+	obs_log(LOG_INFO, "%sSpout output %s", log_prefix().c_str(), enabled ? "ON" : "OFF");
 }
 
 bool MultiviewWindow::spout_output_enabled() const
 {
-	return output_ && output_->spout_enabled();
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	return inst && inst->outputSettings.spout.enabled;
 }
 
 /* ---- Label rendering ---- */

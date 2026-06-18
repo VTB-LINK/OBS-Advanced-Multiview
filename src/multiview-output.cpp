@@ -6,13 +6,15 @@ License: GPL-2.0-or-later
 */
 
 #include "multiview-output.hpp"
-#include "multiview-instance.hpp" /* signal_provider_supported_on_platform */
 #include "amv-logging.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
 #include <graphics/graphics.h>
 #include <graphics/vec4.h>
+
+#include <set>
+#include <vector>
 
 #ifdef AMV_ENABLE_SPOUT_OUTPUT
 #include "multiview-output-spout.hpp"
@@ -38,106 +40,176 @@ bool MultiviewOutputManager::spout_supported()
 #endif
 }
 
-bool MultiviewOutputManager::set_spout_enabled(bool enabled)
+bool MultiviewOutputManager::backend_available(Kind k)
 {
-	if (enabled == spout_enabled())
-		return spout_enabled();
-
-#ifdef AMV_ENABLE_SPOUT_OUTPUT
-	if (enabled) {
-		if (!spout_supported()) {
-			obs_log(LOG_WARNING, "[multiview-output] Spout output unavailable on this platform");
-			return false;
-		}
-		auto backend = create_spout_output_backend();
-		IMultiviewOutputBackend *raw = backend.get();
-		/* backends_ is read by render_and_dispatch on the graphics thread.
-		 * This runs on the UI thread, so serialize the mutation against
-		 * the render loop by taking the graphics lock (the render-loop
-		 * draw callbacks hold it for the duration of a frame). */
-		obs_enter_graphics();
-		backends_.push_back(std::move(backend));
-		obs_leave_graphics();
-		spout_ = raw;
-		obs_log(LOG_INFO, "[multiview-output] Spout output enabled");
-		return true;
+	switch (k) {
+	case Kind::Spout:
+		return spout_supported();
+	case Kind::Ndi:
+		/* NDI backend not implemented yet (Phase 3). */
+		return false;
 	}
-
-	/* Disable: stop the sender and drop it, all under the graphics lock so
-	 * a concurrent render_and_dispatch never sees a half-erased vector. */
-	obs_enter_graphics();
-	if (spout_)
-		spout_->stop();
-	for (auto it = backends_.begin(); it != backends_.end(); ++it) {
-		if (it->get() == spout_) {
-			backends_.erase(it);
-			break;
-		}
-	}
-	obs_leave_graphics();
-	spout_ = nullptr;
-	obs_log(LOG_INFO, "[multiview-output] Spout output disabled");
 	return false;
-#else
-	return false;
-#endif
 }
 
-gs_texture_t *MultiviewOutputManager::render_and_dispatch(const std::string &name, uint32_t w, uint32_t h,
-							  const std::function<void()> &draw)
+std::unique_ptr<IMultiviewOutputBackend> MultiviewOutputManager::create_backend(Kind k)
 {
-	if (backends_.empty() || w == 0 || h == 0 || !draw)
-		return nullptr;
+#ifdef AMV_ENABLE_SPOUT_OUTPUT
+	if (k == Kind::Spout)
+		return create_spout_output_backend();
+#endif
+	(void)k;
+	return nullptr;
+}
 
-	if (!texrender_)
-		texrender_ = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
-	if (!texrender_)
-		return nullptr;
+void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSettings &s, Kind kind)
+{
+	const bool want = s.enabled && backend_available(kind);
 
-	gs_texrender_reset(texrender_);
-	if (!gs_texrender_begin(texrender_, w, h))
-		return nullptr;
+	if (want && !e.backend) {
+		e.backend = create_backend(kind);
+		e.frame = 0;
+		if (e.backend)
+			obs_log(LOG_INFO, "[multiview-output] %s output enabled",
+				kind == Kind::Spout ? "Spout" : "NDI");
+	} else if (!want && e.backend) {
+		e.backend->stop();
+		e.backend.reset();
+		e.frame = 0;
+		obs_log(LOG_INFO, "[multiview-output] %s output disabled", kind == Kind::Spout ? "Spout" : "NDI");
+	}
 
-	/* Establish an ambient viewport/projection matching the texrender's
-	 * pixel space. Most draw_grid helpers wrap their own startRegion (which
-	 * pushes viewport+ortho), but render_safe_area draws against the ambient
-	 * projection. gs_texrender_begin does NOT set an ortho, so without this
-	 * the display's physical-pixel ortho would leak in and map the safe-area
-	 * guides at the wrong scale (issue #11: shrank to the top-left quarter). */
+	e.enabled = (e.backend != nullptr);
+	if (e.enabled) {
+		auto dims = resolve_output_dimensions(s);
+		e.w = dims.first;
+		e.h = dims.second;
+		e.fpsDivisor = (s.fpsDivisor == 2) ? 2 : 1;
+	}
+}
+
+gs_texrender_t *MultiviewOutputManager::get_texrender(uint64_t key)
+{
+	auto it = texrenders_.find(key);
+	if (it != texrenders_.end())
+		return it->second;
+	gs_texrender_t *tr = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+	if (tr)
+		texrenders_[key] = tr;
+	return tr;
+}
+
+void MultiviewOutputManager::render_one_resolution(const std::string &name, uint32_t w, uint32_t h,
+						   const std::function<void(int w, int h)> &draw)
+{
+	gs_texrender_t *tr = get_texrender(res_key(w, h));
+	if (!tr)
+		return;
+
+	gs_texrender_reset(tr);
+	if (!gs_texrender_begin(tr, w, h))
+		return;
+
+	/* Establish an ambient viewport/projection matching the texrender's pixel
+	 * space. Most draw_grid helpers wrap their own startRegion, but
+	 * render_safe_area draws against the ambient projection and
+	 * gs_texrender_begin sets no ortho (issue #11). */
 	gs_set_viewport(0, 0, (int)w, (int)h);
 	gs_ortho(0.0f, (float)w, 0.0f, (float)h, -100.0f, 100.0f);
 
-	/* Opaque black background; draw_grid paints gutter/cells over it. */
 	struct vec4 clear_color;
 	vec4_set(&clear_color, 0.0f, 0.0f, 0.0f, 1.0f);
 	gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 
-	draw();
+	draw((int)w, (int)h);
 
-	gs_texrender_end(texrender_);
+	gs_texrender_end(tr);
 
-	gs_texture_t *tex = gs_texrender_get_texture(texrender_);
-	if (tex) {
-		for (auto &backend : backends_)
-			backend->submit_frame(name, tex, w, h);
+	gs_texture_t *tex = gs_texrender_get_texture(tr);
+	if (!tex)
+		return;
+
+	/* Submit to every enabled backend at THIS resolution that is due this
+	 * frame (frame % fpsDivisor == 0). */
+	BackendEntry *entries[] = {&spout_, &ndi_};
+	for (BackendEntry *e : entries) {
+		if (e->enabled && e->w == w && e->h == h && (e->frame % e->fpsDivisor) == 0)
+			e->backend->submit_frame(name, tex, w, h);
 	}
-	return tex;
+}
+
+void MultiviewOutputManager::render_all(const std::string &name, const InstanceOutputSettings &cfg,
+					const std::function<void(int w, int h)> &draw)
+{
+	if (!draw)
+		return;
+
+	reconcile(spout_, cfg.spout, Kind::Spout);
+	reconcile(ndi_, cfg.ndi, Kind::Ndi);
+
+	BackendEntry *entries[] = {&spout_, &ndi_};
+
+	/* Unique resolutions that have at least one backend DUE this frame.
+	 * Resolutions whose backends are all off-beat (half-rate, odd frame) are
+	 * skipped entirely — that is what makes half-rate halve the compose cost. */
+	std::set<uint64_t> due_res;
+	std::set<uint64_t> live_res;
+	for (BackendEntry *e : entries) {
+		if (!e->enabled || e->w == 0 || e->h == 0)
+			continue;
+		live_res.insert(res_key(e->w, e->h));
+		if ((e->frame % e->fpsDivisor) == 0)
+			due_res.insert(res_key(e->w, e->h));
+	}
+
+	for (uint64_t key : due_res) {
+		uint32_t w = (uint32_t)(key >> 32);
+		uint32_t h = (uint32_t)(key & 0xffffffffu);
+		render_one_resolution(name, w, h, draw);
+	}
+
+	/* Advance frame counters for all enabled backends. */
+	for (BackendEntry *e : entries) {
+		if (e->enabled)
+			e->frame++;
+	}
+
+	/* GC texrenders no longer matching any live resolution (resolution change
+	 * or all-disabled). */
+	for (auto it = texrenders_.begin(); it != texrenders_.end();) {
+		if (live_res.find(it->first) == live_res.end()) {
+			gs_texrender_destroy(it->second);
+			it = texrenders_.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+void MultiviewOutputManager::teardown_locked()
+{
+	if (spout_.backend) {
+		spout_.backend->stop();
+		spout_.backend.reset();
+	}
+	if (ndi_.backend) {
+		ndi_.backend->stop();
+		ndi_.backend.reset();
+	}
+	spout_.enabled = false;
+	ndi_.enabled = false;
+
+	for (auto &kv : texrenders_)
+		gs_texrender_destroy(kv.second);
+	texrenders_.clear();
 }
 
 void MultiviewOutputManager::shutdown_graphics()
 {
-	if (backends_.empty() && !texrender_)
+	if (!spout_.backend && !ndi_.backend && texrenders_.empty())
 		return;
 
 	obs_enter_graphics();
-	for (auto &backend : backends_)
-		backend->stop();
-	if (texrender_) {
-		gs_texrender_destroy(texrender_);
-		texrender_ = nullptr;
-	}
+	teardown_locked();
 	obs_leave_graphics();
-
-	backends_.clear();
-	spout_ = nullptr;
 }
