@@ -33,6 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTimer>
 #include <atomic>
 #include <map>
+#include <vector>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -40,6 +41,94 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 static ConfigManager *config_manager = nullptr;
 static ManagerDialog *manager_dialog = nullptr;
 static std::map<std::string, MultiviewWindow *> open_windows;
+
+/* ---- Issue #11 Phase 2: global external-output driver ----
+ *
+ * External output runs even with no visible projector window. A single
+ * obs_add_main_render_callback drives every output-enabled host each frame on
+ * the graphics thread. The callback is registered ONLY while at least one host
+ * emits output, so instances with no output cost nothing per frame.
+ *
+ * g_output_hosts is the graphics-thread view of which hosts to drive. It is
+ * rebuilt from open_windows under obs_enter_graphics (which serializes against
+ * on_main_render, since that runs inside the graphics frame), so the callback
+ * never iterates a list that is changing under it. */
+static bool g_main_render_registered = false;
+static std::vector<MultiviewWindow *> g_output_hosts;
+
+static void on_main_render(void *, uint32_t, uint32_t)
+{
+	for (auto *w : g_output_hosts) {
+		if (!w || !w->has_output())
+			continue;
+		/* A headless host has no display callback to advance its
+		 * per-frame state, so tick it here. Visible hosts tick via
+		 * their own display render(). */
+		if (w->is_headless())
+			w->tick_frame();
+		w->render_output_only();
+	}
+}
+
+void multiview_refresh_output_driver()
+{
+	obs_enter_graphics();
+	g_output_hosts.clear();
+	for (auto &[id, w] : open_windows) {
+		if (w && w->has_output())
+			g_output_hosts.push_back(w);
+	}
+	const bool need = !g_output_hosts.empty();
+	obs_leave_graphics();
+
+	if (need && !g_main_render_registered) {
+		obs_add_main_render_callback(on_main_render, nullptr);
+		g_main_render_registered = true;
+	} else if (!need && g_main_render_registered) {
+		obs_remove_main_render_callback(on_main_render, nullptr);
+		g_main_render_registered = false;
+	}
+}
+
+static void on_window_closed(const std::string &closedUuid)
+{
+	auto it = open_windows.find(closedUuid);
+	if (it != open_windows.end()) {
+		it->second->deleteLater();
+		open_windows.erase(it);
+	}
+	multiview_refresh_output_driver();
+}
+
+/* Ensure a render host exists for `uuid` iff its instance has output enabled.
+ * Creates a hidden headless host when output is enabled and no window exists;
+ * tears a headless host down when output is disabled. Visible windows are left
+ * alone (the user still has the projector) apart from re-applying config. */
+static void ensure_or_release_host(const std::string &uuid)
+{
+	MultiviewInstance *inst = config_manager ? config_manager->find_instance(uuid) : nullptr;
+	const bool want = inst && inst->outputSettings.any_enabled();
+	auto it = open_windows.find(uuid);
+
+	if (want) {
+		if (it == open_windows.end()) {
+			auto *host = new MultiviewWindow(config_manager, uuid, nullptr, /*startVisible=*/false);
+			QObject::connect(host, &MultiviewWindow::window_closed, on_window_closed);
+			open_windows[uuid] = host;
+			/* ctor already applied output settings -> output_ live */
+		} else {
+			it->second->apply_output_settings();
+		}
+	} else if (it != open_windows.end() && it->second) {
+		it->second->apply_output_settings(); /* tears output_ down */
+		if (it->second->is_headless()) {
+			/* Hidden host with nothing left to do — destroy it. */
+			it->second->disconnect();
+			it->second->deleteLater();
+			open_windows.erase(it);
+		}
+	}
+}
 
 static bool init_config_path()
 {
@@ -137,26 +226,28 @@ void open_manager_dialog_settings()
 
 void open_multiview_window(const std::string &uuid)
 {
-	/* If already open, just bring to front */
 	auto it = open_windows.find(uuid);
 	if (it != open_windows.end() && it->second) {
-		it->second->show();
-		it->second->raise();
-		it->second->activateWindow();
+		/* A headless render host (output running without a window) is
+		 * promoted to a visible projector; an already-visible window is
+		 * just brought to front. */
+		if (it->second->is_headless()) {
+			it->second->exit_headless();
+		} else {
+			it->second->show();
+			it->second->raise();
+			it->second->activateWindow();
+		}
 		return;
 	}
 
-	auto *window = new MultiviewWindow(config_manager, uuid, nullptr);
-
-	QObject::connect(window, &MultiviewWindow::window_closed, [](const std::string &closedUuid) {
-		auto it = open_windows.find(closedUuid);
-		if (it != open_windows.end()) {
-			it->second->deleteLater();
-			open_windows.erase(it);
-		}
-	});
-
+	auto *window = new MultiviewWindow(config_manager, uuid, nullptr, /*startVisible=*/true);
+	QObject::connect(window, &MultiviewWindow::window_closed, on_window_closed);
 	open_windows[uuid] = window;
+
+	/* If this instance has output enabled (persisted), the ctor already
+	 * built output_ — make sure the global driver picks it up. */
+	multiview_refresh_output_driver();
 }
 
 void notify_multiview_layout_changed(const std::string &uuid)
@@ -216,20 +307,21 @@ void notify_multiview_signal_settings_changed(const std::string &uuid)
 
 void notify_multiview_output_settings_changed(const std::string &uuid)
 {
-	/* Issue #11: external-output config changed. Re-apply to the matching
-	 * open window(s) so the output manager rebuilds from the persisted
-	 * InstanceOutputSettings. No-op for instances with no open window (the
-	 * window applies on open). */
+	/* Issue #11 Phase 2: external-output config changed. Ensure a render host
+	 * exists for each instance that now has output enabled (creating a hidden
+	 * headless host if there is no open window), and tear down headless hosts
+	 * whose output was disabled. Then refresh the global driver. */
 	if (uuid.empty()) {
-		for (auto &[id, window] : open_windows) {
-			if (window)
-				window->apply_output_settings();
+		if (config_manager) {
+			/* Copy uuids first: ensure_or_release_host may erase from
+			 * open_windows, and instances() is the config list. */
+			for (auto &inst : config_manager->instances())
+				ensure_or_release_host(inst.uuid);
 		}
 	} else {
-		auto it = open_windows.find(uuid);
-		if (it != open_windows.end() && it->second)
-			it->second->apply_output_settings();
+		ensure_or_release_host(uuid);
 	}
+	multiview_refresh_output_driver();
 }
 
 void close_multiview_window(const std::string &uuid)
@@ -240,11 +332,21 @@ void close_multiview_window(const std::string &uuid)
 		it->second->close();
 		delete it->second;
 		open_windows.erase(it);
+		/* Drop the freed host from the global driver's list. */
+		multiview_refresh_output_driver();
 	}
 }
 
 static void close_all_multiview_windows()
 {
+	/* Issue #11: stop the global output driver before destroying hosts so no
+	 * on_main_render fires against freed windows. */
+	if (g_main_render_registered) {
+		obs_remove_main_render_callback(on_main_render, nullptr);
+		g_main_render_registered = false;
+	}
+	g_output_hosts.clear();
+
 	for (auto &[uuid, window] : open_windows) {
 		if (window) {
 			/* Disconnect signal to avoid modifying map during iteration */

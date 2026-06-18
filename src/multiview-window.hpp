@@ -39,7 +39,12 @@ class MultiviewWindow : public QWidget {
 	Q_OBJECT
 
 public:
-	MultiviewWindow(ConfigManager *config, const std::string &uuid, QWidget *parent = nullptr);
+	/* startVisible=false builds a hidden, display-less "render host" used to
+	 * drive external output without a visible projector window (issue #11
+	 * Phase 2). Such a host keeps all cell state live and is driven by the
+	 * global obs_add_main_render_callback. */
+	MultiviewWindow(ConfigManager *config, const std::string &uuid, QWidget *parent = nullptr,
+			bool startVisible = true);
 	~MultiviewWindow() override;
 
 	std::string instance_uuid() const { return uuid_; }
@@ -159,6 +164,26 @@ public:
 	void apply_output_settings();
 	void set_spout_output_enabled(bool enabled);
 	bool spout_output_enabled() const;
+
+	/* Phase 2 headless driver hooks (issue #11). Called by the global
+	 * obs_add_main_render_callback on the graphics thread:
+	 *   has_output()        — does this host currently emit any output?
+	 *   is_headless()       — true when there is no visible window/display,
+	 *                         so the global driver must tick this host itself.
+	 *   tick_frame()        — advance once-per-frame state (re-resolve, scene
+	 *                         change, highlight trees, audio track). A visible
+	 *                         window ticks via its own display render(); a
+	 *                         headless host is ticked by the global driver.
+	 *   render_output_only()— the offscreen output pass (no display).
+	 *   enter_headless()/exit_headless() — switch a host between
+	 *                         visible+display and hidden+display-less while
+	 *                         keeping cell state + output_ alive. */
+	bool has_output() const { return output_ != nullptr; }
+	bool is_headless() const { return headless_.load(std::memory_order_relaxed); }
+	void tick_frame();
+	void render_output_only();
+	void enter_headless();
+	void exit_headless();
 
 signals:
 	void window_closed(const std::string &uuid);
@@ -445,6 +470,10 @@ private:
 
 	bool is_always_on_top_ = false;
 	std::atomic<bool> ready_{false};
+	/* Issue #11 Phase 2: true when this is a hidden, display-less render host
+	 * (output runs without a visible window). Read on the graphics thread by
+	 * the global output driver, written on the UI thread. */
+	std::atomic<bool> headless_{false};
 
 	/* Cached viewport size to avoid recomputing layout every frame */
 	int cached_vpW_ = 0;
@@ -735,3 +764,7 @@ void notify_multiview_name_changed(const std::string &uuid);
 void notify_multiview_visual_settings_changed(const std::string &uuid = "");
 void notify_multiview_signal_settings_changed(const std::string &uuid = "");
 void notify_multiview_output_settings_changed(const std::string &uuid = "");
+/* Re-evaluate the global external-output render driver (register/unregister the
+ * main render callback, rebuild the host list). Call after any change to a
+ * window's output_ state (issue #11 Phase 2). */
+void multiview_refresh_output_driver();

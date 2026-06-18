@@ -131,10 +131,11 @@ static inline void GetScaleAndCenterPos(int baseCX, int baseCY, int windowCX, in
 
 /* ---- MultiviewWindow implementation ---- */
 
-MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid, QWidget *parent)
+MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid, QWidget *parent, bool startVisible)
 	: QWidget(parent, Qt::Window),
 	  config_(config),
-	  uuid_(uuid)
+	  uuid_(uuid),
+	  headless_(!startVisible)
 {
 	setAttribute(Qt::WA_PaintOnScreen);
 	setAttribute(Qt::WA_StaticContents);
@@ -175,8 +176,14 @@ MultiviewWindow::MultiviewWindow(ConfigManager *config, const std::string &uuid,
 	apply_output_settings();
 
 	ready_ = true;
-	show();
-	activateWindow();
+
+	/* A headless render host (startVisible=false) stays hidden: no show(),
+	 * so visibleChanged never fires and no OBS display is created. It keeps
+	 * all cell state live and is driven by the global output callback. */
+	if (startVisible) {
+		show();
+		activateWindow();
+	}
 }
 
 MultiviewWindow::~MultiviewWindow()
@@ -1538,7 +1545,7 @@ void MultiviewWindow::render_callback(void *data, uint32_t cx, uint32_t cy)
 	self->render(cx, cy);
 }
 
-void MultiviewWindow::render(uint32_t cx, uint32_t cy)
+void MultiviewWindow::tick_frame()
 {
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
 
@@ -1574,6 +1581,17 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 	 * (audio_mixers signal) and poll for AutoFollow streaming-track changes
 	 * (no event fires on Settings → Output → Streaming Audio Track edits). */
 	check_active_track_change();
+}
+
+void MultiviewWindow::render(uint32_t cx, uint32_t cy)
+{
+	/* Display path: advance per-frame state, then paint the on-screen view.
+	 * The external-output pass is NOT here — it is driven globally by
+	 * obs_add_main_render_callback (render_output_only), so output runs even
+	 * when this window is closed/headless (issue #11). For a visible window
+	 * this display callback owns the per-frame tick; the global driver only
+	 * ticks headless hosts (see plugin-main on_main_render). */
+	tick_frame();
 
 	/* Compute canvas-aspect-ratio viewport (centered, with black borders) */
 	double windowAspect = (double)cx / (double)cy;
@@ -1591,20 +1609,19 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 	}
 
 	/* Display ALWAYS renders natively into the centered viewport at full
-	 * window resolution — output never downgrades the on-screen image
-	 * (issue #11). The Spout/NDI output is a separate offscreen pass below
-	 * that does not feed the display. */
+	 * window resolution — output never downgrades the on-screen image. */
 	draw_grid(vpX, vpY, vpW, vpH);
+}
 
-	/* Output pass: render the grid into the manager's per-resolution
-	 * offscreen target(s) and dispatch to each enabled backend. Driven from
-	 * the persisted InstanceOutputSettings; the manager self-reconciles from
-	 * the config each frame. Costs nothing when output_ is null (the common
-	 * case — no instance has output enabled). */
-	if (output_) {
-		output_->render_all(instance_display_name(), output_settings_,
-				    [this](int w, int h) { draw_grid(0, 0, w, h); });
-	}
+void MultiviewWindow::render_output_only()
+{
+	/* Graphics-thread external-output pass, independent of the display.
+	 * Renders the grid into the output manager's per-resolution texrender(s)
+	 * and dispatches to each enabled backend. The manager self-reconciles
+	 * from output_settings_ each frame. No-op when output is disabled. */
+	if (!output_)
+		return;
+	output_->render_all(instance_display_name(), output_settings_, [this](int w, int h) { draw_grid(0, 0, w, h); });
 }
 
 void MultiviewWindow::draw_grid(int vpX, int vpY, int vpW, int vpH)
@@ -2564,6 +2581,10 @@ void MultiviewWindow::set_spout_output_enabled(bool enabled)
 	inst->outputSettings.spout.enabled = enabled;
 	config_->save();
 	apply_output_settings();
+	/* This is a visible window (right-click source), so the host already
+	 * exists — just refresh the global driver so it starts/stops driving
+	 * this host's output. */
+	multiview_refresh_output_driver();
 	obs_log(LOG_INFO, "%sSpout output %s", log_prefix().c_str(), enabled ? "ON" : "OFF");
 }
 
@@ -2573,20 +2594,53 @@ bool MultiviewWindow::spout_output_enabled() const
 	return inst && inst->outputSettings.spout.enabled;
 }
 
+void MultiviewWindow::enter_headless()
+{
+	if (is_headless())
+		return;
+	/* Drop to a hidden, display-less render host: remove the OBS display
+	 * (its draw callback) and hide the window, but keep cell_sources_ and
+	 * output_ alive so the global driver keeps emitting output. */
+	headless_.store(true, std::memory_order_relaxed);
+	destroy_display();
+	hide();
+}
+
+void MultiviewWindow::exit_headless()
+{
+	if (!is_headless())
+		return;
+	headless_.store(false, std::memory_order_relaxed);
+	show();
+	activateWindow();
+	/* visibleChanged normally creates the display; create it directly too in
+	 * case the handle was already visible-without-display. */
+	if (!display_created_)
+		create_display();
+}
+
 /* ---- Label rendering ---- */
 
 void MultiviewWindow::closeEvent(QCloseEvent *event)
 {
-	/* Stop rendering and release all source refs immediately.
-	 * This ensures obs_source_dec_showing is called, which stops
+	/* Issue #11 Phase 2: if external output is still enabled for this
+	 * instance, closing the projector must NOT stop the output. Instead drop
+	 * to a headless render host — destroy the display + hide, but keep
+	 * cell_sources_ and output_ alive (the global driver keeps emitting). The
+	 * host is only fully torn down later when output is disabled. We keep the
+	 * source refs because the host must keep rendering the grid. */
+	if (output_) {
+		event->accept();
+		enter_headless();
+		return;
+	}
+
+	/* No output: full close. Stop rendering and release all source refs
+	 * immediately. This ensures obs_source_dec_showing is called, which stops
 	 * screen capture sources from signaling the OS (yellow border). */
 	ready_ = false;
 	destroy_display();
 	release_source_refs();
-	/* Release the Spout/NDI sender promptly when the projector closes so
-	 * receivers see the stream disappear rather than a frozen last frame. */
-	if (output_)
-		output_->shutdown_graphics();
 
 	emit window_closed(uuid_);
 	event->accept();
