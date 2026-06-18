@@ -1081,6 +1081,12 @@ void ManagerDialog::on_rename_instance()
 	config_->save();
 	refresh_instance_list();
 	select_instance_by_uuid(uuid);
+	/* refresh_instance_list() cleared the tree, which fired the selection-changed
+	 * slot and flipped the detail pane to PAGE_EMPTY; select_instance_by_uuid()
+	 * re-selects with signals blocked, so restore the detail pane explicitly
+	 * (mirrors the detail-area rename path). Without this the row reselects but
+	 * the right-hand detail/selection appears lost. */
+	show_instance_detail(uuid);
 	notify_multiview_name_changed(uuid);
 }
 
@@ -1140,8 +1146,12 @@ void ManagerDialog::on_delete_instance()
 	for (auto &uuid : uuids)
 		close_multiview_window(uuid);
 
-	for (auto &uuid : uuids)
+	for (auto &uuid : uuids) {
+		MultiviewInstance *inst = config_->find_instance(uuid);
+		obs_log(LOG_INFO, "[manager] deleting instance '%s' (%s)", inst ? inst->name.c_str() : "?",
+			uuid.c_str());
 		config_->delete_instance(uuid);
+	}
 
 	config_->save();
 	refresh_instance_list();

@@ -75,6 +75,7 @@ static AmvInstanceCore *ensure_core(const std::string &uuid)
 	core->apply_output_settings();
 	AmvInstanceCore *raw = core.get();
 	g_cores[uuid] = std::move(core);
+	obs_log(LOG_INFO, "[lifecycle] core created for instance %s", uuid.c_str());
 	return raw;
 }
 
@@ -157,10 +158,13 @@ static void on_window_closed(MultiviewWindow *view, const std::string &uuid)
 		vec.erase(std::remove(vec.begin(), vec.end(), view), vec.end());
 		if (view)
 			view->deleteLater();
+		const size_t remaining = vec.size();
 		if (vec.empty())
 			g_views.erase(vit);
 		else
 			refresh_view_numbers(uuid);
+		obs_log(LOG_INFO, "[lifecycle] window closed for %s (%zu window(s) remaining)", uuid.c_str(),
+			remaining);
 	}
 
 	const bool hasViews = g_views.count(uuid) != 0;
@@ -174,6 +178,8 @@ static void on_window_closed(MultiviewWindow *view, const std::string &uuid)
 		g_cores.erase(cit);
 		multiview_refresh_output_driver();
 		dying.reset();
+		obs_log(LOG_INFO, "[lifecycle] core destroyed for instance %s (last window closed, no output)",
+			uuid.c_str());
 	} else {
 		multiview_refresh_output_driver();
 	}
@@ -201,6 +207,8 @@ static void reconcile_output_host(const std::string &uuid)
 			std::unique_ptr<AmvInstanceCore> dying = std::move(cit->second);
 			g_cores.erase(cit);
 			multiview_refresh_output_driver();
+			obs_log(LOG_INFO, "[lifecycle] core destroyed for instance %s (output disabled, no windows)",
+				uuid.c_str());
 			return;
 		}
 	}
@@ -315,6 +323,8 @@ void open_multiview_window(const std::string &uuid)
 	QObject::connect(window, &MultiviewWindow::window_closed, on_window_closed);
 	g_views[uuid].push_back(window);
 	refresh_view_numbers(uuid);
+	obs_log(LOG_INFO, "[lifecycle] window opened for instance %s (%zu window(s) now)", uuid.c_str(),
+		g_views[uuid].size());
 
 	/* If this instance has output enabled (persisted), make sure the global
 	 * driver picks the core up. */
@@ -447,7 +457,10 @@ void close_multiview_window(const std::string &uuid)
 		g_views.erase(vit);
 	}
 
-	dying.reset();
+	if (dying) {
+		dying.reset();
+		obs_log(LOG_INFO, "[lifecycle] instance %s closed: all windows + core destroyed", uuid.c_str());
+	}
 }
 
 static void close_all_multiview_windows()

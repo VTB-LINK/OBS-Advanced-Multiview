@@ -139,21 +139,19 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 				media_logged = true;
 				if (ratio < kMediaProgressWarnRatio) {
 					obs_log(LOG_WARNING,
-						"%s[media] cell (%d,%d) provider=%s STALLED: advanced %lldms in %.0fms "
-						"(%.0f%%) frame=%ux%u state=%d",
+						"%s[media] cell (%d,%d) provider=%s STALLED: playback advanced only "
+						"%lldms over %.0fms wall (%.0f%%) frame=%ux%u",
 						log_prefix().c_str(), cellRow, cellCol,
 						signal_provider_to_string(cs.provider_type), (long long)advanced,
-						elapsed_ms, ratio * 100.0, cs.last_dimensions_w, cs.last_dimensions_h,
-						(int)cs.state);
+						elapsed_ms, ratio * 100.0, cs.last_dimensions_w, cs.last_dimensions_h);
 				} else {
 					amv_log_detailed(
 						LOG_INFO,
-						"%s[media] cell (%d,%d) provider=%s advanced %lldms (%.0f%%) frame=%ux%u "
-						"state=%d",
+						"%s[media] cell (%d,%d) provider=%s OK: playback advanced %lld/%.0fms "
+						"wall (%.0f%%) frame=%ux%u",
 						log_prefix().c_str(), cellRow, cellCol,
 						signal_provider_to_string(cs.provider_type), (long long)advanced,
-						ratio * 100.0, cs.last_dimensions_w, cs.last_dimensions_h,
-						(int)cs.state);
+						elapsed_ms, ratio * 100.0, cs.last_dimensions_w, cs.last_dimensions_h);
 				}
 			}
 			cs.last_media_time_ms = cur_ms;
