@@ -492,8 +492,21 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 			/* Re-apply to the (possibly open) window and refresh the
 			 * list so the italic+bold output marker updates. */
 			notify_multiview_output_settings_changed(current_detail_uuid_);
+			/* refresh_instance_list() rebuilt the tree to update the
+			 * italic+bold output marker, which cleared the selection.
+			 * Re-select with signals LIVE (not select_instance_by_uuid,
+			 * which blocks them) so on_instance_selection_changed fires
+			 * and restores both the row highlight and the detail panel —
+			 * same pattern as on_new_instance. */
 			refresh_instance_list();
-			select_instance_by_uuid(current_detail_uuid_);
+			const QString target = QString::fromStdString(current_detail_uuid_);
+			for (int i = 0; i < instance_tree_->topLevelItemCount(); i++) {
+				auto *it = instance_tree_->topLevelItem(i);
+				if (it->data(0, Qt::UserRole).toString() == target) {
+					instance_tree_->setCurrentItem(it);
+					break;
+				}
+			}
 		}
 	});
 
