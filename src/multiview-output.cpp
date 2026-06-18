@@ -84,7 +84,7 @@ bool MultiviewOutputManager::set_spout_enabled(bool enabled)
 }
 
 gs_texture_t *MultiviewOutputManager::render_and_dispatch(const std::string &name, uint32_t w, uint32_t h,
-							 const std::function<void()> &draw)
+							  const std::function<void()> &draw)
 {
 	if (backends_.empty() || w == 0 || h == 0 || !draw)
 		return nullptr;
