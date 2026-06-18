@@ -397,6 +397,23 @@ const char *signal_provider_unsupported_platform_reason(SignalProviderType p);
  *  - Unknown providers (forward-compat) preserve the raw OBS data so a
  *    future build can read it back losslessly.
  */
+/* Issue #10: per-source "first-frame load timeout" (网络流首帧加载超时).
+ *
+ * For slow network media (HLS with long segments, congested links) the default
+ * opening wait can be too short — obs_source_media_restart() rewinds buffering,
+ * so an impatient retry prevents the stream from ever loading. This optional
+ * per-source override lets the user widen the first-frame wait for a specific
+ * cell. Stored in SignalConfig.providerSettings under the amv_-prefixed keys
+ * (ignored by the underlying OBS source) and read by the health supervisor.
+ * Exposed only for ffmpeg (network mode) and vlc forms. */
+namespace amv_media {
+constexpr const char *kFirstFrameTimeoutEnabledKey = "amv_first_frame_timeout_enabled";
+constexpr const char *kFirstFrameTimeoutSecKey = "amv_first_frame_timeout_s";
+constexpr int kFirstFrameTimeoutDefaultSec = 15;
+constexpr int kFirstFrameTimeoutMinSec = 5;
+constexpr int kFirstFrameTimeoutMaxSec = 120;
+} // namespace amv_media
+
 struct SignalConfig {
 	SignalProviderType provider = SignalProviderType::Unknown;
 	std::string displayName;                /* user-visible label for SourcePicker / VU label fallback */

@@ -113,6 +113,10 @@ private:
 	QToolButton *local_browse_btn_ = nullptr;
 	QLabel *lbl_reconnect_delay_ = nullptr;
 	QSpinBox *spin_reconnect_delay_ = nullptr;
+	/* Issue #10: first-frame load timeout (network-only). */
+	QCheckBox *chk_first_frame_timeout_ = nullptr;
+	QLabel *lbl_first_frame_timeout_ = nullptr;
+	QSpinBox *spin_first_frame_timeout_ = nullptr;
 	QSpinBox *spin_buffering_mb_ = nullptr;
 	QCheckBox *chk_hw_decode_ = nullptr;
 	QComboBox *cmb_color_range_ = nullptr;
@@ -267,4 +271,9 @@ private:
 	QComboBox *cmb_behavior_ = nullptr;
 	QSpinBox *spin_network_caching_ = nullptr;
 	QSpinBox *spin_track_ = nullptr;
+	/* Issue #10: first-frame load timeout (always shown — a VLC playlist may
+	 * contain network items, which we can't reliably detect). */
+	QCheckBox *chk_first_frame_timeout_ = nullptr;
+	QLabel *lbl_first_frame_timeout_ = nullptr;
+	QSpinBox *spin_first_frame_timeout_ = nullptr;
 };

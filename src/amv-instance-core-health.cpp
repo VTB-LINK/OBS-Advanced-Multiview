@@ -210,8 +210,21 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 			cs.connecting_since_ns = now_ns;
 		const uint64_t opening_for = now_ns - cs.connecting_since_ns;
 
+		/* Issue #10: an optional per-source first-frame timeout (slow network
+		 * streams) overrides both the grace and the total. Setting them equal
+		 * means we wait the full timeout WITHOUT firing a media_restart (which
+		 * rewinds buffering and would stop a slow stream from ever loading),
+		 * then escalate to Lost so the recovery path takes over. Unset (0) ->
+		 * built-in defaults (grace 15 s, total 60 s, with mid-load restarts). */
+		const uint64_t effGraceNs = cs.first_frame_timeout_ms > 0
+						    ? (uint64_t)cs.first_frame_timeout_ms * 1'000'000ULL
+						    : kOpeningGraceNs;
+		const uint64_t effTotalNs = cs.first_frame_timeout_ms > 0
+						    ? (uint64_t)cs.first_frame_timeout_ms * 1'000'000ULL
+						    : kConnectingTotalNs;
+
 		/* Escalation A: stuck Opening for too long total -> Lost. */
-		if (opening_for >= kConnectingTotalNs || cs.media_restart_attempts >= kMaxMediaRestartAttempts) {
+		if (opening_for >= effTotalNs || cs.media_restart_attempts >= kMaxMediaRestartAttempts) {
 			cs.lost_since_ns = now_ns;
 			return SignalRuntimeState::Lost;
 		}
@@ -221,8 +234,7 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		 * kMediaRestartCooldownNs. Internally this calls
 		 * obs_source_media_restart, which ffmpeg_source/vlc_source
 		 * handle on their own worker thread. */
-		if (opening_for >= kOpeningGraceNs && provider->supports_media_restart() &&
-		    now_ns >= cs.next_retry_ns) {
+		if (opening_for >= effGraceNs && provider->supports_media_restart() && now_ns >= cs.next_retry_ns) {
 			obs_source_media_restart(raw);
 			cs.media_restart_attempts++;
 			cs.next_retry_ns = now_ns + kMediaRestartCooldownNs;

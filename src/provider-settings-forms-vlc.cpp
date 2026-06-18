@@ -131,6 +131,23 @@ VlcMediaForm::VlcMediaForm(QWidget *parent) : QWidget(parent)
 	spin_track_->setToolTip(amv::text("AMVPlugin.Provider.VLC.AudioTrackTooltip"));
 	form->addRow(amv::text("AMVPlugin.Provider.VLC.AudioTrack"), spin_track_);
 
+	/* First-frame load timeout (issue #10). Always shown for VLC: a playlist
+	 * can mix local + network items and we can't reliably classify it, so the
+	 * user decides whether the longer wait is needed. Off -> built-in default. */
+	chk_first_frame_timeout_ = new QCheckBox(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeout"), this);
+	chk_first_frame_timeout_->setToolTip(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeoutTooltip"));
+	form->addRow(QString(), chk_first_frame_timeout_);
+
+	spin_first_frame_timeout_ = new QSpinBox(this);
+	spin_first_frame_timeout_->setRange(amv_media::kFirstFrameTimeoutMinSec, amv_media::kFirstFrameTimeoutMaxSec);
+	spin_first_frame_timeout_->setSuffix(QStringLiteral(" s"));
+	spin_first_frame_timeout_->setValue(amv_media::kFirstFrameTimeoutDefaultSec);
+	spin_first_frame_timeout_->setToolTip(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeoutValueTooltip"));
+	lbl_first_frame_timeout_ = new QLabel(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeoutValue"), this);
+	form->addRow(lbl_first_frame_timeout_, spin_first_frame_timeout_);
+	connect(chk_first_frame_timeout_, &QCheckBox::toggled, spin_first_frame_timeout_, &QWidget::setEnabled);
+	spin_first_frame_timeout_->setEnabled(false);
+
 	root->addLayout(form);
 
 	/* Button wiring. The add/remove handlers are all small inline
@@ -246,6 +263,13 @@ void VlcMediaForm::load_from(const SignalConfig &cfg)
 						: kVlcDefaultNetworkCaching);
 	spin_track_->setValue(obs_data_has_user_value(src, kVlcKeyTrack) ? (int)obs_data_get_int(src, kVlcKeyTrack)
 									 : kVlcDefaultTrack);
+
+	const bool vlc_timeout_on = obs_data_get_bool(src, amv_media::kFirstFrameTimeoutEnabledKey);
+	chk_first_frame_timeout_->setChecked(vlc_timeout_on);
+	spin_first_frame_timeout_->setValue(obs_data_has_user_value(src, amv_media::kFirstFrameTimeoutSecKey)
+						    ? (int)obs_data_get_int(src, amv_media::kFirstFrameTimeoutSecKey)
+						    : amv_media::kFirstFrameTimeoutDefaultSec);
+	spin_first_frame_timeout_->setEnabled(vlc_timeout_on);
 }
 
 bool VlcMediaForm::is_valid() const
@@ -311,6 +335,12 @@ SignalConfig VlcMediaForm::to_signal_config() const
 
 	set_or_default_int(d, kVlcKeyNetworkCaching, spin_network_caching_->value(), kVlcDefaultNetworkCaching);
 	set_or_default_int(d, kVlcKeyTrack, spin_track_->value(), kVlcDefaultTrack);
+
+	/* First-frame timeout (issue #10): persist only when enabled. */
+	if (chk_first_frame_timeout_->isChecked()) {
+		obs_data_set_bool(d, amv_media::kFirstFrameTimeoutEnabledKey, true);
+		obs_data_set_int(d, amv_media::kFirstFrameTimeoutSecKey, spin_first_frame_timeout_->value());
+	}
 
 	return cfg;
 }

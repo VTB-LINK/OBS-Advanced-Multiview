@@ -181,6 +181,12 @@ private:
 		SignalRuntimeState last_health_state = SignalRuntimeState::Empty;
 		bool fallback_latched = false;
 
+		/* Issue #10: per-source first-frame load timeout in ms (0 = use the
+		 * built-in default). Cached from signalConfig.providerSettings on
+		 * (re)resolve; the health supervisor's OPENING phase uses it to widen
+		 * the first-frame wait for slow network media. */
+		int first_frame_timeout_ms = 0;
+
 		uint64_t source_created_ns = 0;
 		uint64_t connecting_since_ns = 0;
 		uint64_t lost_since_ns = 0;

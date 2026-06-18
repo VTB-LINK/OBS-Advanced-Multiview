@@ -93,6 +93,22 @@ FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : QWidget(parent)
 	spin_buffering_mb_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.BufferingTooltip"));
 	form->addRow(amv::text("AMVPlugin.Provider.FFmpeg.Buffering"), spin_buffering_mb_);
 
+	/* First-frame load timeout (network-only, issue #10). Slow HLS / congested
+	 * links can take longer than the default to deliver the first frame;
+	 * media_restart rewinds buffering, so an impatient retry stops them ever
+	 * loading. Checkbox off -> built-in default; on -> the spinbox value. */
+	chk_first_frame_timeout_ = new QCheckBox(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeout"), this);
+	chk_first_frame_timeout_->setToolTip(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeoutTooltip"));
+	form->addRow(QString(), chk_first_frame_timeout_);
+
+	spin_first_frame_timeout_ = new QSpinBox(this);
+	spin_first_frame_timeout_->setRange(amv_media::kFirstFrameTimeoutMinSec, amv_media::kFirstFrameTimeoutMaxSec);
+	spin_first_frame_timeout_->setSuffix(QStringLiteral(" s"));
+	spin_first_frame_timeout_->setValue(amv_media::kFirstFrameTimeoutDefaultSec);
+	spin_first_frame_timeout_->setToolTip(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeoutValueTooltip"));
+	lbl_first_frame_timeout_ = new QLabel(amv::text("AMVPlugin.Provider.Common.FirstFrameTimeoutValue"), this);
+	form->addRow(lbl_first_frame_timeout_, spin_first_frame_timeout_);
+
 	chk_hw_decode_ = new QCheckBox(amv::text("AMVPlugin.Provider.FFmpeg.HwDecode"), this);
 	chk_hw_decode_->setToolTip(amv::text("AMVPlugin.Provider.FFmpeg.HwDecodeTooltip"));
 	form->addRow(QString(), chk_hw_decode_);
@@ -136,6 +152,8 @@ FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : QWidget(parent)
 	/* Wire visibility + browse */
 	connect(chk_local_file_, &QCheckBox::toggled, this, &FfmpegMediaForm::on_local_file_toggled);
 	connect(local_browse_btn_, &QToolButton::clicked, this, &FfmpegMediaForm::on_browse_local_file);
+	connect(chk_first_frame_timeout_, &QCheckBox::toggled, spin_first_frame_timeout_, &QWidget::setEnabled);
+	spin_first_frame_timeout_->setEnabled(false);
 
 	apply_local_visibility(false);
 }
@@ -152,6 +170,10 @@ void FfmpegMediaForm::apply_local_visibility(bool is_local)
 	 * file fails to open, retrying every N seconds doesn't help. */
 	spin_reconnect_delay_->setVisible(!is_local);
 	spin_buffering_mb_->setVisible(!is_local);
+
+	/* First-frame load timeout: network only (local files open instantly). */
+	chk_first_frame_timeout_->setVisible(!is_local);
+	spin_first_frame_timeout_->setVisible(!is_local);
 
 	/* Loop + Speed: local only. The provider locks looping=false and
 	 * speed_percent=100 for network mode, so showing them disabled in
@@ -220,6 +242,14 @@ void FfmpegMediaForm::load_from(const SignalConfig &cfg)
 		spin_buffering_mb_->setValue((int)obs_data_get_int(src, "buffering_mb"));
 	else
 		spin_buffering_mb_->setValue(kDefaultBufferingMb);
+
+	const bool ff_timeout_on = src ? obs_data_get_bool(src, amv_media::kFirstFrameTimeoutEnabledKey) : false;
+	chk_first_frame_timeout_->setChecked(ff_timeout_on);
+	if (src && obs_data_has_user_value(src, amv_media::kFirstFrameTimeoutSecKey))
+		spin_first_frame_timeout_->setValue((int)obs_data_get_int(src, amv_media::kFirstFrameTimeoutSecKey));
+	else
+		spin_first_frame_timeout_->setValue(amv_media::kFirstFrameTimeoutDefaultSec);
+	spin_first_frame_timeout_->setEnabled(ff_timeout_on);
 
 	chk_hw_decode_->setChecked(src ? obs_data_get_bool(src, "hw_decode") : false);
 
@@ -299,6 +329,12 @@ SignalConfig FfmpegMediaForm::to_signal_config() const
 	if (!is_local) {
 		set_or_default_int(d, "reconnect_delay_sec", spin_reconnect_delay_->value(), kDefaultReconnectDelaySec);
 		set_or_default_int(d, "buffering_mb", spin_buffering_mb_->value(), kDefaultBufferingMb);
+		/* First-frame timeout (issue #10): persist only when enabled so a
+		 * disabled source carries no key and follows the built-in default. */
+		if (chk_first_frame_timeout_->isChecked()) {
+			obs_data_set_bool(d, amv_media::kFirstFrameTimeoutEnabledKey, true);
+			obs_data_set_int(d, amv_media::kFirstFrameTimeoutSecKey, spin_first_frame_timeout_->value());
+		}
 	}
 
 	set_or_default_bool(d, "hw_decode", chk_hw_decode_->isChecked(), false);

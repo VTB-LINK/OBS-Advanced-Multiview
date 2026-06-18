@@ -38,6 +38,21 @@ static bool source_is_audio_only(obs_source_t *src)
 	return (flags & OBS_SOURCE_AUDIO) && !(flags & OBS_SOURCE_VIDEO);
 }
 
+/* Issue #10: read the per-source first-frame load timeout (ms) from a
+ * SignalConfig's providerSettings. Returns 0 when not enabled (caller uses the
+ * built-in default). Clamps to the documented [min,max] range. */
+static int read_first_frame_timeout_ms(obs_data_t *providerSettings)
+{
+	if (!providerSettings || !obs_data_get_bool(providerSettings, amv_media::kFirstFrameTimeoutEnabledKey))
+		return 0;
+	int s = (int)obs_data_get_int(providerSettings, amv_media::kFirstFrameTimeoutSecKey);
+	if (s < amv_media::kFirstFrameTimeoutMinSec)
+		s = amv_media::kFirstFrameTimeoutMinSec;
+	if (s > amv_media::kFirstFrameTimeoutMaxSec)
+		s = amv_media::kFirstFrameTimeoutMaxSec;
+	return s * 1000;
+}
+
 static inline void startRegion(int vX, int vY, int vCX, int vCY, float oL, float oR, float oT, float oB)
 {
 	gs_projection_push();
@@ -219,6 +234,7 @@ bool AmvInstanceCore::refresh_cell(int row, int col)
 			cs.provider_type = ca->signalConfig.provider;
 			cs.name = ca->signalConfig.displayName;
 			cs.state = SignalRuntimeState::Connecting;
+			cs.first_frame_timeout_ms = read_first_frame_timeout_ms(ca->signalConfig.providerSettings);
 
 			char namebuf[256];
 			snprintf(namebuf, sizeof(namebuf), "OBS Advanced Multiview/%s/%d,%d/%s", short_uuid.c_str(),
@@ -1056,6 +1072,8 @@ void AmvInstanceCore::update_source_refs()
 				cell_sources_[i].provider_type = ca->signalConfig.provider;
 				cell_sources_[i].name = ca->signalConfig.displayName;
 				cell_sources_[i].state = SignalRuntimeState::Connecting;
+				cell_sources_[i].first_frame_timeout_ms =
+					read_first_frame_timeout_ms(ca->signalConfig.providerSettings);
 
 				char namebuf[256];
 				snprintf(namebuf, sizeof(namebuf), "OBS Advanced Multiview/%s/%d,%d/%s",
