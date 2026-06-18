@@ -20,6 +20,11 @@ License: GPL-2.0-or-later
 #include "multiview-output-spout.hpp"
 #endif
 
+#ifdef AMV_ENABLE_NDI_OUTPUT
+#include "multiview-output-ndi.hpp"
+#include "multiview-ndi-runtime.hpp"
+#endif
+
 MultiviewOutputManager::MultiviewOutputManager() = default;
 
 MultiviewOutputManager::~MultiviewOutputManager()
@@ -40,14 +45,22 @@ bool MultiviewOutputManager::spout_supported()
 #endif
 }
 
+bool MultiviewOutputManager::ndi_supported()
+{
+#ifdef AMV_ENABLE_NDI_OUTPUT
+	return NdiRuntime::available();
+#else
+	return false;
+#endif
+}
+
 bool MultiviewOutputManager::backend_available(Kind k)
 {
 	switch (k) {
 	case Kind::Spout:
 		return spout_supported();
 	case Kind::Ndi:
-		/* NDI backend not implemented yet (Phase 3). */
-		return false;
+		return ndi_supported();
 	}
 	return false;
 }
@@ -57,6 +70,10 @@ std::unique_ptr<IMultiviewOutputBackend> MultiviewOutputManager::create_backend(
 #ifdef AMV_ENABLE_SPOUT_OUTPUT
 	if (k == Kind::Spout)
 		return create_spout_output_backend();
+#endif
+#ifdef AMV_ENABLE_NDI_OUTPUT
+	if (k == Kind::Ndi)
+		return create_ndi_output_backend();
 #endif
 	(void)k;
 	return nullptr;

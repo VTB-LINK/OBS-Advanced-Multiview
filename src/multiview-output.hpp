@@ -82,6 +82,11 @@ public:
 	 * to the backend on the graphics thread. */
 	static bool spout_supported();
 
+	/* Whether NDI output is possible here: the plugin was built with NDI
+	 * support AND the NDI runtime DLL can be located/loaded. Used by the
+	 * settings UI to enable/disable the NDI tab. */
+	static bool ndi_supported();
+
 private:
 	enum class Kind { Spout, Ndi };
 

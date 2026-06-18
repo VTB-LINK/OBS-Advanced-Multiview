@@ -7,6 +7,7 @@ License: GPL-2.0-or-later
 
 #include "external-output-settings-dialog.hpp"
 #include "amv-i18n.hpp"
+#include "multiview-output.hpp"
 
 #include <obs.h>
 
@@ -63,9 +64,11 @@ void ExternalOutputSettingsDialog::setup_ui()
 
 	tabs->addTab(build_backend_tab(spout_, spoutAvailable, spoutReason), amv::text("AMVPlugin.Output.Tab.Spout"));
 
-	/* NDI backend not implemented yet — tab visible but disabled. */
-	tabs->addTab(build_backend_tab(ndi_, false, amv::text("AMVPlugin.Output.NDI.ComingSoon")),
-		     amv::text("AMVPlugin.Output.Tab.NDI"));
+	/* NDI requires the runtime DLL to be installed; grey the tab out with a
+	 * hint when it isn't (or when the plugin was built without NDI support). */
+	const bool ndiAvailable = MultiviewOutputManager::ndi_supported();
+	const QString ndiReason = ndiAvailable ? QString() : amv::text("AMVPlugin.Output.NDI.Unavailable");
+	tabs->addTab(build_backend_tab(ndi_, ndiAvailable, ndiReason), amv::text("AMVPlugin.Output.Tab.NDI"));
 
 	mainLayout->addWidget(tabs);
 
