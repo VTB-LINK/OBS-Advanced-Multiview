@@ -56,6 +56,18 @@ public:
 				return;
 		}
 
+		/* Don't read back + encode for nobody. The GPU->CPU readback and the
+		 * NDI SpeedHQ CPU encode are the expensive part (Spout, by contrast,
+		 * shares the texture on-GPU with no readback/encode). If no receiver is
+		 * connected, skip both entirely — the sender stays discoverable and CPU
+		 * drops to ~Spout levels until someone connects. send_get_no_connections
+		 * with a 0 ms timeout is a cheap, non-blocking current-count query. */
+		if (runtime_->lib()->send_get_no_connections(sender_, 0) <= 0) {
+			active_ = false;
+			stage_have_prev_ = false; /* restart the ping-pong cleanly on reconnect */
+			return;
+		}
+
 		if (!ensure_stage(w, h))
 			return;
 
