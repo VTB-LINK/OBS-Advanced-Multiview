@@ -98,8 +98,16 @@ gs_texture_t *MultiviewOutputManager::render_and_dispatch(const std::string &nam
 	if (!gs_texrender_begin(texrender_, w, h))
 		return nullptr;
 
-	/* Opaque black background; draw_grid paints gutter/cells over it via
-	 * its own per-region viewport/ortho, so no global ortho is needed. */
+	/* Establish an ambient viewport/projection matching the texrender's
+	 * pixel space. Most draw_grid helpers wrap their own startRegion (which
+	 * pushes viewport+ortho), but render_safe_area draws against the ambient
+	 * projection. gs_texrender_begin does NOT set an ortho, so without this
+	 * the display's physical-pixel ortho would leak in and map the safe-area
+	 * guides at the wrong scale (issue #11: shrank to the top-left quarter). */
+	gs_set_viewport(0, 0, (int)w, (int)h);
+	gs_ortho(0.0f, (float)w, 0.0f, (float)h, -100.0f, 100.0f);
+
+	/* Opaque black background; draw_grid paints gutter/cells over it. */
 	struct vec4 clear_color;
 	vec4_set(&clear_color, 0.0f, 0.0f, 0.0f, 1.0f);
 	gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);

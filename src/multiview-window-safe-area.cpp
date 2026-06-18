@@ -141,22 +141,28 @@ void MultiviewWindow::render_safe_area(int cellIndex, int cellX, int cellY, int 
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
 
-	/* Helper lambda: render a vertex buffer scaled to the configured anchor rect. */
+	/* Helper lambda: render a vertex buffer scaled to the configured anchor rect.
+	 *
+	 * The vertex buffers are normalized 0..1, so we map them onto the anchor
+	 * rect with a dedicated region (viewport = anchor rect, ortho = 0..1)
+	 * rather than a model matrix against the ambient projection. Every other
+	 * draw_grid helper already wraps its own startRegion; doing the same here
+	 * makes safe-area self-contained so it renders correctly into both the
+	 * on-screen display and the offscreen output texrender, whose ambient
+	 * projections differ (issue #11). */
 	auto renderVB = [&](gs_vertbuffer_t *vb) {
 		if (!vb)
 			return;
 
 		gs_load_vertexbuffer(vb);
 
-		gs_matrix_push();
-		gs_matrix_translate3f((float)anchorX, (float)anchorY, 0.0f);
-		gs_matrix_scale3f((float)anchorW, (float)anchorH, 1.0f);
+		startRegion(anchorX, anchorY, anchorW, anchorH, 0.0f, 1.0f, 0.0f, 1.0f);
 
 		gs_effect_set_color(colorParam, saColor);
 		while (gs_effect_loop(solid, "Solid"))
 			gs_draw(GS_LINESTRIP, 0, 0);
 
-		gs_matrix_pop();
+		endRegion();
 	};
 
 	/* Draw all safe area guides */
