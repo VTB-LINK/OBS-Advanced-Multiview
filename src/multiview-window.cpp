@@ -233,12 +233,16 @@ void MultiviewWindow::exit_headless()
 	if (!is_headless())
 		return;
 	headless_.store(false, std::memory_order_relaxed);
-	/* Reopen at the default size rather than whatever size it had before being
-	 * closed-to-headless — OBS projectors don't remember their geometry, and
-	 * the user wants the same. (Phase 2 makes every open a fresh window, which
+	/* Reopen at the default size, centered on the screen, rather than whatever
+	 * size/position it had before being closed-to-headless — OBS projectors
+	 * don't remember geometry. (Phase 2 makes every open a fresh window, which
 	 * removes this reuse path entirely.) */
 	showNormal();
 	resize(960, 540);
+	if (QScreen *scr = screen()) {
+		const QRect avail = scr->availableGeometry();
+		move(avail.x() + (avail.width() - width()) / 2, avail.y() + (avail.height() - height()) / 2);
+	}
 	activateWindow();
 	/* visibleChanged normally creates the display; create it directly too in
 	 * case the handle was already visible-without-display. */
