@@ -81,11 +81,21 @@ int MultiviewWindow::cell_index_at_widget_pos(const QPointF &position)
 	int lx = mx - vpX;
 	int ly = my - vpY;
 
-	engine_.set_layout(layout_);
-	engine_.set_viewport(vpW, vpH);
-	engine_.compute();
+	/* Hit-test on a LOCAL engine, never the member engine_. The member
+	 * engine_ is owned by draw_grid(), which caches its computed viewport
+	 * in cached_vpW_/cached_vpH_. Recomputing engine_ here at window-pixel
+	 * size would silently desync that cache: once Spout/NDI output is on,
+	 * draw_grid() renders at canvas resolution into an offscreen target,
+	 * and a stray window-pixel layout left behind by a click would make the
+	 * cells overflow the texrender and blit back scaled/shifted (issue #11
+	 * regression). A grid layout is proportional, so hit-testing at window
+	 * size still maps clicks to the right cell. */
+	LayoutEngine hitEngine;
+	hitEngine.set_layout(layout_);
+	hitEngine.set_viewport(vpW, vpH);
+	hitEngine.compute();
 
-	auto hit = engine_.hit_test(lx, ly);
+	auto hit = hitEngine.hit_test(lx, ly);
 	if (hit && hit->type == HitType::Cell)
 		return hit->cellIndex;
 	return -1;
