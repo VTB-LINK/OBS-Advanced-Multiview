@@ -566,17 +566,22 @@ void AmvInstanceCore::rebuild_volmeters()
 		bool isPgm = false;
 
 		if (cs.type == "pgm") {
-			cellSrc = amv_frontend::current_program_scene();
+			/* current_program_scene() hands back an OBSSourceAutoRelease; take an
+			 * OWNED +1 (obs_source_get_ref is null-safe) so the obs_source_release
+			 * below is balanced. Assigning the AutoRelease straight into a raw
+			 * pointer would drop the ref immediately and the release would then
+			 * over-decrement a live OBS scene (issue #10 F2 regression). */
+			cellSrc = obs_source_get_ref(amv_frontend::current_program_scene());
 			isPgm = true;
 			has_pgm_cell_ = true;
 		} else if (cs.type == "prvw") {
-			cellSrc = amv_frontend::current_preview_scene();
+			cellSrc = obs_source_get_ref(amv_frontend::current_preview_scene());
 			if (!cellSrc) {
 				/* Studio Mode disabled: PRVW has no separate scene, so it
 				 * 100% mirrors PGM (matches render() fallback). Treat the
 				 * cell as PGM for VU purposes — also enables the global
 				 * channel 1..5 sweep below. */
-				cellSrc = amv_frontend::current_program_scene();
+				cellSrc = obs_source_get_ref(amv_frontend::current_program_scene());
 				isPgm = (cellSrc != nullptr);
 				if (isPgm)
 					has_pgm_cell_ = true;
@@ -867,15 +872,16 @@ void AmvInstanceCore::collect_active_source_pointers(std::vector<void *> &out, u
 		obs_source_t *cellSrc = nullptr;
 		bool isPgm = false;
 		if (cs.type == "pgm") {
-			cellSrc = amv_frontend::current_program_scene();
+			/* Owned +1 to match the obs_source_release below (see rebuild path). */
+			cellSrc = obs_source_get_ref(amv_frontend::current_program_scene());
 			isPgm = true;
 		} else if (cs.type == "prvw") {
-			cellSrc = amv_frontend::current_preview_scene();
+			cellSrc = obs_source_get_ref(amv_frontend::current_preview_scene());
 			if (!cellSrc) {
 				/* Studio Mode off: PRVW mirrors PGM. Match rebuild path so
 				 * the polling-based set comparison stays consistent across
 				 * studio-mode toggles. */
-				cellSrc = amv_frontend::current_program_scene();
+				cellSrc = obs_source_get_ref(amv_frontend::current_program_scene());
 				isPgm = (cellSrc != nullptr);
 			}
 		} else {
