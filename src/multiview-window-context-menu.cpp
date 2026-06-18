@@ -108,7 +108,14 @@ void MultiviewWindow::mousePressEvent(QMouseEvent *event)
 		int cellIndex = cell_index_at_widget_pos(event->position());
 
 		if (btn == Qt::RightButton) {
-			show_context_menu(event->globalPosition().toPoint(), cellIndex);
+			/* Map the LOCAL widget position to global via mapToGlobal
+			 * rather than trusting event->globalPosition(): on a
+			 * WA_NativeWindow/WA_PaintOnScreen widget under fractional /
+			 * high DPI (e.g. 250%), the event's global position can come
+			 * back in physical pixels, landing the menu far off-screen so
+			 * Qt clamps it to the bottom-right corner. mapToGlobal uses the
+			 * window's logical coordinate mapping, which stays consistent. */
+			show_context_menu(mapToGlobal(event->position().toPoint()), cellIndex);
 		} else {
 			/* Left click: only act on a hit cell. handle_scene_click_switch
 			 * itself silently ignores non-scene cells, missing sources,
