@@ -20,6 +20,14 @@
    - Visual Studio 2022 或 2026
    - CMake 3.28+
    - OBS Studio 31.1.1+
+   - **（可选）NDI SDK** —— 仅在需要**构建或修改/测试 NDI 外部输出**时安装。
+     从 [NDI SDK](https://ndi.video/for-developers/ndi-sdk/) 下载安装；构建会自动探测
+     默认路径（如 `C:\Program Files\NDI\NDI 6 SDK`），也可用环境变量 `NDI_SDK_DIR` 覆盖。
+     **未安装时** CMake 会打印提示并关闭 `ENABLE_NDI_OUTPUT`，`src/multiview-output-ndi.*`
+     与 `src/multiview-ndi-runtime.*` 编译为空翻译单元——插件照常构建，但 NDI 后端被排除、
+     **无法改动或测试**。Spout 输出无此要求（SDK 已 vendored 于 `deps/Spout2`）。
+     运行期插件动态加载 NDI 运行时 DLL（不打包、不链接导入库），加载 v5 函数表以兼容
+     NDI 5 / NDI 6 两种运行时；测试需安装 [NDI 运行时](http://ndi.link/NDIRedistV6) 或 NDI Tools。
 
 2. **配置项目**
    ```powershell

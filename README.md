@@ -169,6 +169,12 @@ cmake --build build_x64 --config RelWithDebInfo --target obs-advanced-multiview
 
 See [docs/setup/README.md](docs/setup/README.md) for first-time setup and troubleshooting.
 
+### NDI output (optional)
+
+The built-in **NDI external output** is compiled only when the [NDI SDK](https://ndi.video/for-developers/ndi-sdk/) is installed at build time. The build auto-detects the SDK at the default install path (e.g. `C:\Program Files\NDI\NDI 6 SDK`); set the `NDI_SDK_DIR` environment variable to override. If the SDK is not found, CMake prints a status note and `ENABLE_NDI_OUTPUT` is turned off — the plugin still builds, but the NDI backend is excluded and cannot be modified or tested. The Spout output has no such requirement (its SDK is vendored).
+
+At runtime the plugin loads the NDI runtime DLL dynamically (no DLL is bundled), so end users need the [NDI runtime](http://ndi.link/NDIRedistV6) (or NDI Tools) installed. An NDI 5 or NDI 6 runtime both work.
+
 ## Documentation
 
 - [Development workflow](docs/DEVELOPMENT.md)
