@@ -225,6 +225,12 @@ private:
 		uint64_t lost_since_ns = 0;
 		int media_restart_attempts = 0;
 		int lost_restart_attempts = 0;
+		/* Signal-Lost v2: index into the fixed reconnect backoff ladder
+		 * (5/10/15/20/30s, then hold 30s). Increments on every Lost-state
+		 * recovery action; reset to 0 on Active, on a fresh bind, and on a
+		 * manual Reconnect/Replay (which restarts the ladder + fires now).
+		 * Internal bookkeeping only — never serialized. */
+		int recovery_attempt = 0;
 
 		uint64_t render_calls = 0;
 		uint64_t render_skipped_no_src = 0;

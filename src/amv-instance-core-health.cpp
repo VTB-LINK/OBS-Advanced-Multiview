@@ -61,9 +61,28 @@ constexpr uint64_t kConnectingTotalNs = 60 * NS_PER_SEC;
 constexpr int kMaxMediaRestartAttempts = 3;
 constexpr uint64_t kMediaRestartCooldownNs = 10 * NS_PER_SEC;
 
-/* Default recreate cooldown if the user didn't set
- * effective_lost.manualReconnectCooldownMs (or set it absurdly low). */
-constexpr uint64_t kMinRecreateCooldownNs = 5 * NS_PER_SEC;
+/* Signal-Lost v2: fixed reconnect backoff ladder for the Lost state.
+ * Wait before the Nth recovery action (media_restart / recreate):
+ * 5 -> 10 -> 15 -> 20 -> 30 s, then hold 30 s/attempt until Active or a
+ * manual Reconnect. Deliberately NOT user-exposed (replaces the old flat
+ * manualReconnectCooldownMs cadence + its >=5s clamp). The separate
+ * Opening-phase protections (kOpeningGraceNs / kConnectingTotalNs /
+ * kMediaRestartCooldownNs) still guard first-frame loading and are unrelated
+ * to this loss-recovery ladder. */
+constexpr int kBackoffLadderSec[] = {5, 10, 15, 20, 30};
+constexpr int kBackoffLadderSteps = (int)(sizeof(kBackoffLadderSec) / sizeof(kBackoffLadderSec[0]));
+
+inline uint64_t backoff_cooldown_ns(int attempt)
+{
+	const int idx = attempt < 0 ? 0 : (attempt >= kBackoffLadderSteps ? kBackoffLadderSteps - 1 : attempt);
+	return (uint64_t)kBackoffLadderSec[idx] * NS_PER_SEC;
+}
+
+/* Clamp the ladder index for the "step N/total" log display. */
+inline int backoff_ladder_step(int attempt)
+{
+	return attempt > kBackoffLadderSteps ? kBackoffLadderSteps : attempt;
+}
 
 } // namespace
 
@@ -189,6 +208,7 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		cs.media_restart_attempts = 0;
 		cs.lost_restart_attempts = 0;
 		cs.retry_attempt = 0;
+		cs.recovery_attempt = 0;
 		return SignalRuntimeState::Active;
 
 	case ISignalProvider::HealthCode::Paused:
@@ -202,6 +222,7 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		cs.media_restart_attempts = 0;
 		cs.lost_restart_attempts = 0;
 		cs.retry_attempt = 0;
+		cs.recovery_attempt = 0;
 		return SignalRuntimeState::Paused;
 
 	case ISignalProvider::HealthCode::Opening: {
@@ -239,9 +260,13 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 			cs.media_restart_attempts++;
 			cs.next_retry_ns = now_ns + kMediaRestartCooldownNs;
 			cs.last_reconnect_ns = now_ns;
-			amv_log_detailed(LOG_INFO, "%s[health] cell (%d,%d) media_restart #%d on '%s' (reason='%s')",
-					 log_prefix().c_str(), cellRow, cellCol, cs.media_restart_attempts,
-					 signal_provider_to_string(cs.provider_type), cs.last_error_reason.c_str());
+			amv_log_detailed(
+				LOG_INFO,
+				"%s[health][auto] cell (%d,%d) opening media_restart #%d/%d on '%s' (reason='%s'; opening_for %llus, next in %llus)",
+				log_prefix().c_str(), cellRow, cellCol, cs.media_restart_attempts,
+				kMaxMediaRestartAttempts, signal_provider_to_string(cs.provider_type),
+				cs.last_error_reason.c_str(), (unsigned long long)(opening_for / NS_PER_SEC),
+				(unsigned long long)(kMediaRestartCooldownNs / NS_PER_SEC));
 			return SignalRuntimeState::Connecting;
 		}
 
@@ -275,12 +300,12 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		if (!recreate_eligible && !restart_eligible)
 			return SignalRuntimeState::Lost;
 
-		int cooldown_ms = cs.effective_lost.manualReconnectCooldownMs;
-		if (cooldown_ms < 0)
-			cooldown_ms = 1000;
-		uint64_t cooldown_ns = (uint64_t)cooldown_ms * 1'000'000ULL;
-		if (cooldown_ns < kMinRecreateCooldownNs)
-			cooldown_ns = kMinRecreateCooldownNs;
+		/* Signal-Lost v2: laddered backoff (5/10/15/20/30s, hold 30s),
+		 * indexed by recovery_attempt — replaces the old flat
+		 * manualReconnectCooldownMs cadence. cooldown_ns is the wait before
+		 * THIS attempt; after acting we bump recovery_attempt and schedule
+		 * next_retry_ns from the (grown) ladder step. */
+		uint64_t cooldown_ns = backoff_cooldown_ns(cs.recovery_attempt);
 
 		const uint64_t lost_for = now_ns - cs.lost_since_ns;
 		if (lost_for < cooldown_ns)
@@ -319,15 +344,21 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		 *   !supports_media_restart && !benefits_from_recreate  (ndi, spout)
 		 *     -> handled by the early return above */
 		if (restart_eligible && cs.lost_restart_attempts < kMaxLostRestartAttempts) {
+			/* Log the ladder step + the cooldown that just elapsed BEFORE
+			 * this attempt (so the 5s first step is visible), then advance. */
+			const int laddered_step = backoff_ladder_step(cs.recovery_attempt + 1);
+			const unsigned long long waited_s = backoff_cooldown_ns(cs.recovery_attempt) / NS_PER_SEC;
 			obs_source_media_restart(raw);
 			cs.lost_restart_attempts++;
-			cs.next_retry_ns = now_ns + cooldown_ns;
+			cs.recovery_attempt++;
+			cs.next_retry_ns = now_ns + backoff_cooldown_ns(cs.recovery_attempt);
 			cs.last_reconnect_ns = now_ns;
-			amv_log_detailed(LOG_INFO,
-					 "%s[health] cell (%d,%d) lost media_restart #%d/%d on '%s' (reason='%s')",
-					 log_prefix().c_str(), cellRow, cellCol, cs.lost_restart_attempts,
-					 kMaxLostRestartAttempts, signal_provider_to_string(cs.provider_type),
-					 cs.last_error_reason.c_str());
+			amv_log_detailed(
+				LOG_INFO,
+				"%s[health][auto] cell (%d,%d) lost media_restart #%d/%d on '%s' (reason='%s'; ladder step %d/%d, after %llus wait)",
+				log_prefix().c_str(), cellRow, cellCol, cs.lost_restart_attempts,
+				kMaxLostRestartAttempts, signal_provider_to_string(cs.provider_type),
+				cs.last_error_reason.c_str(), laddered_step, kBackoffLadderSteps, waited_s);
 			return SignalRuntimeState::RetryScheduled;
 		}
 
@@ -344,12 +375,16 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		 * to full recreate. Reset the cheap counter so the next Lost
 		 * window after the recreate starts again with the light path. */
 		cs.lost_restart_attempts = 0;
-		cs.next_retry_ns = now_ns + cooldown_ns;
+		const int laddered_step = backoff_ladder_step(cs.recovery_attempt + 1);
+		const unsigned long long waited_s = backoff_cooldown_ns(cs.recovery_attempt) / NS_PER_SEC;
+		cs.recovery_attempt++;
+		cs.next_retry_ns = now_ns + backoff_cooldown_ns(cs.recovery_attempt);
 		cs.retry_attempt++;
-		amv_log_detailed(LOG_INFO,
-				 "%s[health] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s')",
-				 log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type),
-				 cs.retry_attempt, cs.last_error_reason.c_str());
+		amv_log_detailed(
+			LOG_INFO,
+			"%s[health][auto] cell (%d,%d) scheduling full recreate of '%s' (attempt #%d, reason='%s'; ladder step %d/%d, after %llus wait)",
+			log_prefix().c_str(), cellRow, cellCol, signal_provider_to_string(cs.provider_type),
+			cs.retry_attempt, cs.last_error_reason.c_str(), laddered_step, kBackoffLadderSteps, waited_s);
 
 		/* Queue refresh_cell onto the Qt main thread — it must NOT
 		 * run while we hold source_mutex_. By the time the timer

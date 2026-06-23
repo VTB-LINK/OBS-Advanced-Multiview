@@ -361,6 +361,9 @@ bool AmvInstanceCore::refresh_cell(int row, int col)
 					cs.connecting_since_ns = 0;
 					cs.lost_since_ns = 0;
 					cs.media_restart_attempts = 0;
+					cs.lost_restart_attempts = 0;
+					cs.recovery_attempt =
+						0; /* Signal-Lost v2: fresh bind restarts the backoff ladder */
 					cs.next_retry_ns = 0;
 					cs.last_health_ns = 0;
 					/* Phase 3 / M6.6 H.5 hardening: clear sticky
@@ -975,6 +978,13 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 	}
 	cs.last_reconnect_ns = now;
 	cs.retry_attempt++;
+	/* Signal-Lost v2: a manual Reconnect/Replay restarts the backoff ladder
+	 * and fires immediately — the user shouldn't wait out the supervisor's
+	 * (up to 30s) cooldown when they know the signal is back. Reset the
+	 * ladder index + clear the supervisor's next-attempt gate so the next
+	 * health tick (if this manual attempt also fails) starts again at 5s. */
+	cs.recovery_attempt = 0;
+	cs.next_retry_ns = 0;
 
 	/* Phase 3 hardening tail: manual Reconnect Now mirrors the supervisor
 	 * Lost-branch logic (capability-driven, no per-provider branches).
@@ -1007,7 +1017,8 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 			 * recreate and we have row/col, queue refresh_cell;
 			 * otherwise just mark Error so the overlay surfaces. */
 			cs.state = SignalRuntimeState::Error;
-			amv_log_detailed(LOG_INFO, "%sreconnect cell %d: external provider has no private source",
+			amv_log_detailed(LOG_INFO,
+					 "%s[manual] reconnect cell %d: external provider has no private source",
 					 log_prefix().c_str(), cellIndex);
 			if (recreate_eligible && cellRow >= 0 && cellCol >= 0) {
 				cs.lost_restart_attempts = 0;
@@ -1024,7 +1035,7 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 			cs.lost_restart_attempts++;
 			cs.state = SignalRuntimeState::Connecting;
 			amv_log_detailed(LOG_INFO,
-					 "%sreconnect cell %d: media_restart #%d/%d on external provider '%s'",
+					 "%s[manual] reconnect cell %d: media_restart #%d/%d on external provider '%s'",
 					 log_prefix().c_str(), cellIndex, cs.lost_restart_attempts,
 					 kMaxLostRestartAttempts, signal_provider_to_string(cs.provider_type));
 			return true;
@@ -1033,9 +1044,10 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 		if (recreate_eligible && cellRow >= 0 && cellCol >= 0) {
 			cs.lost_restart_attempts = 0;
 			cs.state = SignalRuntimeState::Connecting;
-			amv_log_detailed(LOG_INFO,
-					 "%sreconnect cell %d: scheduling full recreate of external provider '%s'",
-					 log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
+			amv_log_detailed(
+				LOG_INFO,
+				"%s[manual] reconnect cell %d: scheduling full recreate of external provider '%s'",
+				log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
 			QTimer::singleShot(0, this, [this, cellRow, cellCol]() {
 				if (!refresh_cell(cellRow, cellCol))
 					refresh_sources();
@@ -1050,7 +1062,8 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 			obs_source_media_restart(cs.private_source);
 			cs.lost_restart_attempts = 0;
 			cs.state = SignalRuntimeState::Connecting;
-			amv_log_detailed(LOG_INFO, "%sreconnect cell %d: media_restart on external provider '%s'",
+			amv_log_detailed(LOG_INFO,
+					 "%s[manual] reconnect cell %d: media_restart on external provider '%s'",
 					 log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
 			return true;
 		}
@@ -1059,7 +1072,7 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 		 * Touch last_reconnect_ns above so the cooldown still ticks. */
 		amv_log_detailed(
 			LOG_INFO,
-			"%sreconnect cell %d: provider '%s' has no manual recovery action (host plugin auto-reconnects)",
+			"%s[manual] reconnect cell %d: provider '%s' has no manual recovery action (host plugin auto-reconnects)",
 			log_prefix().c_str(), cellIndex, signal_provider_to_string(cs.provider_type));
 		return true;
 	}
@@ -1099,12 +1112,12 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 			cs.showing = true;
 			cs.state = SignalRuntimeState::Active;
 			obs_source_release(resolved);
-			obs_log(LOG_INFO, "reconnect cell %d: resolved '%s'", cellIndex, cs.name.c_str());
+			obs_log(LOG_INFO, "[manual] reconnect cell %d: resolved '%s'", cellIndex, cs.name.c_str());
 			return true;
 		}
 	}
 	cs.state = SignalRuntimeState::MissingInternal;
-	obs_log(LOG_INFO, "reconnect cell %d: '%s' still missing", cellIndex, cs.name.c_str());
+	obs_log(LOG_INFO, "[manual] reconnect cell %d: '%s' still missing", cellIndex, cs.name.c_str());
 	return true;
 }
 
@@ -1333,6 +1346,7 @@ void AmvInstanceCore::update_source_refs()
 				cs.lost_since_ns = 0;
 				cs.media_restart_attempts = 0;
 				cs.lost_restart_attempts = 0;
+				cs.recovery_attempt = 0; /* Signal-Lost v2: fresh bind restarts the backoff ladder */
 				/* Phase 3 / M6.6 H.5 hardening: clear sticky fallback
 				 * latch on full refresh too. Same rationale as the
 				 * single-cell refresh_cell path above. */
