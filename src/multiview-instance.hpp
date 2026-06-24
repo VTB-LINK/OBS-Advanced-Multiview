@@ -205,9 +205,23 @@ enum class ExternalLostBehavior {
 	SignalLostImage,   /* show signalLostImagePath when lost */
 };
 
+/* Signal-Lost v2 axis A — recovery policy for external (FFmpeg/VLC) cells.
+ * Auto: the health supervisor auto media_restart / recreate on the backoff
+ * ladder. ManualOnly: the supervisor still detects + shows the loss but does
+ * NOT auto-recover; recovery happens only via the cell's Reconnect/Replay Now
+ * menu. Irrelevant for NDI/Spout (host plugin owns reconnect) and internal
+ * cells (event-driven), where the dialog greys it out. */
+enum class RecoveryPolicy {
+	Auto,       /* auto-reconnect on the backoff ladder (default) */
+	ManualOnly, /* no auto-reconnect; only manual Reconnect/Replay recovers */
+};
+
 struct LostSignalSettings {
 	InternalMissingBehavior internalMissingBehavior = InternalMissingBehavior::Black;
 	ExternalLostBehavior externalLostBehavior = ExternalLostBehavior::SignalLostOverlay;
+
+	/* Signal-Lost v2 axis A — recovery policy (external FFmpeg/VLC cells). */
+	RecoveryPolicy recoveryPolicy = RecoveryPolicy::Auto;
 
 	/* Optional resource paths */
 	std::string placeholderImagePath; /* used when internal == PlaceholderImage */

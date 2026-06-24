@@ -231,6 +231,16 @@ void SignalLostSettingsDialog::build_ui()
 	cmb_external_behavior_->addItem(amv::text("AMVPlugin.SignalLost.External.SignalLostImage"));
 	form_external->addRow(amv::text("AMVPlugin.SignalLost.External.OnLost"), cmb_external_behavior_);
 
+	/* Signal-Lost v2 axis A: recovery policy. Auto = supervisor auto-reconnects
+	 * on the backoff ladder; ManualOnly = detect + show loss but recover only
+	 * via the cell's Reconnect/Replay menu. Only meaningful for FFmpeg/VLC
+	 * (NDI/Spout reconnect inside their host plugin); a later UI pass greys it
+	 * for those providers. */
+	cmb_recovery_policy_ = new QComboBox(grp_external);
+	cmb_recovery_policy_->addItem(amv::text("AMVPlugin.SignalLost.Recovery.Auto"));
+	cmb_recovery_policy_->addItem(amv::text("AMVPlugin.SignalLost.Recovery.ManualOnly"));
+	form_external->addRow(amv::text("AMVPlugin.SignalLost.External.RecoveryPolicy"), cmb_recovery_policy_);
+
 	auto *signal_lost_row = new QHBoxLayout();
 	edit_signal_lost_path_ = new QLineEdit(grp_external);
 	edit_signal_lost_path_->setPlaceholderText(amv::text("AMVPlugin.SignalLost.ImagePathPlaceholder"));
@@ -383,6 +393,7 @@ void SignalLostSettingsDialog::apply_settings(const LostSignalSettings &s)
 	cmb_placeholder_fit_->setCurrentIndex(s.placeholderImageFitMode == ImageFitMode::Fit ? 1 : 0);
 
 	cmb_external_behavior_->setCurrentIndex(idx_from_external(s.externalLostBehavior));
+	cmb_recovery_policy_->setCurrentIndex(s.recoveryPolicy == RecoveryPolicy::ManualOnly ? 1 : 0);
 	edit_signal_lost_path_->setText(QString::fromStdString(s.signalLostImagePath));
 	cmb_signal_lost_fit_->setCurrentIndex(s.signalLostImageFitMode == ImageFitMode::Fit ? 1 : 0);
 
@@ -404,6 +415,8 @@ LostSignalSettings SignalLostSettingsDialog::collect_settings() const
 									      : ImageFitMode::Stretch;
 
 	s.externalLostBehavior = external_from_idx(cmb_external_behavior_->currentIndex());
+	s.recoveryPolicy = cmb_recovery_policy_->currentIndex() == 1 ? RecoveryPolicy::ManualOnly
+								     : RecoveryPolicy::Auto;
 	s.signalLostImagePath = edit_signal_lost_path_->text().toStdString();
 	s.signalLostImageFitMode = cmb_signal_lost_fit_->currentIndex() == 1 ? ImageFitMode::Fit
 									     : ImageFitMode::Stretch;
@@ -437,6 +450,7 @@ void SignalLostSettingsDialog::update_enabled_state()
 						    InternalMissingBehavior::PlaceholderImage);
 
 	setRowEnabled(cmb_external_behavior_, true);
+	setRowEnabled(cmb_recovery_policy_, true);
 	setRowEnabled(edit_signal_lost_path_, external_from_idx(cmb_external_behavior_->currentIndex()) ==
 						      ExternalLostBehavior::SignalLostImage);
 	setRowEnabled(cmb_signal_lost_fit_, external_from_idx(cmb_external_behavior_->currentIndex()) ==

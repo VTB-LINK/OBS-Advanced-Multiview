@@ -84,6 +84,24 @@ inline ExternalLostBehavior external_lost_behavior_from_str(const char *s)
 	return ExternalLostBehavior::SignalLostOverlay;
 }
 
+/* Signal-Lost v2 axis A — recovery policy. */
+inline const char *recovery_policy_to_str(RecoveryPolicy p)
+{
+	switch (p) {
+	case RecoveryPolicy::ManualOnly:
+		return "manual_only";
+	default:
+		return "auto";
+	}
+}
+
+inline RecoveryPolicy recovery_policy_from_str(const char *s)
+{
+	if (s && strcmp(s, "manual_only") == 0)
+		return RecoveryPolicy::ManualOnly;
+	return RecoveryPolicy::Auto;
+}
+
 inline const char *label_display_mode_to_str(LabelDisplayMode m)
 {
 	switch (m) {

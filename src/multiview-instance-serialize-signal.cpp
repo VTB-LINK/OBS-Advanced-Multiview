@@ -36,6 +36,7 @@ obs_data_t *LostSignalSettings::to_obs_data() const
 	obs_data_t *data = obs_data_create();
 	obs_data_set_string(data, "internalMissingBehavior", internal_missing_behavior_to_str(internalMissingBehavior));
 	obs_data_set_string(data, "externalLostBehavior", external_lost_behavior_to_str(externalLostBehavior));
+	obs_data_set_string(data, "recoveryPolicy", recovery_policy_to_str(recoveryPolicy));
 	obs_data_set_string(data, "placeholderImagePath", placeholderImagePath.c_str());
 	obs_data_set_string(data, "signalLostImagePath", signalLostImagePath.c_str());
 	obs_data_set_string(data, "placeholderImageFitMode", image_fit_mode_to_str(placeholderImageFitMode));
@@ -57,6 +58,9 @@ LostSignalSettings LostSignalSettings::from_obs_data(obs_data_t *data)
 	s.internalMissingBehavior =
 		internal_missing_behavior_from_str(obs_data_get_string(data, "internalMissingBehavior"));
 	s.externalLostBehavior = external_lost_behavior_from_str(obs_data_get_string(data, "externalLostBehavior"));
+	/* Signal-Lost v2: absent on legacy configs -> defaults to Auto (the
+	 * pre-v2 behavior, where the supervisor always auto-reconnected). */
+	s.recoveryPolicy = recovery_policy_from_str(obs_data_get_string(data, "recoveryPolicy"));
 	s.placeholderImagePath = obs_data_get_string(data, "placeholderImagePath");
 	s.signalLostImagePath = obs_data_get_string(data, "signalLostImagePath");
 

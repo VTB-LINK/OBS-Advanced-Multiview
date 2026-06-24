@@ -198,6 +198,13 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		cs.last_perf_log_ns = now_ns;
 	}
 
+	/* Signal-Lost v2 axis A: ManualOnly suppresses ALL automatic recovery
+	 * (Opening-phase media_restart and Lost-phase restart/recreate). The cell
+	 * still detects + shows the loss; recovery happens only via the manual
+	 * Reconnect/Replay menu (reconnect_cell). For NDI/Spout this is moot
+	 * (they never auto-restart anyway). */
+	const bool manual_only = cs.effective_lost.recoveryPolicy == RecoveryPolicy::ManualOnly;
+
 	switch (report.code) {
 	case ISignalProvider::HealthCode::Active:
 		/* Source is producing frames. Clear all the recovery
@@ -255,7 +262,8 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		 * kMediaRestartCooldownNs. Internally this calls
 		 * obs_source_media_restart, which ffmpeg_source/vlc_source
 		 * handle on their own worker thread. */
-		if (opening_for >= effGraceNs && provider->supports_media_restart() && now_ns >= cs.next_retry_ns) {
+		if (!manual_only && opening_for >= effGraceNs && provider->supports_media_restart() &&
+		    now_ns >= cs.next_retry_ns) {
 			obs_source_media_restart(raw);
 			cs.media_restart_attempts++;
 			cs.next_retry_ns = now_ns + kMediaRestartCooldownNs;
@@ -298,6 +306,11 @@ AmvInstanceCore::SignalRuntimeState AmvInstanceCore::tick_external_cell_health(i
 		 * plugin reconnects internally; we just keep painting SIGNAL
 		 * LOST until the source comes back. */
 		if (!recreate_eligible && !restart_eligible)
+			return SignalRuntimeState::Lost;
+
+		/* Signal-Lost v2 axis A: ManualOnly — detect + show the loss but
+		 * do not auto-recover. Stay Lost until the user hits Reconnect Now. */
+		if (manual_only)
 			return SignalRuntimeState::Lost;
 
 		/* Signal-Lost v2: laddered backoff (5/10/15/20/30s, hold 30s),

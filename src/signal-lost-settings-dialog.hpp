@@ -83,6 +83,9 @@ private:
 	QLineEdit *edit_signal_lost_path_ = nullptr;
 	QComboBox *cmb_signal_lost_fit_ = nullptr;
 
+	/* Signal-Lost v2 axis A: recovery policy (auto-reconnect / manual-only). */
+	QComboBox *cmb_recovery_policy_ = nullptr;
+
 	/* Fallback assignment */
 	QComboBox *cmb_fallback_type_ = nullptr;
 	QLineEdit *edit_fallback_name_ = nullptr;
