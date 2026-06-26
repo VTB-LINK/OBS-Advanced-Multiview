@@ -120,7 +120,25 @@ gersemi --check <changed CMake files>                 # CMake;若改了 CMakeLis
 
 ---
 
-## 7. 仓库速览
+## 7. 拆分文件(大文件按职责拆翻译单元)
+
+本仓库的明确约定:**一个类/模块,头文件声明一处,实现按职责拆成多个 `.cpp`**。文件长到难一眼读完
+(几百行、多个不相关关注点)就拆,别让单文件无限膨胀。
+
+- **命名**:`<base>-<aspect>.cpp`。同一个类的方法按关注点分组到不同 TU:
+  - `amv-instance-core.hpp`(类声明一处)→ `amv-instance-core.cpp` + `-draw` / `-sources` / `-health` /
+    `-status` / `-label` / `-vu` / `-lost-image` / `-image` / `-safe-area` / `-highlight`(同一个 `AmvInstanceCore`
+    的不同方法组)。
+  - 序列化按域拆:`multiview-instance-serialize.hpp`(enum↔string)+ `-serialize-signal.cpp` / `-serialize-visual.cpp`。
+  - UI 按区拆:`multiview-window.cpp` + `multiview-window-context-menu.cpp`。
+  - provider 表单一家一个:`provider-settings-forms-{common,ffmpeg,ndi,spout,vlc}.{hpp,cpp}`。
+- **类/结构定义只在 `.hpp` 一份**;各 `-aspect.cpp` 只实现它的一部分方法,共享同一头。**不要**把声明复制进多个文件。
+- **新增 `.cpp` 必须加进 `CMakeLists.txt`** 的 target 源列表,否则不参与编译。
+- **纯拆分(只搬不改)**时逐字搬运、不顺手改行为;在文件头注释里写明出处与"verbatim moved"
+  (参考既有 `amv-instance-core-sources.cpp` / `-draw.cpp` 顶部注释),便于审阅 diff。
+- 拆完照 §3 跑 clang check → build Debug+Rel → deploy 验证未破坏链接/行为。
+
+## 8. 仓库速览
 
 - `src/` —— 核心源码。命名约定:`amv-instance-core-*.cpp`(每实例核心:`-draw` 渲染、`-sources` 源解析/refresh、
   `-health` 外部源监督器、`-status`/`-label`/`-vu`/`-lost-image` 各叠加层);`signal-provider-*.cpp`(ffmpeg/ndi/
