@@ -982,9 +982,14 @@ bool AmvInstanceCore::force_reconnect_cell(int cellIndex)
 	 * and fires immediately — the user shouldn't wait out the supervisor's
 	 * (up to 30s) cooldown when they know the signal is back. Reset the
 	 * ladder index + clear the supervisor's next-attempt gate so the next
-	 * health tick (if this manual attempt also fails) starts again at 5s. */
+	 * health tick (if this manual attempt also fails) starts again at 5s.
+	 * Also clear lost_since_ns: the Lost branch's initial-wait gate is
+	 * `lost_for < cooldown`, so without re-stamping the loss time the first
+	 * 5s rung would be skipped (lost_for is already large) and the supervisor
+	 * would restart on the very next ~1s tick. */
 	cs.recovery_attempt = 0;
 	cs.next_retry_ns = 0;
+	cs.lost_since_ns = 0;
 
 	/* Phase 3 hardening tail: manual Reconnect Now mirrors the supervisor
 	 * Lost-branch logic (capability-driven, no per-provider branches).

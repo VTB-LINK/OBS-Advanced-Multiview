@@ -35,8 +35,22 @@ License: GPL-2.0-or-later
 
 void derive_legacy_lost_fields(LostSignalSettings &s)
 {
+	/* Hardening: a "Fallback" display with no usable target (empty
+	 * fallbackType, or an image fallback with no path) would derive a
+	 * contradictory legacy state (e.g. RetryWithFallback with nothing to
+	 * show). The dialog never produces this, but a hand-edited / migrated
+	 * config could — so treat an unusable fallback as Black for derivation.
+	 * s.displayContent itself is left intact (the user's choice persists). */
+	const bool fallback_usable = s.displayContent == LostDisplayContent::Fallback &&
+				     (s.fallbackType == "pgm" || s.fallbackType == "prvw" ||
+				      s.fallbackType == "scene" || s.fallbackType == "source" ||
+				      (s.fallbackType == "image" && !s.fallbackName.empty()));
+	const LostDisplayContent effContent = (s.displayContent == LostDisplayContent::Fallback && !fallback_usable)
+						      ? LostDisplayContent::Black
+						      : s.displayContent;
+
 	/* INTERNAL render path (internalMissingBehavior + placeholder image). */
-	switch (s.displayContent) {
+	switch (effContent) {
 	case LostDisplayContent::ClearCell:
 		s.internalMissingBehavior = InternalMissingBehavior::ClearCell;
 		break;
@@ -61,7 +75,7 @@ void derive_legacy_lost_fields(LostSignalSettings &s)
 	}
 
 	/* EXTERNAL render path (externalLostBehavior + signal-lost image). */
-	switch (s.displayContent) {
+	switch (effContent) {
 	case LostDisplayContent::Fallback:
 		if (s.fallbackType == "image") {
 			s.externalLostBehavior = ExternalLostBehavior::SignalLostImage;
@@ -103,11 +117,17 @@ void migrate_lost_settings_v1_to_v2(LostSignalSettings &s)
 			s.statusBand = LostStatusBand::Auto;
 			break;
 		case ExternalLostBehavior::SignalLostImage:
-			s.displayContent = LostDisplayContent::Fallback;
-			s.statusBand = LostStatusBand::Auto;
-			s.fallbackType = "image";
-			s.fallbackName = s.signalLostImagePath;
-			s.fallbackImageFitMode = s.signalLostImageFitMode;
+			if (s.signalLostImagePath.empty()) {
+				/* "Show signal-lost image" but no path ever set -> Black. */
+				s.displayContent = LostDisplayContent::Black;
+				s.statusBand = LostStatusBand::Auto;
+			} else {
+				s.displayContent = LostDisplayContent::Fallback;
+				s.statusBand = LostStatusBand::Auto;
+				s.fallbackType = "image";
+				s.fallbackName = s.signalLostImagePath;
+				s.fallbackImageFitMode = s.signalLostImageFitMode;
+			}
 			break;
 		default:
 			break;
@@ -115,11 +135,17 @@ void migrate_lost_settings_v1_to_v2(LostSignalSettings &s)
 	} else {
 		switch (s.internalMissingBehavior) {
 		case InternalMissingBehavior::PlaceholderImage:
-			s.displayContent = LostDisplayContent::Fallback;
-			s.statusBand = LostStatusBand::Auto;
-			s.fallbackType = "image";
-			s.fallbackName = s.placeholderImagePath;
-			s.fallbackImageFitMode = s.placeholderImageFitMode;
+			if (s.placeholderImagePath.empty()) {
+				/* "Placeholder image" but no path ever set -> Black. */
+				s.displayContent = LostDisplayContent::Black;
+				s.statusBand = LostStatusBand::Auto;
+			} else {
+				s.displayContent = LostDisplayContent::Fallback;
+				s.statusBand = LostStatusBand::Auto;
+				s.fallbackType = "image";
+				s.fallbackName = s.placeholderImagePath;
+				s.fallbackImageFitMode = s.placeholderImageFitMode;
+			}
 			break;
 		case InternalMissingBehavior::ClearCell:
 			s.displayContent = LostDisplayContent::ClearCell;
@@ -135,6 +161,11 @@ void migrate_lost_settings_v1_to_v2(LostSignalSettings &s)
 			break;
 		}
 	}
+
+	/* Defense in depth: migration may have copied a legacy image path into
+	 * fallbackName after the from_obs_data clamp ran, so clamp again. */
+	if (s.fallbackName.size() > 4096)
+		s.fallbackName.resize(4096);
 }
 
 obs_data_t *LostSignalSettings::to_obs_data() const
