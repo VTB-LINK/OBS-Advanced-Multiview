@@ -518,6 +518,28 @@ OverlaySettings OverlaySettings::from_obs_data(obs_data_t *data)
 	return s;
 }
 
+/* ========== MirrorSettings ========== */
+
+obs_data_t *MirrorSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_bool(data, "horizontal", horizontal);
+	obs_data_set_bool(data, "vertical", vertical);
+	return data;
+}
+
+MirrorSettings MirrorSettings::from_obs_data(obs_data_t *data)
+{
+	MirrorSettings s;
+	if (!data)
+		return s;
+	/* Missing keys default to false so pre-feature configs load as "no
+	 * mirror" (byte-identical render to before this feature). */
+	s.horizontal = obs_data_get_bool(data, "horizontal");
+	s.vertical = obs_data_get_bool(data, "vertical");
+	return s;
+}
+
 /* ========== HighlightSettings ========== */
 
 obs_data_t *HighlightSettings::to_obs_data() const
@@ -641,6 +663,10 @@ obs_data_t *GlobalVisualSettings::to_obs_data() const
 	obs_data_set_obj(data, "highlight", hl);
 	obs_data_release(hl);
 
+	obs_data_t *mir = mirror.to_obs_data();
+	obs_data_set_obj(data, "mirror", mir);
+	obs_data_release(mir);
+
 	return data;
 }
 
@@ -680,6 +706,11 @@ GlobalVisualSettings GlobalVisualSettings::from_obs_data(obs_data_t *data)
 	if (hl)
 		obs_data_release(hl);
 
+	obs_data_t *mir = obs_data_get_obj(data, "mirror");
+	vs.mirror = MirrorSettings::from_obs_data(mir);
+	if (mir)
+		obs_data_release(mir);
+
 	return vs;
 }
 
@@ -718,6 +749,11 @@ obs_data_t *InstanceVisualSettings::to_obs_data() const
 	obs_data_t *hl = highlight.to_obs_data();
 	obs_data_set_obj(data, "highlight", hl);
 	obs_data_release(hl);
+
+	obs_data_set_string(data, "mirrorMode", inheritance_mode_to_str(mirrorMode));
+	obs_data_t *mir = mirror.to_obs_data();
+	obs_data_set_obj(data, "mirror", mir);
+	obs_data_release(mir);
 
 	return data;
 }
@@ -764,6 +800,12 @@ InstanceVisualSettings InstanceVisualSettings::from_obs_data(obs_data_t *data)
 	if (hl)
 		obs_data_release(hl);
 
+	vs.mirrorMode = inheritance_mode_from_str(obs_data_get_string(data, "mirrorMode"));
+	obs_data_t *mir = obs_data_get_obj(data, "mirror");
+	vs.mirror = MirrorSettings::from_obs_data(mir);
+	if (mir)
+		obs_data_release(mir);
+
 	return vs;
 }
 
@@ -799,6 +841,11 @@ obs_data_t *CellVisualSettings::to_obs_data() const
 	obs_data_t *ov = overlay.to_obs_data();
 	obs_data_set_obj(data, "overlay", ov);
 	obs_data_release(ov);
+
+	obs_data_set_string(data, "mirrorMode", inheritance_mode_to_str(mirrorMode));
+	obs_data_t *mir = mirror.to_obs_data();
+	obs_data_set_obj(data, "mirror", mir);
+	obs_data_release(mir);
 
 	return data;
 }
@@ -841,6 +888,12 @@ CellVisualSettings CellVisualSettings::from_obs_data(obs_data_t *data)
 	vs.overlay = OverlaySettings::from_obs_data(ov);
 	if (ov)
 		obs_data_release(ov);
+
+	vs.mirrorMode = inheritance_mode_from_str(obs_data_get_string(data, "mirrorMode"));
+	obs_data_t *mir = obs_data_get_obj(data, "mirror");
+	vs.mirror = MirrorSettings::from_obs_data(mir);
+	if (mir)
+		obs_data_release(mir);
 
 	return vs;
 }
@@ -892,6 +945,14 @@ EffectiveCellVisualSettings resolve_effective_visual_settings(const GlobalVisual
 		eff.overlay = instance.overlay;
 	else
 		eff.overlay = global.overlay;
+
+	/* Mirror — same 3-level chain as the other per-cell groups. */
+	if (cell && cell->mirrorMode == InheritanceMode::Override)
+		eff.mirror = cell->mirror;
+	else if (instance.mirrorMode == InheritanceMode::Override)
+		eff.mirror = instance.mirror;
+	else
+		eff.mirror = global.mirror;
 
 	/* Highlight
 	 *

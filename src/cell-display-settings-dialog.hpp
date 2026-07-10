@@ -67,6 +67,7 @@ private:
 	QGroupBox *create_vu_meter_group();
 	QGroupBox *create_overlay_group();
 	QGroupBox *create_highlight_group();
+	QGroupBox *create_mirror_group();
 	void update_inheritance_visibility();
 	void update_label_control_states();
 	void update_vu_meter_control_states();
@@ -84,6 +85,7 @@ private:
 	QComboBox *cmb_vu_meter_inherit_ = nullptr;
 	QComboBox *cmb_overlay_inherit_ = nullptr;
 	QComboBox *cmb_highlight_inherit_ = nullptr;
+	QComboBox *cmb_mirror_inherit_ = nullptr;
 
 	/* Background group */
 	QGroupBox *grp_background_ = nullptr;
@@ -168,6 +170,11 @@ private:
 	QSpinBox *spin_highlight_dash_length_ = nullptr;
 	QSpinBox *spin_highlight_dash_gap_ = nullptr;
 	QSpinBox *spin_highlight_min_thickness_ = nullptr;
+
+	/* Mirror group (per-cell flip of the signal video) */
+	QGroupBox *grp_mirror_ = nullptr;
+	QCheckBox *chk_mirror_h_ = nullptr;
+	QCheckBox *chk_mirror_v_ = nullptr;
 
 	/* Copy/Paste/Reset */
 	static QByteArray s_clipboard_; /* shared clipboard for copy/paste */

@@ -178,6 +178,19 @@ struct OverlaySettings {
 	static OverlaySettings from_obs_data(obs_data_t *data);
 };
 
+/* Per-cell mirror (flip) of the signal video only. Applied at render time by
+ * swapping the gs_ortho extents in the video-rect region (pure GPU projection
+ * flip — no matrix/texture state, no source mutation, no locks). Labels / VU /
+ * overlay / safe-area / highlight intentionally stay unmirrored so text and
+ * indicators remain readable. Both default false (== pre-feature behavior). */
+struct MirrorSettings {
+	bool horizontal = false; /* flip left<->right */
+	bool vertical = false;   /* flip top<->bottom */
+
+	obs_data_t *to_obs_data() const;
+	static MirrorSettings from_obs_data(obs_data_t *data);
+};
+
 /* ========== Signal Lost / Missing Behavior (Phase 3 / M5) ==========
  *
  * Behavior selected when a cell's primary signal is unavailable. Two
@@ -332,6 +345,7 @@ struct GlobalVisualSettings {
 	VuMeterSettings vuMeter;
 	OverlaySettings overlay;
 	HighlightSettings highlight;
+	MirrorSettings mirror;
 
 	obs_data_t *to_obs_data() const;
 	static GlobalVisualSettings from_obs_data(obs_data_t *data);
@@ -350,6 +364,8 @@ struct InstanceVisualSettings {
 	OverlaySettings overlay;
 	InheritanceMode highlightMode = InheritanceMode::Inherit;
 	HighlightSettings highlight;
+	InheritanceMode mirrorMode = InheritanceMode::Inherit;
+	MirrorSettings mirror;
 
 	obs_data_t *to_obs_data() const;
 	static InstanceVisualSettings from_obs_data(obs_data_t *data);
@@ -368,6 +384,8 @@ struct CellVisualSettings {
 	VuMeterSettings vuMeter;
 	InheritanceMode overlayMode = InheritanceMode::Inherit;
 	OverlaySettings overlay;
+	InheritanceMode mirrorMode = InheritanceMode::Inherit;
+	MirrorSettings mirror;
 
 	obs_data_t *to_obs_data() const;
 	static CellVisualSettings from_obs_data(obs_data_t *data);
@@ -380,6 +398,7 @@ struct EffectiveCellVisualSettings {
 	VuMeterSettings vuMeter;
 	OverlaySettings overlay;
 	HighlightSettings highlight; /* always resolved from instance/global (no per-cell) */
+	MirrorSettings mirror;
 };
 
 /* Resolve effective visual settings via group-level inheritance chain:

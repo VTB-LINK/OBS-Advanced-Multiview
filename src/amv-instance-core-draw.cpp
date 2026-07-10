@@ -788,8 +788,29 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 				}
 			}
 
-			/* Render into video rect */
-			startRegion(vrX, vrY, vrW, vrH, 0.0f, (float)srcW, 0.0f, (float)srcH);
+			/* Render into video rect.
+			 *
+			 * Per-cell mirror = swap the gs_ortho extents so the
+			 * projection X (horizontal) / Y (vertical) axis inverts
+			 * within this region. Pure GPU projection flip: no matrix
+			 * or texture state, no source mutation, no locks — the
+			 * flipped image occupies the SAME screen rect (vrX/vrY/
+			 * vrW/vrH), just addressed in reverse. Reversed triangle
+			 * winding is harmless because OBS forces GS_NEITHER cull
+			 * mode on every render path. PGM (obs_render_main_texture)
+			 * and normal sources both render into the current
+			 * projection, so both flip identically. Mirrors only the
+			 * signal video; labels / overlay / VU / safe-area open
+			 * their own unmirrored regions and stay readable. */
+			const bool mirrorH = i < (int)effective_visuals_.size() &&
+					     effective_visuals_[i].mirror.horizontal;
+			const bool mirrorV = i < (int)effective_visuals_.size() &&
+					     effective_visuals_[i].mirror.vertical;
+			const float oL = mirrorH ? (float)srcW : 0.0f;
+			const float oR = mirrorH ? 0.0f : (float)srcW;
+			const float oT = mirrorV ? (float)srcH : 0.0f;
+			const float oB = mirrorV ? 0.0f : (float)srcH;
+			startRegion(vrX, vrY, vrW, vrH, oL, oR, oT, oB);
 			if (isPgm) {
 				obs_render_main_texture();
 			} else if (src && !obs_source_removed(src)) {

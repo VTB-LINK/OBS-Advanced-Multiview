@@ -93,6 +93,9 @@ private:
 	void on_add_source(int cellIndex);
 	void on_change_source(int cellIndex);
 	void on_clear_cell(int cellIndex);
+	/* Context-menu quick toggle: flip one axis of a cell's signal mirror,
+	 * pinning that cell's visual settings to Override. */
+	void toggle_cell_mirror(int row, int col, bool horizontal);
 	OBSSourceAutoRelease resolve_scene_cell_source_for_switch(int cellIndex);
 	void handle_scene_click_switch(int cellIndex);
 	void handle_scene_program_switch(int cellIndex);

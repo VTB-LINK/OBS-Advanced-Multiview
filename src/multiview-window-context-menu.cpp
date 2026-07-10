@@ -311,6 +311,46 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			}
 		});
 
+		/* Mirror (per-cell flip of the signal video). Quick toggle whose
+		 * check state reflects the cell's CURRENT EFFECTIVE mirror; clicking
+		 * flips one axis and pins the cell to Override so the choice sticks
+		 * (the full inheritance UI lives in Cell Display Settings). Matches
+		 * OBS-native per-source Flip Horizontal / Flip Vertical semantics —
+		 * it acts on the hovered cell, not the whole instance. */
+		{
+			MultiviewInstance *mirInst = config_->find_instance(uuid_);
+			if (mirInst) {
+				LayoutEngine tmpEngine;
+				tmpEngine.set_layout(mirInst->layout);
+				tmpEngine.set_viewport(100, 100);
+				tmpEngine.compute();
+				const auto &cells = tmpEngine.cells();
+				if (cellIndex < (int)cells.size()) {
+					const int row = cells[cellIndex].gridRow;
+					const int col = cells[cellIndex].gridCol;
+					const CellVisualSettings *cvs = mirInst->find_cell_visual(row, col);
+					const MirrorSettings curMirror =
+						resolve_effective_visual_settings(
+							config_->global_settings().visualSettings,
+							mirInst->visualSettings, cvs)
+							.mirror;
+
+					QMenu *mirrorMenu = menu.addMenu(amv::text("AMVPlugin.Visual.Mirror.Title"));
+					auto add_flip = [this, mirrorMenu, row, col](const char *labelKey,
+										     bool horizontal, bool checked) {
+						QAction *a = mirrorMenu->addAction(amv::text(labelKey));
+						a->setCheckable(true);
+						a->setChecked(checked);
+						connect(a, &QAction::triggered, this, [this, row, col, horizontal]() {
+							toggle_cell_mirror(row, col, horizontal);
+						});
+					};
+					add_flip("AMVPlugin.Visual.Mirror.Horizontal", true, curMirror.horizontal);
+					add_flip("AMVPlugin.Visual.Mirror.Vertical", false, curMirror.vertical);
+				}
+			}
+		}
+
 		/* Phase 3 / M5.2: Cell-scoped Signal Lost Settings entry. Kept as a
 		 * separate dialog from Cell Display Settings to honor the design
 		 * doc §9 split between visual config and runtime/strategy config. */
@@ -721,6 +761,46 @@ void MultiviewWindow::on_clear_cell(int cellIndex)
 	 * private source is released, the rest of the window untouched. */
 	if (!refresh_cell(r, c))
 		refresh_sources();
+}
+
+void MultiviewWindow::toggle_cell_mirror(int row, int col, bool horizontal)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	/* Resolve the current effective mirror so flipping one axis preserves
+	 * the other and the check state matches what the user sees. */
+	const CellVisualSettings *existing = inst->find_cell_visual(row, col);
+	MirrorSettings next = resolve_effective_visual_settings(config_->global_settings().visualSettings,
+								inst->visualSettings, existing)
+				      .mirror;
+	if (horizontal)
+		next.horizontal = !next.horizontal;
+	else
+		next.vertical = !next.vertical;
+
+	/* Write a cell-scoped Override (create the entry if this cell had none). */
+	bool found = false;
+	for (auto &c : inst->cellVisualSettings) {
+		if (c.row == row && c.col == col) {
+			c.mirror = next;
+			c.mirrorMode = InheritanceMode::Override;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		CellVisualSettings cvs;
+		cvs.row = row;
+		cvs.col = col;
+		cvs.mirror = next;
+		cvs.mirrorMode = InheritanceMode::Override;
+		inst->cellVisualSettings.push_back(cvs);
+	}
+
+	config_->save();
+	refresh_visual_settings();
 }
 
 void MultiviewWindow::on_save_assignments()

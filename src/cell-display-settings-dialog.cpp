@@ -299,6 +299,7 @@ void CellDisplaySettingsDialog::setup_ui()
 	scrollLayout->addWidget(create_vu_meter_group());
 	scrollLayout->addWidget(create_overlay_group());
 	scrollLayout->addWidget(create_highlight_group());
+	scrollLayout->addWidget(create_mirror_group());
 	scrollLayout->addStretch();
 
 	scrollArea->setWidget(scrollWidget);
@@ -935,6 +936,44 @@ QGroupBox *CellDisplaySettingsDialog::create_highlight_group()
 	return grp_highlight_;
 }
 
+/* ---- Mirror Group (per-cell flip of the signal video) ----
+ *
+ * Two independent checkboxes (horizontal / vertical). Mirrors only the signal
+ * video at render time; labels / overlay / VU / safe-area stay unmirrored.
+ * Follows the same optional-inheritance-combo layout as the other groups. */
+QGroupBox *CellDisplaySettingsDialog::create_mirror_group()
+{
+	grp_mirror_ = new QGroupBox(amv::text("AMVPlugin.Visual.Mirror.Title"), this);
+	auto *layout = new QVBoxLayout(grp_mirror_);
+
+	if (mode_ != Mode::Global) {
+		auto *inh_row = new QHBoxLayout();
+		inh_row->addWidget(new QLabel(amv::text("AMVPlugin.Visual.Inheritance"), grp_mirror_));
+		cmb_mirror_inherit_ = create_inherit_combo(grp_mirror_);
+		inh_row->addWidget(cmb_mirror_inherit_);
+		inh_row->addStretch();
+		layout->addLayout(inh_row);
+		connect(cmb_mirror_inherit_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+			update_inheritance_visibility();
+			dirty_ = true;
+			emit settings_changed();
+		});
+	}
+
+	auto *flipForm = add_subzone(layout, grp_mirror_, amv::text("AMVPlugin.Visual.Common.Visibility"));
+
+	chk_mirror_h_ = new QCheckBox(grp_mirror_);
+	flipForm->addRow(amv::text("AMVPlugin.Visual.Mirror.Horizontal"), chk_mirror_h_);
+
+	chk_mirror_v_ = new QCheckBox(grp_mirror_);
+	flipForm->addRow(amv::text("AMVPlugin.Visual.Mirror.Vertical"), chk_mirror_v_);
+
+	HOOK_CHECK(chk_mirror_h_);
+	HOOK_CHECK(chk_mirror_v_);
+
+	return grp_mirror_;
+}
+
 /* ---- Inheritance visibility ---- */
 
 void CellDisplaySettingsDialog::update_inheritance_visibility()
@@ -973,6 +1012,7 @@ void CellDisplaySettingsDialog::update_inheritance_visibility()
 	toggle_group(grp_vu_meter_, cmb_vu_meter_inherit_);
 	toggle_group(grp_overlay_, cmb_overlay_inherit_);
 	toggle_group(grp_highlight_, cmb_highlight_inherit_);
+	toggle_group(grp_mirror_, cmb_mirror_inherit_);
 
 	/* Cell scope: highlight has no per-cell override at all, so force-disable
 	 * the entire group regardless of any inheritance combo state. The note
@@ -1119,6 +1159,10 @@ void CellDisplaySettingsDialog::set_global_settings(const GlobalVisualSettings &
 	spin_highlight_dash_gap_->setValue(gs.highlight.dashGapPx);
 	spin_highlight_min_thickness_->setValue(gs.highlight.minThicknessPx);
 
+	/* Mirror */
+	chk_mirror_h_->setChecked(gs.mirror.horizontal);
+	chk_mirror_v_->setChecked(gs.mirror.vertical);
+
 	dirty_ = false;
 }
 
@@ -1196,6 +1240,10 @@ GlobalVisualSettings CellDisplaySettingsDialog::get_global_settings() const
 	gs.highlight.dashLengthPx = spin_highlight_dash_length_->value();
 	gs.highlight.dashGapPx = spin_highlight_dash_gap_->value();
 	gs.highlight.minThicknessPx = spin_highlight_min_thickness_->value();
+
+	/* Mirror */
+	gs.mirror.horizontal = chk_mirror_h_->isChecked();
+	gs.mirror.vertical = chk_mirror_v_->isChecked();
 
 	return gs;
 }
@@ -1292,6 +1340,12 @@ void CellDisplaySettingsDialog::set_instance_settings(const InstanceVisualSettin
 	spin_highlight_dash_gap_->setValue(is.highlight.dashGapPx);
 	spin_highlight_min_thickness_->setValue(is.highlight.minThicknessPx);
 
+	/* Mirror */
+	if (cmb_mirror_inherit_)
+		set_inherit_combo(cmb_mirror_inherit_, is.mirrorMode);
+	chk_mirror_h_->setChecked(is.mirror.horizontal);
+	chk_mirror_v_->setChecked(is.mirror.vertical);
+
 	update_inheritance_visibility();
 	dirty_ = false;
 }
@@ -1384,6 +1438,12 @@ InstanceVisualSettings CellDisplaySettingsDialog::get_instance_settings() const
 	is.highlight.dashGapPx = spin_highlight_dash_gap_->value();
 	is.highlight.minThicknessPx = spin_highlight_min_thickness_->value();
 
+	/* Mirror */
+	if (cmb_mirror_inherit_)
+		is.mirrorMode = get_inherit_combo(cmb_mirror_inherit_);
+	is.mirror.horizontal = chk_mirror_h_->isChecked();
+	is.mirror.vertical = chk_mirror_v_->isChecked();
+
 	return is;
 }
 
@@ -1401,6 +1461,8 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 		set_inherit_combo(cmb_vu_meter_inherit_, cs.vuMeterMode);
 	if (cmb_overlay_inherit_)
 		set_inherit_combo(cmb_overlay_inherit_, cs.overlayMode);
+	if (cmb_mirror_inherit_)
+		set_inherit_combo(cmb_mirror_inherit_, cs.mirrorMode);
 
 	/* Populate editors with cell values */
 	chk_bg_color_enabled_->setChecked(cs.background.colorEnabled);
@@ -1482,6 +1544,10 @@ void CellDisplaySettingsDialog::set_cell_settings(const CellVisualSettings &cs)
 		spin_highlight_min_thickness_->setValue(hd.minThicknessPx);
 	}
 
+	/* Mirror */
+	chk_mirror_h_->setChecked(cs.mirror.horizontal);
+	chk_mirror_v_->setChecked(cs.mirror.vertical);
+
 	update_inheritance_visibility();
 	dirty_ = false;
 }
@@ -1502,6 +1568,8 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 		cs.vuMeterMode = get_inherit_combo(cmb_vu_meter_inherit_);
 	if (cmb_overlay_inherit_)
 		cs.overlayMode = get_inherit_combo(cmb_overlay_inherit_);
+	if (cmb_mirror_inherit_)
+		cs.mirrorMode = get_inherit_combo(cmb_mirror_inherit_);
 
 	/* Background */
 	cs.background.colorEnabled = chk_bg_color_enabled_->isChecked();
@@ -1564,6 +1632,10 @@ CellVisualSettings CellDisplaySettingsDialog::get_cell_settings() const
 	cs.overlay.opacity = spin_overlay_opacity_->value();
 	cs.overlay.fitMode = (OverlayFitMode)cmb_overlay_fit_->currentIndex();
 	cs.overlay.anchorMode = (OverlayAnchorMode)cmb_overlay_anchor_->currentIndex();
+
+	/* Mirror */
+	cs.mirror.horizontal = chk_mirror_h_->isChecked();
+	cs.mirror.vertical = chk_mirror_v_->isChecked();
 
 	return cs;
 }
