@@ -177,6 +177,14 @@ MISSING SOURCE 兜底分支。纯靠瀑布,且天然不递归 fallback。
 2. `src/amv-instance-core.hpp` —— CellSource 新增 4 字段;如需主线程 tick 取 deferred showing,声明对应 pending 标志。
 3. `src/amv-instance-core-draw.cpp` —— fallback 解析块改缓存解析 + `OBSGetStrongRef` 守卫;FallbackActive 边沿检测置 deferred showing flag;prvw 纳入统一渲染前守卫。
 4. `src/amv-instance-core-sources.cpp` —— `on_source_being_removed` 加 fallback 命中分支;`update_source_refs` / `update_source_refs_lazy` / `refresh_cell` 解析并缓存 fallback weak_ref;`release_source_refs` 锁外 dec fallback showing;主线程 tick 执行 deferred inc/dec_showing;(可选)`on_source_just_created` 重绑 fallback。
+
+   > **文件位置更新(本设计落地之后的重构)**:`refactor: split OBS source-signal bridge` 已把
+   > `on_source_being_removed` / `on_source_just_created` / `update_source_refs_lazy` /
+   > `refresh_sources_lazy` / `reconcile_fallback_showing` **逐字搬到**
+   > `src/amv-instance-core-source-signals.cpp`(行为未变)。上面第 4 条里属于这几个方法的改动,
+   > 现在请到该文件查看;其余(`update_source_refs` / `refresh_cell` / `release_source_refs`)
+   > 仍在 `amv-instance-core-sources.cpp`。
+
 5. `src/amv-instance-core-status.cpp` —— 映射已就绪,通常无需改;确认 FallbackActive 角标在 fallback 命中时正确显示。
 
 ## 11. 验证(端到端)

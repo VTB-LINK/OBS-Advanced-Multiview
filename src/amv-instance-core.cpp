@@ -3,8 +3,10 @@ OBS Advanced Multiview - per-instance render/state core (issue #10)
 
 Construction / destruction. The bulk of the logic lives in the sibling
 translation units: source resolution / refresh / tick / output dispatch in
-amv-instance-core-sources.cpp, the grid composition in
-amv-instance-core-draw.cpp, and the per-feature render helpers in
+amv-instance-core-sources.cpp, the OBS source-list signal bridge and the
+deferred fallback-showing reconcile in amv-instance-core-source-signals.cpp,
+the grid composition in amv-instance-core-draw.cpp, and the per-feature render
+helpers in
 amv-instance-core-{vu,label,image,safe-area,highlight,status,health,lost-image}.cpp.
 
 Copyright (C) 2025 VTB-LINK
