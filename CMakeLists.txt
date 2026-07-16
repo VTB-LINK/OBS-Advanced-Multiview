@@ -65,6 +65,7 @@ target_sources(
     src/amv-instance-core.hpp
     src/amv-instance-core.cpp
     src/amv-instance-core-sources.cpp
+    src/amv-instance-core-source-signals.cpp
     src/amv-instance-core-draw.cpp
     src/amv-instance-core-vu.cpp
     src/amv-instance-core-label.cpp
