@@ -253,6 +253,19 @@ jobs:
     name: Build for Windows 🪟
     runs-on: windows-2022
     needs: check-event
+    # ==== TEMPORARY DIAGNOSTIC - REVERT ME ====
+    # The Windows runner fails CMake's obs-deps download with curl error 35
+    # ("SSL connect error" = TLS handshake failure), while the macOS and Ubuntu
+    # runners fetch from the same obsproject/obs-deps release without trouble.
+    # Strictly, TLS_VERIFY=0 targets curl error 60 (certificate verification),
+    # not 35 - but Windows' schannel backend can surface certificate problems
+    # as handshake errors, so this tests that hypothesis.
+    # Integrity is NOT weakened: _check_dependencies (cmake/common/
+    # buildspec_common.cmake) downloads with EXPECTED_HASH SHA256=..., so a
+    # tampered archive still fails the pinned-hash check regardless of TLS.
+    # Remove this block once the runner's TLS issue is resolved.
+    env:
+      CMAKE_TLS_VERIFY: 0
     defaults:
       run:
         shell: pwsh
