@@ -521,13 +521,13 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	auto *grid_ctrl_row = new QHBoxLayout();
 	grid_ctrl_row->addWidget(new QLabel(amv::text("AMVPlugin.Manager.Grid.Rows"), page_instance_));
 	grid_rows_spin_ = new QSpinBox(page_instance_);
-	grid_rows_spin_->setRange(1, 10);
+	grid_rows_spin_->setRange(1, 20);
 	grid_rows_spin_->setMinimumWidth(60);
 	grid_ctrl_row->addWidget(grid_rows_spin_);
 
 	grid_ctrl_row->addWidget(new QLabel(amv::text("AMVPlugin.Manager.Grid.Cols"), page_instance_));
 	grid_cols_spin_ = new QSpinBox(page_instance_);
-	grid_cols_spin_->setRange(1, 10);
+	grid_cols_spin_->setRange(1, 20);
 	grid_cols_spin_->setMinimumWidth(60);
 	grid_ctrl_row->addWidget(grid_cols_spin_);
 

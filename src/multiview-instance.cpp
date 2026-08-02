@@ -89,12 +89,12 @@ LayoutData LayoutData::from_obs_data(obs_data_t *data)
 
 	if (ld.rows < 1)
 		ld.rows = 4;
-	if (ld.rows > 10)
-		ld.rows = 10;
+	if (ld.rows > 20)
+		ld.rows = 20;
 	if (ld.columns < 1)
 		ld.columns = 4;
-	if (ld.columns > 10)
-		ld.columns = 10;
+	if (ld.columns > 20)
+		ld.columns = 20;
 	if (ld.gutterPx < 0)
 		ld.gutterPx = 0;
 	if (ld.gutterPx > 50)
