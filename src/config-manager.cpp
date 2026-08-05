@@ -25,6 +25,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <plugin-support.h>
 
+#include <QUuid>
+
 #include <algorithm>
 #include <cstdio>
 
@@ -73,10 +75,14 @@ ConfigManager::~ConfigManager() = default;
 
 /* ---- file path ---- */
 
+std::string ConfigManager::config_file_path_for(const std::string &collection) const
+{
+	return config_dir_ + "settings-" + sanitize_filename(collection) + ".json";
+}
+
 std::string ConfigManager::get_config_file_path() const
 {
-	std::string safe = sanitize_filename(current_collection_);
-	return config_dir_ + "settings-" + safe + ".json";
+	return config_file_path_for(current_collection_);
 }
 
 /* ---- load ---- */
@@ -225,20 +231,163 @@ bool ConfigManager::save_to_file(const std::string &path)
 
 /* ---- scene collection change ---- */
 
-void ConfigManager::on_scene_collection_changed()
+void ConfigManager::refresh_known_collections()
 {
+	known_collections_.clear();
+	char **list = obs_frontend_get_scene_collections();
+	if (!list)
+		return;
+	for (char **p = list; *p; p++)
+		known_collections_.insert(*p);
+	/* Single allocation (convert_string_list): one bfree frees the whole list. */
+	bfree(list);
+}
+
+bool ConfigManager::collection_shares_content(const std::vector<MultiviewInstance> &instances)
+{
+	/* True if the just-entered collection shares content with these instances,
+	 * i.e. it is a duplicate (or close enough that copying makes sense) rather
+	 * than an unrelated / empty new collection.
+	 *
+	 * Requiring at least ONE referenced scene/source to resolve by name is
+	 * deliberately lenient: a real duplicate shares all names, a brand-new empty
+	 * collection (only the default "Scene") shares none, and a large/complex
+	 * collection still qualifies even if a stray cell references something that
+	 * no longer resolves. pgm/prvw/external cells carry no collection-scene name;
+	 * an all-external setup (no internal refs to check) is treated as
+	 * compatible. */
+	bool has_internal_ref = false;
+	for (const auto &inst : instances) {
+		for (const auto &ca : inst.cellAssignments) {
+			if (ca.type != "scene" && ca.type != "source")
+				continue;
+			if (ca.name.empty())
+				continue;
+			has_internal_ref = true;
+			obs_source_t *s = obs_get_source_by_name(ca.name.c_str());
+			if (s) {
+				obs_source_release(s);
+				return true;
+			}
+		}
+	}
+	return !has_internal_ref;
+}
+
+ConfigManager::SceneCollectionChange ConfigManager::on_scene_collection_changed()
+{
+	SceneCollectionChange change;
+
 	std::string new_collection = get_current_scene_collection();
 	if (new_collection == current_collection_)
-		return;
+		return change;
 
 	obs_log(LOG_INFO, "scene collection changed: '%s' -> '%s'", current_collection_.c_str(),
 		new_collection.c_str());
 
+	/* Snapshot the collection we are leaving BEFORE we save/switch/load, so the
+	 * UI can offer to copy it if this turns out to be a duplicate. */
+	const std::string old_collection = current_collection_;
+	std::vector<MultiviewInstance> old_instances = instances_;
+	GlobalSettings old_global = global_settings_;
+	std::vector<LayoutPreset> old_presets = layout_presets_;
+
+	/* "Brand new" = the collection we are switching TO was not present as of the
+	 * last snapshot (taken at load / after the previous change). A real
+	 * duplicate always creates a new collection; switching to any pre-existing
+	 * collection (even one with identical scene names) is therefore never
+	 * treated as a duplicate. Checked BEFORE refreshing the snapshot. */
+	const bool brand_new = known_collections_.count(new_collection) == 0;
+
 	/* save current before switching */
 	save();
 
+	previous_collection_ = old_collection;
 	current_collection_ = new_collection;
+	const bool new_had_config = os_file_exists(get_config_file_path().c_str());
 	load();
+
+	change.sourceCollection = old_collection;
+	change.newCollection = new_collection;
+
+	const bool shares = collection_shares_content(old_instances);
+	const bool candidate = brand_new && !new_had_config && !old_instances.empty() && shares;
+	/* Always log the decision so a "no prompt appeared" report can be traced to
+	 * the exact condition that failed. */
+	obs_log(LOG_INFO,
+		"[scene-collection] duplicate check '%s' -> '%s': brand_new=%d new_has_config=%d src_instances=%zu shares_content=%d => candidate=%d",
+		old_collection.c_str(), new_collection.c_str(), (int)brand_new, (int)new_had_config,
+		old_instances.size(), (int)shares, (int)candidate);
+
+	if (candidate) {
+		change.duplicateCandidate = true;
+		change.instanceCount = (int)old_instances.size();
+		change.sourceInstances = std::move(old_instances);
+		change.sourceGlobal = old_global;
+		change.sourcePresets = std::move(old_presets);
+	}
+
+	/* Refresh AFTER the brand-new check so the just-entered collection counts as
+	 * known from the next change onward. */
+	refresh_known_collections();
+	return change;
+}
+
+bool ConfigManager::on_scene_collection_renamed()
+{
+	/* CHANGED fires before RENAMED in OBS's rename flow, so by now
+	 * current_collection_ is already the new name and previous_collection_ holds
+	 * the old name. Move the old config file to the new name (a rename keeps the
+	 * same instances, so no UUID regeneration) and reload. */
+	const std::string old_collection = previous_collection_;
+	const std::string new_collection = current_collection_;
+	if (old_collection.empty() || old_collection == new_collection)
+		return false;
+
+	const std::string old_path = config_file_path_for(old_collection);
+	const std::string new_path = config_file_path_for(new_collection);
+	if (!os_file_exists(old_path.c_str()))
+		return false;
+	if (os_file_exists(new_path.c_str())) {
+		/* Target already exists (name reuse); don't clobber it. Keep whatever
+		 * the CHANGED handler already loaded for the new name. */
+		obs_log(LOG_WARNING, "scene collection rename: '%s' already has a config; not overwriting",
+			new_collection.c_str());
+		return false;
+	}
+
+	if (os_rename(old_path.c_str(), new_path.c_str()) != 0) {
+		obs_log(LOG_WARNING, "scene collection rename: failed to move config '%s' -> '%s'", old_path.c_str(),
+			new_path.c_str());
+		return false;
+	}
+
+	obs_log(LOG_INFO, "scene collection renamed: moved config '%s' -> '%s'", old_collection.c_str(),
+		new_collection.c_str());
+	load(); /* reload the moved config under the new name */
+	return true;
+}
+
+void ConfigManager::seed_current_from_snapshot(const SceneCollectionChange &snapshot)
+{
+	/* Copy the source collection's config into the CURRENT (new) collection:
+	 * global settings + presets verbatim; instances with fresh UUIDs since they
+	 * are copies, mirroring how OBS regenerates source UUIDs on duplicate. */
+	global_settings_ = snapshot.sourceGlobal;
+	layout_presets_ = snapshot.sourcePresets;
+	instances_.clear();
+	instances_.reserve(snapshot.sourceInstances.size());
+	for (const auto &src : snapshot.sourceInstances) {
+		MultiviewInstance copy = src;
+		copy.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+		instances_.push_back(std::move(copy));
+	}
+	/* Mirror the persisted detailed-logs flag into the runtime atomic, matching
+	 * load_from_file. */
+	amv::set_detailed_logs_enabled(global_settings_.detailedLogs);
+	save();
+	obs_log(LOG_INFO, "seeded scene collection '%s' with %zu instance(s) copied from '%s'",
+		current_collection_.c_str(), instances_.size(), snapshot.sourceCollection.c_str());
 }
 
 /* ---- instance CRUD ---- */

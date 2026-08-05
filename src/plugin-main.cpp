@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 
 #include "amv-frontend-cache.hpp"
+#include "amv-i18n.hpp"
 #include "amv-instance-core.hpp"
 #include "config-manager.hpp"
 #include "manager-dialog.hpp"
@@ -30,7 +31,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QGuiApplication>
 #include <QMainWindow>
+#include <QMessageBox>
 #include <QPointer>
+#include <QPushButton>
 #include <QScreen>
 #include <QTimer>
 #include <algorithm>
@@ -38,6 +41,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -663,6 +667,71 @@ static void unregister_source_list_signals()
 	signal_handler_disconnect(sh, "source_rename", on_obs_source_signal, nullptr);
 }
 
+/* Post scene-collection-load fanout, shared by the CHANGED and RENAMED paths:
+ * reconcile the window fps divisor, refresh the manager list, close orphaned
+ * windows (instances gone in the reloaded config), and (re)start headless
+ * output. */
+static void apply_scene_collection_reload()
+{
+	if (!config_manager)
+		return;
+	multiview_set_window_fps_divisor(config_manager->global_settings().multiviewWindowFpsDivisor);
+	if (manager_dialog)
+		manager_dialog->refresh_instance_list();
+
+	/* Issue #10: any open window whose instance no longer exists is now an
+	 * orphan — close its views and destroy its core (close_multiview_window
+	 * handles the UAF-safe teardown). Collect first; the close mutates
+	 * g_views/g_cores. */
+	std::vector<std::string> orphans;
+	{
+		std::lock_guard<std::recursive_mutex> lk(g_registry_mutex);
+		for (auto &[id, views] : g_views) {
+			if (!config_manager->find_instance(id))
+				orphans.push_back(id);
+		}
+	}
+	for (const auto &id : orphans)
+		close_multiview_window(id);
+
+	notify_multiview_output_settings_changed();
+}
+
+/* issue #14: pending "this scene collection looks duplicated" snapshot. Held
+ * for one event-loop tick after CHANGED so a following RENAMED (OBS fires
+ * CHANGED before RENAMED on a rename) can cancel it before the prompt shows. */
+static std::optional<ConfigManager::SceneCollectionChange> g_pending_dup;
+
+static void maybe_prompt_duplicate()
+{
+	if (!g_pending_dup || !config_manager)
+		return;
+	ConfigManager::SceneCollectionChange snap = std::move(*g_pending_dup);
+	g_pending_dup.reset();
+
+	obs_log(LOG_INFO, "[scene-collection] showing duplicate-copy prompt: '%s' -> '%s' (%d instance(s))",
+		snap.sourceCollection.c_str(), snap.newCollection.c_str(), snap.instanceCount);
+
+	QWidget *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
+	QMessageBox box(parent);
+	box.setIcon(QMessageBox::Question);
+	box.setWindowTitle(amv::text("AMVPlugin.SceneCollection.CopyPrompt.Title"));
+	box.setText(amv::text("AMVPlugin.SceneCollection.CopyPrompt.Body")
+			    .arg(QString::fromStdString(snap.sourceCollection))
+			    .arg(QString::fromStdString(snap.newCollection))
+			    .arg(snap.instanceCount));
+	box.setInformativeText(amv::text("AMVPlugin.SceneCollection.CopyPrompt.Note"));
+	QPushButton *copyBtn =
+		box.addButton(amv::text("AMVPlugin.SceneCollection.CopyPrompt.Copy"), QMessageBox::AcceptRole);
+	box.addButton(amv::text("AMVPlugin.SceneCollection.CopyPrompt.Cancel"), QMessageBox::RejectRole);
+	box.setDefaultButton(copyBtn);
+	box.exec();
+	if (box.clickedButton() == copyBtn) {
+		config_manager->seed_current_from_snapshot(snap);
+		apply_scene_collection_reload();
+	}
+}
+
 static void on_frontend_event(enum obs_frontend_event event, void *)
 {
 	/* Issue #10 isolation F2: keep the frontend cache (program/preview scene +
@@ -675,30 +744,27 @@ static void on_frontend_event(enum obs_frontend_event event, void *)
 
 	if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
 		if (config_manager) {
-			config_manager->on_scene_collection_changed();
-			multiview_set_window_fps_divisor(config_manager->global_settings().multiviewWindowFpsDivisor);
-			if (manager_dialog)
-				manager_dialog->refresh_instance_list();
+			ConfigManager::SceneCollectionChange change = config_manager->on_scene_collection_changed();
+			apply_scene_collection_reload();
 
-			/* Issue #10: the config reloaded for the new collection. Any
-			 * open window whose instance no longer exists is now an orphan —
-			 * close its views and destroy its core (close_multiview_window
-			 * handles the UAF-safe teardown). Collect first; the close
-			 * mutates g_views/g_cores. */
-			std::vector<std::string> orphans;
-			{
-				std::lock_guard<std::recursive_mutex> lk(g_registry_mutex);
-				for (auto &[id, views] : g_views) {
-					if (!config_manager->find_instance(id))
-						orphans.push_back(id);
-				}
+			/* issue #14: if the new collection looks like a duplicate, offer to
+			 * copy the source config over — but deferred one tick, so a rename
+			 * (which fires CHANGED then RENAMED) can cancel it first. */
+			if (change.duplicateCandidate) {
+				g_pending_dup = std::move(change);
+				QTimer::singleShot(0, qApp, []() { maybe_prompt_duplicate(); });
 			}
-			for (const auto &id : orphans)
-				close_multiview_window(id);
+		}
+	}
 
-			/* Spin up headless cores for instances with output enabled and
-			 * tear down view-less cores whose instance is gone/disabled. */
-			notify_multiview_output_settings_changed();
+	/* issue #14 sister requirement: on a scene-collection rename OBS fires
+	 * CHANGED (to the new name, no config yet) then RENAMED. Move our config
+	 * file to the new name, reload, and cancel any duplicate prompt the CHANGED
+	 * mis-armed (a rename is not a duplicate). */
+	if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_RENAMED) {
+		if (config_manager && config_manager->on_scene_collection_renamed()) {
+			g_pending_dup.reset();
+			apply_scene_collection_reload();
 		}
 	}
 
@@ -706,6 +772,8 @@ static void on_frontend_event(enum obs_frontend_event event, void *)
 	 * config are in memory), start headless output for any instance that has
 	 * it persisted-enabled, WITHOUT needing the user to open its window. */
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+		if (config_manager)
+			config_manager->refresh_known_collections();
 		notify_multiview_output_settings_changed();
 	}
 
