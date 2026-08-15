@@ -667,6 +667,8 @@ obs_data_t *GlobalVisualSettings::to_obs_data() const
 	obs_data_set_obj(data, "mirror", mir);
 	obs_data_release(mir);
 
+	obs_data_set_string(data, "rotation", rotation_angle_to_str(rotation));
+
 	return data;
 }
 
@@ -711,6 +713,8 @@ GlobalVisualSettings GlobalVisualSettings::from_obs_data(obs_data_t *data)
 	if (mir)
 		obs_data_release(mir);
 
+	vs.rotation = rotation_angle_from_str(obs_data_get_string(data, "rotation"));
+
 	return vs;
 }
 
@@ -754,6 +758,9 @@ obs_data_t *InstanceVisualSettings::to_obs_data() const
 	obs_data_t *mir = mirror.to_obs_data();
 	obs_data_set_obj(data, "mirror", mir);
 	obs_data_release(mir);
+
+	obs_data_set_string(data, "rotationMode", inheritance_mode_to_str(rotationMode));
+	obs_data_set_string(data, "rotation", rotation_angle_to_str(rotation));
 
 	return data;
 }
@@ -806,6 +813,9 @@ InstanceVisualSettings InstanceVisualSettings::from_obs_data(obs_data_t *data)
 	if (mir)
 		obs_data_release(mir);
 
+	vs.rotationMode = inheritance_mode_from_str(obs_data_get_string(data, "rotationMode"));
+	vs.rotation = rotation_angle_from_str(obs_data_get_string(data, "rotation"));
+
 	return vs;
 }
 
@@ -846,6 +856,9 @@ obs_data_t *CellVisualSettings::to_obs_data() const
 	obs_data_t *mir = mirror.to_obs_data();
 	obs_data_set_obj(data, "mirror", mir);
 	obs_data_release(mir);
+
+	obs_data_set_string(data, "rotationMode", inheritance_mode_to_str(rotationMode));
+	obs_data_set_string(data, "rotation", rotation_angle_to_str(rotation));
 
 	return data;
 }
@@ -894,6 +907,9 @@ CellVisualSettings CellVisualSettings::from_obs_data(obs_data_t *data)
 	vs.mirror = MirrorSettings::from_obs_data(mir);
 	if (mir)
 		obs_data_release(mir);
+
+	vs.rotationMode = inheritance_mode_from_str(obs_data_get_string(data, "rotationMode"));
+	vs.rotation = rotation_angle_from_str(obs_data_get_string(data, "rotation"));
 
 	return vs;
 }
@@ -953,6 +969,14 @@ EffectiveCellVisualSettings resolve_effective_visual_settings(const GlobalVisual
 		eff.mirror = instance.mirror;
 	else
 		eff.mirror = global.mirror;
+
+	/* Rotation — same 3-level chain as mirror. */
+	if (cell && cell->rotationMode == InheritanceMode::Override)
+		eff.rotation = cell->rotation;
+	else if (instance.rotationMode == InheritanceMode::Override)
+		eff.rotation = instance.rotation;
+	else
+		eff.rotation = global.rotation;
 
 	/* Highlight
 	 *

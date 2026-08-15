@@ -31,6 +31,36 @@ inline InheritanceMode inheritance_mode_from_str(const char *s)
 	return InheritanceMode::Inherit;
 }
 
+/* Right-angle rotation persisted as its degree string ("0"/"90"/"180"/"270")
+ * so any future non-90 steps won't shift the meaning of older configs. Missing
+ * or unknown -> R0 (no rotation), keeping pre-feature configs byte-identical. */
+inline const char *rotation_angle_to_str(RotationAngle r)
+{
+	switch (r) {
+	case RotationAngle::R90:
+		return "90";
+	case RotationAngle::R180:
+		return "180";
+	case RotationAngle::R270:
+		return "270";
+	default:
+		return "0";
+	}
+}
+
+inline RotationAngle rotation_angle_from_str(const char *s)
+{
+	if (s) {
+		if (strcmp(s, "90") == 0)
+			return RotationAngle::R90;
+		if (strcmp(s, "180") == 0)
+			return RotationAngle::R180;
+		if (strcmp(s, "270") == 0)
+			return RotationAngle::R270;
+	}
+	return RotationAngle::R0;
+}
+
 /* Phase 3 / M5: Lost Signal enum string mapping. Strings instead of ints so
  * future additions (e.g. ColorBars, PreviousFrameFreeze) won't shift the
  * numeric meaning of older configs. */

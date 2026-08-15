@@ -96,6 +96,18 @@ private:
 	/* Context-menu quick toggle: flip one axis of a cell's signal mirror,
 	 * pinning that cell's visual settings to Override. */
 	void toggle_cell_mirror(int row, int col, bool horizontal);
+	/* Context-menu quick actions: flip both axes at once, and revert a cell's
+	 * mirror back to inheriting the instance/global value. */
+	void toggle_cell_full_mirror(int row, int col);
+	void set_cell_mirror_inherit(int row, int col);
+	/* Context-menu rotation quick actions (stateless, applied immediately).
+	 * rotate_cell adds a signed delta in degrees to the cell's CURRENT
+	 * EFFECTIVE rotation (CW = +90, CCW = -90, 180 = +180) and pins Override;
+	 * set_cell_rotation_zero pins Override at 0deg; set_cell_rotation_inherit
+	 * reverts to inheriting the instance/global value. */
+	void rotate_cell(int row, int col, int deltaDeg);
+	void set_cell_rotation_zero(int row, int col);
+	void set_cell_rotation_inherit(int row, int col);
 	OBSSourceAutoRelease resolve_scene_cell_source_for_switch(int cellIndex);
 	void handle_scene_click_switch(int cellIndex);
 	void handle_scene_program_switch(int cellIndex);

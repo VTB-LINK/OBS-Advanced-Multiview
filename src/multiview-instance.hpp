@@ -191,6 +191,51 @@ struct MirrorSettings {
 	static MirrorSettings from_obs_data(obs_data_t *data);
 };
 
+/* Per-cell right-angle rotation of the signal video only. Applied at render
+ * time by rotating the model matrix around the video-rect centre AND swapping
+ * the fit aspect for 90/270 (so a portrait source rotated into a landscape
+ * cell fills it instead of being squeezed to a sliver). Like MirrorSettings it
+ * only affects the signal video; labels / VU / overlay / safe-area / highlight
+ * stay upright and readable. Stored as one of four steps; the right-click menu
+ * rotate actions are additive and match OBS (CW = +90, CCW = -90, 180 = +180,
+ * wrapped mod 360). Default R0 == pre-feature behavior. */
+enum class RotationAngle { R0, R90, R180, R270 };
+
+inline int rotation_to_degrees(RotationAngle r)
+{
+	switch (r) {
+	case RotationAngle::R90:
+		return 90;
+	case RotationAngle::R180:
+		return 180;
+	case RotationAngle::R270:
+		return 270;
+	default:
+		return 0;
+	}
+}
+
+inline RotationAngle rotation_from_degrees(int deg)
+{
+	int d = ((deg % 360) + 360) % 360; /* normalize into [0, 360) */
+	switch (d) {
+	case 90:
+		return RotationAngle::R90;
+	case 180:
+		return RotationAngle::R180;
+	case 270:
+		return RotationAngle::R270;
+	default:
+		return RotationAngle::R0;
+	}
+}
+
+/* Apply an additive delta (in degrees) to a right-angle rotation, wrapping. */
+inline RotationAngle rotation_add(RotationAngle cur, int deltaDeg)
+{
+	return rotation_from_degrees(rotation_to_degrees(cur) + deltaDeg);
+}
+
 /* ========== Signal Lost / Missing Behavior (Phase 3 / M5) ==========
  *
  * Behavior selected when a cell's primary signal is unavailable. Two
@@ -346,6 +391,7 @@ struct GlobalVisualSettings {
 	OverlaySettings overlay;
 	HighlightSettings highlight;
 	MirrorSettings mirror;
+	RotationAngle rotation = RotationAngle::R0;
 
 	obs_data_t *to_obs_data() const;
 	static GlobalVisualSettings from_obs_data(obs_data_t *data);
@@ -366,6 +412,8 @@ struct InstanceVisualSettings {
 	HighlightSettings highlight;
 	InheritanceMode mirrorMode = InheritanceMode::Inherit;
 	MirrorSettings mirror;
+	InheritanceMode rotationMode = InheritanceMode::Inherit;
+	RotationAngle rotation = RotationAngle::R0;
 
 	obs_data_t *to_obs_data() const;
 	static InstanceVisualSettings from_obs_data(obs_data_t *data);
@@ -386,6 +434,8 @@ struct CellVisualSettings {
 	OverlaySettings overlay;
 	InheritanceMode mirrorMode = InheritanceMode::Inherit;
 	MirrorSettings mirror;
+	InheritanceMode rotationMode = InheritanceMode::Inherit;
+	RotationAngle rotation = RotationAngle::R0;
 
 	obs_data_t *to_obs_data() const;
 	static CellVisualSettings from_obs_data(obs_data_t *data);
@@ -399,6 +449,7 @@ struct EffectiveCellVisualSettings {
 	OverlaySettings overlay;
 	HighlightSettings highlight; /* always resolved from instance/global (no per-cell) */
 	MirrorSettings mirror;
+	RotationAngle rotation = RotationAngle::R0;
 };
 
 /* Resolve effective visual settings via group-level inheritance chain:

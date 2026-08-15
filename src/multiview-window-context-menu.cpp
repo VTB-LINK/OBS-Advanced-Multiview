@@ -251,6 +251,72 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 	if (cellIndex >= 0) {
 		menu.addSeparator();
 
+		/* Transform quick actions (mirror + rotation) act on the hovered cell,
+		 * matching OBS-native per-source Flip / Rotate. Placed above Cell
+		 * Display Settings so the visual tweaks stay grouped. Mirror is stateful
+		 * (checkable items reflect the effective state); rotation is stateless
+		 * (each item applies immediately, no remembered angle). Mirror and
+		 * rotation are two separate submenus, so no inner separators are used. */
+		if (MultiviewInstance *txInst = config_->find_instance(uuid_)) {
+			LayoutEngine tmpEngine;
+			tmpEngine.set_layout(txInst->layout);
+			tmpEngine.set_viewport(100, 100);
+			tmpEngine.compute();
+			const auto &cells = tmpEngine.cells();
+			if (cellIndex < (int)cells.size()) {
+				const int row = cells[cellIndex].gridRow;
+				const int col = cells[cellIndex].gridCol;
+				const CellVisualSettings *cvs = txInst->find_cell_visual(row, col);
+				const EffectiveCellVisualSettings eff = resolve_effective_visual_settings(
+					config_->global_settings().visualSettings, txInst->visualSettings, cvs);
+
+				/* ---- Mirror submenu (stateful) ---- */
+				QMenu *mirrorMenu = menu.addMenu(amv::text("AMVPlugin.Visual.Mirror.Title"));
+				QAction *mInherit =
+					mirrorMenu->addAction(amv::text("AMVPlugin.Visual.Common.InheritFollow"));
+				mInherit->setCheckable(true);
+				mInherit->setChecked(!cvs || cvs->mirrorMode == InheritanceMode::Inherit);
+				connect(mInherit, &QAction::triggered, this,
+					[this, row, col]() { set_cell_mirror_inherit(row, col); });
+				auto add_flip = [this, mirrorMenu, row, col](const char *labelKey, bool horizontal,
+									     bool checked) {
+					QAction *a = mirrorMenu->addAction(amv::text(labelKey));
+					a->setCheckable(true);
+					a->setChecked(checked);
+					connect(a, &QAction::triggered, this, [this, row, col, horizontal]() {
+						toggle_cell_mirror(row, col, horizontal);
+					});
+				};
+				add_flip("AMVPlugin.Visual.Mirror.Horizontal", true, eff.mirror.horizontal);
+				add_flip("AMVPlugin.Visual.Mirror.Vertical", false, eff.mirror.vertical);
+				QAction *mFull = mirrorMenu->addAction(amv::text("AMVPlugin.Visual.Mirror.Full"));
+				mFull->setCheckable(true);
+				mFull->setChecked(eff.mirror.horizontal && eff.mirror.vertical);
+				connect(mFull, &QAction::triggered, this,
+					[this, row, col]() { toggle_cell_full_mirror(row, col); });
+
+				/* ---- Rotation submenu (stateless: apply on click) ---- */
+				QMenu *rotMenu = menu.addMenu(amv::text("AMVPlugin.Visual.Rotation.Title"));
+				QAction *rInherit =
+					rotMenu->addAction(amv::text("AMVPlugin.Visual.Common.InheritFollow"));
+				rInherit->setCheckable(true);
+				rInherit->setChecked(!cvs || cvs->rotationMode == InheritanceMode::Inherit);
+				connect(rInherit, &QAction::triggered, this,
+					[this, row, col]() { set_cell_rotation_inherit(row, col); });
+				auto add_rot = [this, rotMenu, row, col](const char *labelKey, int deltaDeg) {
+					QAction *a = rotMenu->addAction(amv::text(labelKey));
+					connect(a, &QAction::triggered, this,
+						[this, row, col, deltaDeg]() { rotate_cell(row, col, deltaDeg); });
+				};
+				add_rot("AMVPlugin.Visual.Rotation.CCW90", -90);
+				add_rot("AMVPlugin.Visual.Rotation.CW90", 90);
+				add_rot("AMVPlugin.Visual.Rotation.R180", 180);
+				QAction *rZero = rotMenu->addAction(amv::text("AMVPlugin.Visual.Rotation.None"));
+				connect(rZero, &QAction::triggered, this,
+					[this, row, col]() { set_cell_rotation_zero(row, col); });
+			}
+		}
+
 		QAction *cellSettingsAction = menu.addAction(amv::text("AMVPlugin.ContextMenu.CellDisplaySettings"));
 		connect(cellSettingsAction, &QAction::triggered, this, [this, cellIndex]() {
 			MultiviewInstance *inst = config_->find_instance(uuid_);
@@ -310,46 +376,6 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 				refresh_visual_settings();
 			}
 		});
-
-		/* Mirror (per-cell flip of the signal video). Quick toggle whose
-		 * check state reflects the cell's CURRENT EFFECTIVE mirror; clicking
-		 * flips one axis and pins the cell to Override so the choice sticks
-		 * (the full inheritance UI lives in Cell Display Settings). Matches
-		 * OBS-native per-source Flip Horizontal / Flip Vertical semantics —
-		 * it acts on the hovered cell, not the whole instance. */
-		{
-			MultiviewInstance *mirInst = config_->find_instance(uuid_);
-			if (mirInst) {
-				LayoutEngine tmpEngine;
-				tmpEngine.set_layout(mirInst->layout);
-				tmpEngine.set_viewport(100, 100);
-				tmpEngine.compute();
-				const auto &cells = tmpEngine.cells();
-				if (cellIndex < (int)cells.size()) {
-					const int row = cells[cellIndex].gridRow;
-					const int col = cells[cellIndex].gridCol;
-					const CellVisualSettings *cvs = mirInst->find_cell_visual(row, col);
-					const MirrorSettings curMirror =
-						resolve_effective_visual_settings(
-							config_->global_settings().visualSettings,
-							mirInst->visualSettings, cvs)
-							.mirror;
-
-					QMenu *mirrorMenu = menu.addMenu(amv::text("AMVPlugin.Visual.Mirror.Title"));
-					auto add_flip = [this, mirrorMenu, row, col](const char *labelKey,
-										     bool horizontal, bool checked) {
-						QAction *a = mirrorMenu->addAction(amv::text(labelKey));
-						a->setCheckable(true);
-						a->setChecked(checked);
-						connect(a, &QAction::triggered, this, [this, row, col, horizontal]() {
-							toggle_cell_mirror(row, col, horizontal);
-						});
-					};
-					add_flip("AMVPlugin.Visual.Mirror.Horizontal", true, curMirror.horizontal);
-					add_flip("AMVPlugin.Visual.Mirror.Vertical", false, curMirror.vertical);
-				}
-			}
-		}
 
 		/* Phase 3 / M5.2: Cell-scoped Signal Lost Settings entry. Kept as a
 		 * separate dialog from Cell Display Settings to honor the design
@@ -801,6 +827,119 @@ void MultiviewWindow::toggle_cell_mirror(int row, int col, bool horizontal)
 
 	config_->save();
 	refresh_visual_settings();
+}
+
+/* Find (or create) the hovered cell's visual-settings entry, apply `mut`, so
+ * the mirror / rotation quick actions share one find-or-append path. Caller
+ * persists + repaints. */
+static void mutate_cell_visual(MultiviewInstance *inst, int row, int col,
+			       const std::function<void(CellVisualSettings &)> &mut)
+{
+	for (auto &c : inst->cellVisualSettings) {
+		if (c.row == row && c.col == col) {
+			mut(c);
+			return;
+		}
+	}
+	CellVisualSettings cvs;
+	cvs.row = row;
+	cvs.col = col;
+	mut(cvs);
+	inst->cellVisualSettings.push_back(cvs);
+}
+
+void MultiviewWindow::toggle_cell_full_mirror(int row, int col)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	/* Toggle both axes together off the current effective state: if both are
+	 * already on, clear both; otherwise set both. */
+	const CellVisualSettings *existing = inst->find_cell_visual(row, col);
+	const MirrorSettings cur = resolve_effective_visual_settings(config_->global_settings().visualSettings,
+								     inst->visualSettings, existing)
+					   .mirror;
+	const bool both = !(cur.horizontal && cur.vertical);
+	mutate_cell_visual(inst, row, col, [both](CellVisualSettings &c) {
+		c.mirror.horizontal = both;
+		c.mirror.vertical = both;
+		c.mirrorMode = InheritanceMode::Override;
+	});
+
+	config_->save();
+	refresh_visual_settings();
+}
+
+void MultiviewWindow::set_cell_mirror_inherit(int row, int col)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	/* Only an existing override needs clearing; with no per-cell entry the
+	 * cell already inherits and there is nothing to write. */
+	for (auto &c : inst->cellVisualSettings) {
+		if (c.row == row && c.col == col) {
+			c.mirrorMode = InheritanceMode::Inherit;
+			config_->save();
+			refresh_visual_settings();
+			return;
+		}
+	}
+}
+
+void MultiviewWindow::rotate_cell(int row, int col, int deltaDeg)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	/* Additive on the current effective rotation so repeated presses step
+	 * through 0/90/180/270 like OBS's Transform > Rotate. */
+	const CellVisualSettings *existing = inst->find_cell_visual(row, col);
+	const RotationAngle cur = resolve_effective_visual_settings(config_->global_settings().visualSettings,
+								    inst->visualSettings, existing)
+					  .rotation;
+	const RotationAngle next = rotation_add(cur, deltaDeg);
+	mutate_cell_visual(inst, row, col, [next](CellVisualSettings &c) {
+		c.rotation = next;
+		c.rotationMode = InheritanceMode::Override;
+	});
+
+	config_->save();
+	refresh_visual_settings();
+}
+
+void MultiviewWindow::set_cell_rotation_zero(int row, int col)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	mutate_cell_visual(inst, row, col, [](CellVisualSettings &c) {
+		c.rotation = RotationAngle::R0;
+		c.rotationMode = InheritanceMode::Override;
+	});
+
+	config_->save();
+	refresh_visual_settings();
+}
+
+void MultiviewWindow::set_cell_rotation_inherit(int row, int col)
+{
+	MultiviewInstance *inst = config_->find_instance(uuid_);
+	if (!inst)
+		return;
+
+	for (auto &c : inst->cellVisualSettings) {
+		if (c.row == row && c.col == col) {
+			c.rotationMode = InheritanceMode::Inherit;
+			config_->save();
+			refresh_visual_settings();
+			return;
+		}
+	}
 }
 
 void MultiviewWindow::on_save_assignments()

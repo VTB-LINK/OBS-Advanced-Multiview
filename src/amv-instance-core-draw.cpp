@@ -631,6 +631,16 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 				goto render_no_signal;
 			}
 
+			/* Per-cell rotation swaps the fit aspect for 90/270 so a portrait
+			 * source rotated into a landscape cell fills it instead of
+			 * pillarboxing to a sliver. fitW/fitH are the dimensions the source
+			 * occupies AFTER rotation; rot is reused by the render block below. */
+			const RotationAngle rot = i < (int)effective_visuals_.size() ? effective_visuals_[i].rotation
+										     : RotationAngle::R0;
+			const bool rotSwapWH = rot == RotationAngle::R90 || rot == RotationAngle::R270;
+			const uint32_t fitW = rotSwapWH ? srcH : srcW;
+			const uint32_t fitH = rotSwapWH ? srcW : srcH;
+
 			/* Determine content area (may be reduced for Below label mode) */
 			int contentX = cellX;
 			int contentY = cellY;
@@ -649,8 +659,10 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 					contentH = 16;
 			}
 
-			/* Calculate letterbox/pillarbox rect within content area */
-			double srcAspect = (double)srcW / (double)srcH;
+			/* Calculate letterbox/pillarbox rect within content area.
+			 * Uses fitW/fitH so a rotated source fits by its post-rotation
+			 * footprint (portrait->landscape when rotated 90/270). */
+			double srcAspect = (double)fitW / (double)fitH;
 			double contentAspect = (double)contentW / (double)contentH;
 
 			if (srcAspect > contentAspect) {
@@ -709,11 +721,12 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 					cell_sources_[i].fill_log_hash = h;
 					amv_log_detailed(
 						LOG_INFO,
-						"%s[fill] cell (%d,%d) provider=%s src=%ux%u (%.4f) cell=%dx%d "
-						"content=%dx%d (%.4f) vr=%dx%d snap=%s",
+						"%s[fill] cell (%d,%d) provider=%s src=%ux%u (%.4f) rot=%d fit=%.4f "
+						"cell=%dx%d content=%dx%d (%.4f) vr=%dx%d snap=%s",
 						log_prefix().c_str(), cell.gridRow, cell.gridCol,
 						signal_provider_to_string(cell_sources_[i].provider_type), srcW, srcH,
-						srcAspect, cell.w, cell.h, contentW, contentH, contentAspect, vrW, vrH,
+						(double)srcW / (double)srcH, rotation_to_degrees(rot), srcAspect,
+						cell.w, cell.h, contentW, contentH, contentAspect, vrW, vrH,
 						snapped ? "yes" : "no");
 				}
 			}
@@ -806,11 +819,35 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 					     effective_visuals_[i].mirror.horizontal;
 			const bool mirrorV = i < (int)effective_visuals_.size() &&
 					     effective_visuals_[i].mirror.vertical;
-			const float oL = mirrorH ? (float)srcW : 0.0f;
-			const float oR = mirrorH ? 0.0f : (float)srcW;
-			const float oT = mirrorV ? (float)srcH : 0.0f;
-			const float oB = mirrorV ? 0.0f : (float)srcH;
+			/* Mirror stays a projection-extent flip, now expressed in the
+			 * (possibly rotated) display space so it composes with rotation.
+			 * dispW/dispH == fitW/fitH: for 90/270 the rotated source box is
+			 * srcH x srcW, which the model matrix below maps the source into.
+			 * R0 + no mirror => oL=0,oR=srcW,oT=0,oB=srcH, identical to before. */
+			const float dispW = (float)fitW;
+			const float dispH = (float)fitH;
+			const float oL = mirrorH ? dispW : 0.0f;
+			const float oR = mirrorH ? 0.0f : dispW;
+			const float oT = mirrorV ? dispH : 0.0f;
+			const float oB = mirrorV ? 0.0f : dispH;
 			startRegion(vrX, vrY, vrW, vrH, oL, oR, oT, oB);
+			/* Rotation = model-matrix rotate about the display centre, mapping
+			 * the source's [0,srcW]x[0,srcH] box into the rotated display box.
+			 * R0 keeps the original matrix-free path (byte-identical render).
+			 * Sign matches OBS: positive degrees == clockwise about +Z in the
+			 * Y-down screen space (obs-scene.c applies matrix4_rotate_aa4f with
+			 * RAD(rot)). Both PGM (obs_render_main_texture -> gs_draw_sprite)
+			 * and normal sources honour the current model matrix. Push/pop is
+			 * graphics-thread-local and strictly balanced; no early return sits
+			 * between them. */
+			const bool rotated = rot != RotationAngle::R0;
+			if (rotated) {
+				const float rad = (float)rotation_to_degrees(rot) * 0.01745329252f;
+				gs_matrix_push();
+				gs_matrix_translate3f(dispW * 0.5f, dispH * 0.5f, 0.0f);
+				gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, rad);
+				gs_matrix_translate3f((float)srcW * -0.5f, (float)srcH * -0.5f, 0.0f);
+			}
 			if (isPgm) {
 				obs_render_main_texture();
 			} else if (src && !obs_source_removed(src)) {
@@ -824,6 +861,8 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 				if (diag && i < (int)cell_sources_.size())
 					cell_sources_[i].render_calls++;
 			}
+			if (rotated)
+				gs_matrix_pop();
 			endRegion();
 
 			/* Draw PRVW fallback indicator (yellow bar at bottom) */
