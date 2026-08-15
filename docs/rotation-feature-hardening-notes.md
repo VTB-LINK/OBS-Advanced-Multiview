@@ -54,20 +54,47 @@
   未引入群组特有的新崩溃面（嵌套群组/含外部源同样沿用场景语义）。群组标为 `"source"` 故不参与场景点击切换 /
   PGM 嵌套高亮，是符合预期的取舍（用户要的是显示群组合成画面，而非把它当可切换场景）。
 - **序列化**：`rotation`/`rotationMode` 与 mirror 逐一并列、同构 round-trip；缺键回落 `R0`/`Inherit`，旧配置无损。
-- **实例/全局级旋转无 UI**：数据模型保留三级继承，但按需求决策仅暴露 cell 级（右键菜单）；实例/全局 `rotation`
-  恒为 `R0`，「继承」在当前等价于回到 0°，语义正确、为未来暴露对话框预留。
+- **旋转 UI 仅 cell 级（继承 UI 有意暂缺）**：按需求决策，旋转只在右键菜单暴露 cell 级操作；右键子菜单里的
+  「继承（跟随实例/全局）」**置灰不可点**（`rInherit->setEnabled(false)`）——没有实例/全局旋转编辑入口、无可继承
+  对象，复位由「无旋转（0°）」承担。**数据模型的三级继承脚手架全部保留（未删）**，便于将来补齐继承 UI；
+  清单与重启步骤见下节「未来工作」。
 
 ## 验证步骤
 
 真机（用户已验收）：
 1. 横向 cell merge 加竖条源 → 右键「旋转→顺/逆 90」→ 旋转且按横向充满、不再被压小。
 2. 顺 90 与 OBS 视觉一致；连点 4 次回原位；逆 90 == 顺 90×3。
-3. 顺/逆/180/无旋转(0°) 即时生效；「继承」回退。
+3. 顺/逆/180/无旋转(0°) 即时生效；「继承（跟随实例/全局）」置灰不可点。
 4. PGM 格旋转正确；镜像 × 旋转任意组合确定、无闪烁；R0 格与改动前一致。
 5. 设置后存盘、重开 OBS 无损；旧配置默认无旋转无镜像。
 6. source picker「源」标签可搜到并添加群组，单元格显示其合成画面。
 
 回归面：`R0` + 无镜像的普通格必须与改动前逐位一致（已从代码路径论证）。
+
+## 未来工作：重新启用旋转的「继承」UI（脚手架已就位，勿重复造轮子）
+
+旋转当前只暴露 cell 级右键菜单；实例/全局级 UI 有意暂缺（右键「继承」项置灰）。但**三级继承的底层脚手架已完整
+保留**，将来若要补齐，只需接 UI，不必改数据层。已就位的部分：
+
+- **数据模型**（`src/multiview-instance.hpp`）：`GlobalVisualSettings.rotation`、
+  `InstanceVisualSettings.{rotationMode,rotation}`、`CellVisualSettings.{rotationMode,rotation}`、
+  `EffectiveCellVisualSettings.rotation`，与 mirror 逐一并列。
+- **序列化**（`src/multiview-instance-serialize-visual.cpp` + `-serialize.hpp`）：三容器 `to/from_obs_data`
+  读写 `rotation`/`rotationMode`；`rotation_angle_to/from_str`。旧配置缺键回落 `R0`/`Inherit`。
+- **解析链**（`resolve_effective_visual_settings`）：旋转已走 cell→instance→global 三级 override，与 mirror 同构。
+- **渲染**（`amv-instance-core-draw.cpp`）：直接消费 `effective_visuals_[i].rotation`，与继承层级无关，无需改动。
+- **cell 级 mutator**（`src/multiview-window-context-menu.cpp`）：`set_cell_rotation_inherit(row,col)`
+  **已实现但当前未调用**（保留，勿删）。
+
+**重启继承 UI 的最小步骤：**
+1. **对话框**（`src/cell-display-settings-dialog.{hpp,cpp}`）：仿 `create_mirror_group()` 加一个旋转组
+   （继承下拉 + 旋转控件），并在 `set/get_{global,instance,cell}_settings` 里读写 `rotation`/`rotationMode`；
+   `on_reset` 走 `to/from_obs_data` 自动覆盖。
+2. **右键菜单**（`src/multiview-window-context-menu.cpp` 旋转子菜单）：去掉 `rInherit->setEnabled(false)`，
+   恢复 `setCheckable(true)` + `setChecked(cvs->rotationMode == Inherit)` + `connect(... set_cell_rotation_inherit ...)`
+   （该 mutator 代码仍在，直接接回）。
+
+数据层、序列化、解析、渲染均已就绪，**无需再动**。
 
 ## 备注
 

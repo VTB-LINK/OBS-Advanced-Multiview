@@ -297,12 +297,19 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 
 				/* ---- Rotation submenu (stateless: apply on click) ---- */
 				QMenu *rotMenu = menu.addMenu(amv::text("AMVPlugin.Visual.Rotation.Title"));
+				/* Rotation is exposed per-cell only (there is no instance/global
+				 * rotation editor), so "Inherit (follow instance/global)" has
+				 * nothing to inherit from. Keep the row for visual parity with the
+				 * Mirror submenu but grey it out and leave it unchecked; the menu
+				 * carries no rotation state, and "No Rotation (0°)" is the reset.
+				 *
+				 * The 3-level inheritance scaffolding (rotationMode fields, resolve
+				 * chain, set_cell_rotation_inherit()) is intentionally KEPT, not
+				 * removed. To re-enable the inheritance UI later, see
+				 * docs/rotation-feature-hardening-notes.md "未来工作". */
 				QAction *rInherit =
 					rotMenu->addAction(amv::text("AMVPlugin.Visual.Common.InheritFollow"));
-				rInherit->setCheckable(true);
-				rInherit->setChecked(!cvs || cvs->rotationMode == InheritanceMode::Inherit);
-				connect(rInherit, &QAction::triggered, this,
-					[this, row, col]() { set_cell_rotation_inherit(row, col); });
+				rInherit->setEnabled(false);
 				auto add_rot = [this, rotMenu, row, col](const char *labelKey, int deltaDeg) {
 					QAction *a = rotMenu->addAction(amv::text(labelKey));
 					connect(a, &QAction::triggered, this,
@@ -926,6 +933,10 @@ void MultiviewWindow::set_cell_rotation_zero(int row, int col)
 	refresh_visual_settings();
 }
 
+/* Currently unwired: the rotation submenu's "Inherit" row is greyed out because
+ * rotation has no instance/global editor yet (see the rotation submenu comment
+ * and docs/rotation-feature-hardening-notes.md "未来工作"). Kept intact so the
+ * inheritance UI can be re-enabled without re-deriving this mutator. */
 void MultiviewWindow::set_cell_rotation_inherit(int row, int col)
 {
 	MultiviewInstance *inst = config_->find_instance(uuid_);
