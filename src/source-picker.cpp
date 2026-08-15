@@ -135,8 +135,12 @@ void SourcePicker::populate_list()
 	auto enum_cb = [](void *param, obs_source_t *src) -> bool {
 		auto *list = static_cast<QListWidget *>(param);
 
-		/* Skip scenes, they're already in scene tab */
-		if (obs_source_get_type(src) == OBS_SOURCE_TYPE_SCENE)
+		/* Skip real scenes (they live in the Scenes tab). Groups are
+		 * SCENE-typed internally but are renderable container sources that
+		 * obs_enum_sources already hands to us, so keep them in the Sources
+		 * tab; they resolve through the generic obs_get_source_by_name path
+		 * (identical to a scene cell) and render their composited output. */
+		if (obs_source_get_type(src) == OBS_SOURCE_TYPE_SCENE && !obs_source_is_group(src))
 			return true;
 
 		/* Show any renderable signal source: video-capable sources and
