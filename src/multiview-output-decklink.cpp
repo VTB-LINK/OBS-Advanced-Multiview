@@ -8,6 +8,7 @@ License: GPL-2.0-or-later
 #ifdef AMV_ENABLE_DECKLINK_OUTPUT
 
 #include "multiview-output-decklink.hpp"
+#include "multiview-output-staged-readback.hpp"
 #include "amv-frontend-cache.hpp"
 #include "amv-logging.hpp"
 
@@ -507,34 +508,20 @@ public:
 			return;
 		if (!sh_->active.load())
 			return;
-		if (!ensure_stage(w, h))
-			return;
 
-		/* Double-buffered readback: stage frame N, map+push frame N-1 (the GPU
-		 * has had a full frame to finish the copy, so the map never stalls the
-		 * graphics thread / main program output). +1 frame of latency is fine
-		 * for a monitoring/feed output and far safer than a synchronous stall. */
-		gs_stage_texture(stage_[stage_idx_], tex);
-		const int prev = 1 - stage_idx_;
-		if (stage_have_prev_) {
-			uint8_t *data = nullptr;
-			uint32_t linesize = 0;
-			if (gs_stagesurface_map(stage_[prev], &data, &linesize)) {
-				feed_frame(data, linesize, w, h);
-				gs_stagesurface_unmap(stage_[prev]);
-				warned_map_failed_ = false;
-			} else if (!warned_map_failed_) {
-				obs_log(LOG_WARNING, "[multiview-output/decklink] gs_stagesurface_map failed");
-				warned_map_failed_ = true;
-			}
-		}
-		stage_idx_ = prev;
-		stage_have_prev_ = true;
+		/* Double-buffered readback (SDI is a continuous monitoring/feed output, so
+		 * +1 frame of latency is fine and far safer than a synchronous stall of the
+		 * main program). The helper owns the ping-pong + staging surfaces; we only
+		 * copy the mapped BGRA frame into the output's video_t (feed_frame, which
+		 * takes the shared mutex). The submit() return is unused: liveness is
+		 * tracked by the output state (sh_->active), not by whether a frame mapped. */
+		readback_.submit(tex, w, h, /*doubleBuffer=*/true,
+				 [&](uint8_t *data, uint32_t linesize) { feed_frame(data, linesize, w, h); });
 	}
 
 	void stop() override
 	{
-		destroy_stages(); /* graphics resources: direct on the graphics thread */
+		readback_.destroy(); /* graphics resources: direct on the graphics thread */
 
 		std::unique_ptr<OutputInstance> toClose;
 		{
@@ -562,8 +549,7 @@ public:
 				Qt::QueuedConnection);
 		}
 
-		warned_map_failed_ = false;
-		warned_stage_failed_ = false;
+		readback_.reset_warnings();
 		warned_dim_mismatch_ = false;
 	}
 
@@ -625,44 +611,6 @@ private:
 		video_output_unlock_frame(sh_->inst->video);
 	}
 
-	void destroy_stages()
-	{
-		for (auto *&s : stage_) {
-			if (s) {
-				gs_stagesurface_destroy(s);
-				s = nullptr;
-			}
-		}
-		stage_w_ = stage_h_ = 0;
-		stage_idx_ = 0;
-		stage_have_prev_ = false;
-	}
-
-	bool ensure_stage(uint32_t w, uint32_t h)
-	{
-		if (stage_[0] && stage_[1] && stage_w_ == w && stage_h_ == h)
-			return true;
-
-		destroy_stages();
-
-		stage_[0] = gs_stagesurface_create(w, h, GS_BGRA);
-		stage_[1] = gs_stagesurface_create(w, h, GS_BGRA);
-		if (!stage_[0] || !stage_[1]) {
-			destroy_stages();
-			if (!warned_stage_failed_) {
-				obs_log(LOG_WARNING, "[multiview-output/decklink] gs_stagesurface_create(%ux%u) failed",
-					w, h);
-				warned_stage_failed_ = true;
-			}
-			return false;
-		}
-
-		stage_w_ = w;
-		stage_h_ = h;
-		warned_stage_failed_ = false;
-		return true;
-	}
-
 	static std::string next_uid()
 	{
 		static std::atomic<uint64_t> counter{0};
@@ -675,14 +623,11 @@ private:
 	DeckCfg want_cfg_;
 	DeckCfg applied_cfg_;
 
-	/* Graphics-thread-only readback surfaces (ping-pong). */
-	gs_stagesurf_t *stage_[2] = {nullptr, nullptr};
-	uint32_t stage_w_ = 0, stage_h_ = 0;
-	int stage_idx_ = 0;
-	bool stage_have_prev_ = false;
+	/* Graphics-thread-only GPU->CPU staging readback (always double-buffered).
+	 * Owns the staging surfaces + ping-pong + map/create warnings; we supply only
+	 * the feed_frame tail (which takes sh_->mtx). */
+	StagedReadback readback_{"[multiview-output/decklink]"};
 
-	bool warned_map_failed_ = false;
-	bool warned_stage_failed_ = false;
 	bool warned_dim_mismatch_ = false;
 };
 
