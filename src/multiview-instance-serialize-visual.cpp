@@ -12,6 +12,7 @@ License: GPL-2.0-or-later
 
 #include "multiview-instance.hpp"
 #include "multiview-instance-serialize.hpp"
+#include "config-limits.hpp"
 
 #include <obs.h>
 #include <obs-data.h>
@@ -68,8 +69,8 @@ BackgroundSettings BackgroundSettings::from_obs_data(obs_data_t *data)
 	}
 	/* Phase 3 / M6.6 H.5 hardening: clamp path length, same idiom as
 	 * LabelSettings::fontFamily and LostSignalSettings paths. */
-	if (s.imagePath.size() > 4096)
-		s.imagePath.resize(4096);
+	if (s.imagePath.size() > amv::limits::kMaxImagePathLen)
+		s.imagePath.resize(amv::limits::kMaxImagePathLen);
 	return s;
 }
 
@@ -139,10 +140,10 @@ LabelSettings LabelSettings::from_obs_data(obs_data_t *data)
 	}
 	/* Defensive: clamp fontFamily length to prevent pathological strings
 	 * from a manually edited config from breaking Qt font enumeration. */
-	if (s.fontFamily.size() > 128)
-		s.fontFamily.resize(128);
-	if (s.statusFontFamily.size() > 128)
-		s.statusFontFamily.resize(128);
+	if (s.fontFamily.size() > amv::limits::kMaxFontFamilyLen)
+		s.fontFamily.resize(amv::limits::kMaxFontFamilyLen);
+	if (s.statusFontFamily.size() > amv::limits::kMaxFontFamilyLen)
+		s.statusFontFamily.resize(amv::limits::kMaxFontFamilyLen);
 	if (s.fontSize < 1)
 		s.fontSize = 14;
 	if (s.fontSize > 200)
@@ -166,10 +167,10 @@ LabelSettings LabelSettings::from_obs_data(obs_data_t *data)
 			s.backgroundOpacity = 0.2;
 		obs_data_release(colors);
 	}
-	if (s.backgroundOpacity < 0.0)
-		s.backgroundOpacity = 0.0;
-	if (s.backgroundOpacity > 1.0)
-		s.backgroundOpacity = 1.0;
+	if (s.backgroundOpacity < amv::limits::kMinOpacity)
+		s.backgroundOpacity = amv::limits::kMinOpacity;
+	if (s.backgroundOpacity > amv::limits::kMaxOpacity)
+		s.backgroundOpacity = amv::limits::kMaxOpacity;
 
 	obs_data_t *box = obs_data_get_obj(data, "box");
 	if (box) {
@@ -235,10 +236,10 @@ SafeAreaSettings SafeAreaSettings::from_obs_data(obs_data_t *data)
 			s.opacity = 1.0;
 		obs_data_release(style);
 	}
-	if (s.opacity < 0.0)
-		s.opacity = 0.0;
-	if (s.opacity > 1.0)
-		s.opacity = 1.0;
+	if (s.opacity < amv::limits::kMinOpacity)
+		s.opacity = amv::limits::kMinOpacity;
+	if (s.opacity > amv::limits::kMaxOpacity)
+		s.opacity = amv::limits::kMaxOpacity;
 
 	obs_data_t *geometry = obs_data_get_obj(data, "geometry");
 	if (geometry) {
@@ -332,10 +333,10 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 			s.manualTrackIndex = (int)obs_data_get_int(source, "manualTrack");
 		obs_data_release(source);
 	}
-	if (s.manualTrackIndex < 1)
-		s.manualTrackIndex = 1;
-	if (s.manualTrackIndex > 6)
-		s.manualTrackIndex = 6;
+	if (s.manualTrackIndex < amv::limits::kMinAudioTrack)
+		s.manualTrackIndex = amv::limits::kMinAudioTrack;
+	if (s.manualTrackIndex > amv::limits::kMaxAudioTrack)
+		s.manualTrackIndex = amv::limits::kMaxAudioTrack;
 
 	obs_data_t *placement = obs_data_get_obj(data, "placement");
 	if (placement) {
@@ -363,18 +364,18 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 			s.multiChannelEnabled = obs_data_get_bool(look, "multiChannel");
 		obs_data_release(look);
 	}
-	if (s.opacity < 0.0)
-		s.opacity = 0.0;
-	if (s.opacity > 1.0)
-		s.opacity = 1.0;
+	if (s.opacity < amv::limits::kMinOpacity)
+		s.opacity = amv::limits::kMinOpacity;
+	if (s.opacity > amv::limits::kMaxOpacity)
+		s.opacity = amv::limits::kMaxOpacity;
 	if (s.width < 1)
 		s.width = 8;
 	if (s.width > 64)
 		s.width = 64;
-	if (s.lengthRatio < 0.0)
-		s.lengthRatio = 0.0;
-	if (s.lengthRatio > 1.0)
-		s.lengthRatio = 1.0;
+	if (s.lengthRatio < amv::limits::kMinOpacity)
+		s.lengthRatio = amv::limits::kMinOpacity;
+	if (s.lengthRatio > amv::limits::kMaxOpacity)
+		s.lengthRatio = amv::limits::kMaxOpacity;
 
 	obs_data_t *levels = obs_data_get_obj(data, "levels");
 	if (levels) {
@@ -440,8 +441,8 @@ VuMeterSettings VuMeterSettings::from_obs_data(obs_data_t *data)
 			s.scaleSide = vu_meter_scale_side_from_str(obs_data_get_string(scale, "side"));
 		obs_data_release(scale);
 	}
-	if (s.fontFamily.size() > 128)
-		s.fontFamily.resize(128);
+	if (s.fontFamily.size() > amv::limits::kMaxFontFamilyLen)
+		s.fontFamily.resize(amv::limits::kMaxFontFamilyLen);
 	return s;
 }
 
@@ -493,8 +494,8 @@ OverlaySettings OverlaySettings::from_obs_data(obs_data_t *data)
 		obs_data_release(image);
 	}
 	/* Phase 3 / M6.6 H.5 hardening: clamp path length. */
-	if (s.imagePath.size() > 4096)
-		s.imagePath.resize(4096);
+	if (s.imagePath.size() > amv::limits::kMaxImagePathLen)
+		s.imagePath.resize(amv::limits::kMaxImagePathLen);
 
 	obs_data_t *style = obs_data_get_obj(data, "style");
 	if (style) {
@@ -503,10 +504,10 @@ OverlaySettings OverlaySettings::from_obs_data(obs_data_t *data)
 			s.opacity = 1.0;
 		obs_data_release(style);
 	}
-	if (s.opacity < 0.0)
-		s.opacity = 0.0;
-	if (s.opacity > 1.0)
-		s.opacity = 1.0;
+	if (s.opacity < amv::limits::kMinOpacity)
+		s.opacity = amv::limits::kMinOpacity;
+	if (s.opacity > amv::limits::kMaxOpacity)
+		s.opacity = amv::limits::kMaxOpacity;
 
 	obs_data_t *placement = obs_data_get_obj(data, "placement");
 	if (placement) {

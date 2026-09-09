@@ -46,6 +46,7 @@ target_sources(
     src/multiview-instance-serialize-output.cpp
     src/multiview-instance-serialize-signal.cpp
     src/multiview-instance-serialize-visual.cpp
+    src/config-limits.hpp
     src/config-manager.hpp
     src/config-manager.cpp
     src/layout-engine.hpp

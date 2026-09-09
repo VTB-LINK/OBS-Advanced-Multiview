@@ -12,6 +12,7 @@ License: GPL-2.0-or-later
 
 #include "multiview-instance.hpp"
 #include "multiview-instance-serialize.hpp"
+#include "config-limits.hpp"
 
 #include <obs.h>
 #include <obs-data.h>
@@ -164,8 +165,8 @@ void migrate_lost_settings_v1_to_v2(LostSignalSettings &s)
 
 	/* Defense in depth: migration may have copied a legacy image path into
 	 * fallbackName after the from_obs_data clamp ran, so clamp again. */
-	if (s.fallbackName.size() > 4096)
-		s.fallbackName.resize(4096);
+	if (s.fallbackName.size() > amv::limits::kMaxImagePathLen)
+		s.fallbackName.resize(amv::limits::kMaxImagePathLen);
 }
 
 obs_data_t *LostSignalSettings::to_obs_data() const
@@ -190,7 +191,7 @@ LostSignalSettings LostSignalSettings::from_obs_data(obs_data_t *data)
 	if (!data)
 		return s;
 
-	constexpr size_t kMaxPathBytes = 4096;
+	constexpr size_t kMaxPathBytes = amv::limits::kMaxImagePathLen;
 
 	/* recoveryPolicy is shared by v1 (stage 2a) and v2 configs. */
 	s.recoveryPolicy = recovery_policy_from_str(obs_data_get_string(data, "recoveryPolicy"));

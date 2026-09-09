@@ -13,6 +13,7 @@ License: GPL-2.0-or-later
 
 #include "multiview-instance.hpp"
 #include "multiview-output.hpp"
+#include "config-limits.hpp"
 
 #include <obs.h>
 #include <obs-data.h>
@@ -23,14 +24,6 @@ License: GPL-2.0-or-later
 #include <cstring>
 #include <set>
 #include <string>
-
-/* Shared output-dimension bounds. A huge or zero output size feeds straight
- * into gs_texrender_create and the GPU shared texture, so every resolved
- * dimension is clamped to [kMinDim,kMaxDim]: the lower bound matches the dialog
- * spinbox (16), the upper (16384, >8K) stays well within texture-size limits.
- * Used by both the Custom-mode deserialization clamp and the final
- * resolve_output_dimensions clamp (S3). */
-static constexpr uint32_t kMinDim = 16, kMaxDim = 16384;
 
 /* ---------- External output settings (issue #11) ---------- */
 
@@ -155,15 +148,15 @@ OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
 		s.customHeight = (uint32_t)obs_data_get_int(data, "customHeight");
 	/* Defensive clamp against hand-edited / corrupt configs: a huge or zero
 	 * custom resolution feeds straight into gs_texrender_create and the GPU
-	 * shared texture (shared kMinDim/kMaxDim bounds above). */
-	if (s.customWidth < kMinDim)
-		s.customWidth = kMinDim;
-	else if (s.customWidth > kMaxDim)
-		s.customWidth = kMaxDim;
-	if (s.customHeight < kMinDim)
-		s.customHeight = kMinDim;
-	else if (s.customHeight > kMaxDim)
-		s.customHeight = kMaxDim;
+	 * shared texture (shared kMinDim/kMaxDim bounds in config-limits.hpp). */
+	if (s.customWidth < amv::limits::kMinDim)
+		s.customWidth = amv::limits::kMinDim;
+	else if (s.customWidth > amv::limits::kMaxDim)
+		s.customWidth = amv::limits::kMaxDim;
+	if (s.customHeight < amv::limits::kMinDim)
+		s.customHeight = amv::limits::kMinDim;
+	else if (s.customHeight > amv::limits::kMaxDim)
+		s.customHeight = amv::limits::kMaxDim;
 	if (obs_data_has_user_value(data, "fpsDivisor"))
 		s.fpsDivisor = (int)obs_data_get_int(data, "fpsDivisor");
 	/* Only full (1) and half (2) are legal divisors. */
@@ -174,10 +167,10 @@ OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
 	if (obs_data_has_user_value(data, "audioTrackIndex"))
 		s.audioTrackIndex = (int)obs_data_get_int(data, "audioTrackIndex");
 	/* OBS mixer tracks are 1..6. */
-	if (s.audioTrackIndex < 1)
-		s.audioTrackIndex = 1;
-	else if (s.audioTrackIndex > 6)
-		s.audioTrackIndex = 6;
+	if (s.audioTrackIndex < amv::limits::kMinAudioTrack)
+		s.audioTrackIndex = amv::limits::kMinAudioTrack;
+	else if (s.audioTrackIndex > amv::limits::kMaxAudioTrack)
+		s.audioTrackIndex = amv::limits::kMaxAudioTrack;
 	return s;
 }
 
@@ -356,13 +349,13 @@ std::pair<uint32_t, uint32_t> resolve_output_dimensions(const OutputBackendSetti
 	 * bypassed it and flow straight into gs_texrender_create. The {0,0} "no
 	 * video info" bail above returns earlier and is intentionally left
 	 * unclamped so reconcile still skips the backend. */
-	if (w < kMinDim)
-		w = kMinDim;
-	else if (w > kMaxDim)
-		w = kMaxDim;
-	if (h < kMinDim)
-		h = kMinDim;
-	else if (h > kMaxDim)
-		h = kMaxDim;
+	if (w < amv::limits::kMinDim)
+		w = amv::limits::kMinDim;
+	else if (w > amv::limits::kMaxDim)
+		w = amv::limits::kMaxDim;
+	if (h < amv::limits::kMinDim)
+		h = amv::limits::kMinDim;
+	else if (h > amv::limits::kMaxDim)
+		h = amv::limits::kMaxDim;
 	return {w, h};
 }
