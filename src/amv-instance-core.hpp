@@ -324,14 +324,10 @@ private:
 		Paused,
 		AudioOnly,
 	};
-	StatusTextEntry status_missing_source_;
-	StatusTextEntry status_missing_scene_;
-	StatusTextEntry status_signal_lost_;
-	StatusTextEntry status_reconnecting_;
-	StatusTextEntry status_fallback_;
-	StatusTextEntry status_provider_missing_;
-	StatusTextEntry status_paused_;
-	StatusTextEntry status_audio_only_;
+	/* = number of StatusOverlayKind values, including None. */
+	static constexpr int kStatusOverlayKindCount = 9;
+	/* Indexed by (int)StatusOverlayKind; the None slot is unused. */
+	StatusTextEntry status_[kStatusOverlayKindCount];
 	void ensure_status_text_source(StatusTextEntry &entry, const char *text, const std::string &fontFamily);
 	void release_status_text_sources();
 	StatusOverlayKind status_overlay_kind_for_state(SignalRuntimeState state, const std::string &cellType,

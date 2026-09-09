@@ -169,38 +169,12 @@ void AmvInstanceCore::release_status_text_sources()
 	/* OBSSource (RAII wrapper) drops its strong ref on assignment. We're
 	 * either on the UI thread inside `release_source_refs()` or on window
 	 * destruction, so there's no graphics-lock concern. */
-	status_missing_source_.source = nullptr;
-	status_missing_source_.width = 0;
-	status_missing_source_.height = 0;
-	status_missing_source_.fontFamily.clear();
-	status_missing_scene_.source = nullptr;
-	status_missing_scene_.width = 0;
-	status_missing_scene_.height = 0;
-	status_missing_scene_.fontFamily.clear();
-	status_signal_lost_.source = nullptr;
-	status_signal_lost_.width = 0;
-	status_signal_lost_.height = 0;
-	status_signal_lost_.fontFamily.clear();
-	status_reconnecting_.source = nullptr;
-	status_reconnecting_.width = 0;
-	status_reconnecting_.height = 0;
-	status_reconnecting_.fontFamily.clear();
-	status_fallback_.source = nullptr;
-	status_fallback_.width = 0;
-	status_fallback_.height = 0;
-	status_fallback_.fontFamily.clear();
-	status_provider_missing_.source = nullptr;
-	status_provider_missing_.width = 0;
-	status_provider_missing_.height = 0;
-	status_provider_missing_.fontFamily.clear();
-	status_paused_.source = nullptr;
-	status_paused_.width = 0;
-	status_paused_.height = 0;
-	status_paused_.fontFamily.clear();
-	status_audio_only_.source = nullptr;
-	status_audio_only_.width = 0;
-	status_audio_only_.height = 0;
-	status_audio_only_.fontFamily.clear();
+	for (auto &e : status_) {
+		e.source = nullptr;
+		e.width = 0;
+		e.height = 0;
+		e.fontFamily.clear();
+	}
 }
 
 AmvInstanceCore::StatusOverlayKind AmvInstanceCore::status_overlay_kind_for_state(SignalRuntimeState state,
@@ -262,6 +236,58 @@ AmvInstanceCore::StatusOverlayKind AmvInstanceCore::status_overlay_kind_for_stat
 	}
 }
 
+/* Per-kind status overlay descriptor. Indexed by (int)StatusOverlayKind, so the
+ * order MUST stay in lock-step with the enum. The None slot (index 0) and any
+ * entry whose textKey is null render nothing (the former `default` / `None`
+ * short-circuit). */
+struct StatusOverlayDesc {
+	const char *textKey;
+	const char *textFallback;
+	uint32_t bandColor;
+};
+
+static const StatusOverlayDesc kStatusOverlayDescs[] = {
+	/* None: no overlay. */
+	{nullptr, nullptr, 0},
+	/* MissingSource: same red family as SIGNAL LOST. */
+	{"AMVPlugin.Status.MissingSource", "MISSING SOURCE", 0xC0601020},
+	/* MissingScene. */
+	{"AMVPlugin.Status.MissingScene", "MISSING SCENE", 0xC0601020},
+	/* SignalLost: Phase 3 / M6 step 10: external cell escalated to Lost /
+	 * Error. Red band signals the user the source is gone and may not
+	 * recover without intervention (Reconnect Now / Edit Source). dark red,
+	 * ~75% opacity. */
+	{"AMVPlugin.Status.SignalLost", "SIGNAL LOST", 0xC0601020},
+	/* Reconnecting: Phase 3 / M6 step 10: external-cell health supervisor
+	 * put the cell in Connecting / RetryScheduled. Blue band so it's
+	 * distinct from MISSING (grey) and SIGNAL LOST (red).
+	 *
+	 * Same overlay covers both initial connection (cell just created,
+	 * source still resolving its URL / opening codec) and post-Lost retry
+	 * escalation. Wording is "CONNECTING..." for both cases since the
+	 * supervisor doesn't distinguish them and "RECONNECTING" reads awkwardly
+	 * during the very first attempt. deep blue, ~75% opacity. */
+	{"AMVPlugin.Status.Connecting", "CONNECTING...", 0xC0204060},
+	/* Fallback: Phase 3 / M5.4: when a cell renders a Lost-Signal fallback
+	 * (PGM / PRVW / Scene / Source / static image) instead of its configured
+	 * source, surface that with a translucent yellow band so the user can
+	 * tell at a glance the cell is on a fallback, not the real assignment.
+	 * warm amber, ~75% opacity. */
+	{"AMVPlugin.Status.Fallback", "FALLBACK", 0xC0806000},
+	/* ProviderMissing: Phase 3 / M6.2: host plugin (DistroAV / obs-spout2 /
+	 * VLC) is not installed or failed to load. Distinct purple band so the
+	 * user knows the fix is to install the missing plugin, not to
+	 * troubleshoot the network / source. deep purple, ~75% opacity. */
+	{"AMVPlugin.Status.ProviderMissing", "PROVIDER MISSING", 0xC0401060},
+	/* Paused: Phase 3 / M6.6: user pressed Play/Pause from the cell context
+	 * menu (obs_source_media_play_pause). Not a failure; the cell paints the
+	 * last decoded frame. Soft cyan band so it reads as informational rather
+	 * than an error state. desaturated teal, ~75% opacity. */
+	{"AMVPlugin.Status.Paused", "PAUSED", 0xC0205060},
+	/* AudioOnly: same blue family as CONNECTING... */
+	{"AMVPlugin.Status.AudioOnly", "AUDIO ONLY", 0xC0204060},
+};
+
 /* ---- public render hook ---- */
 
 void AmvInstanceCore::render_status_overlay(int cellIndex, int cellX, int cellY, int cellW, int cellH)
@@ -322,77 +348,14 @@ void AmvInstanceCore::render_status_overlay(int cellIndex, int cellX, int cellY,
 		textBytes = amv::text_or(key, fallback).toUtf8();
 		text = textBytes.constData();
 	};
-	uint32_t bandColor = 0xC0202020; /* default: 75% black */
-	switch (kind) {
-	case StatusOverlayKind::MissingSource:
-		set_text_key("AMVPlugin.Status.MissingSource", "MISSING SOURCE");
-		bandColor = 0xC0601020; /* same red family as SIGNAL LOST */
-		entry = &status_missing_source_;
-		break;
-	case StatusOverlayKind::MissingScene:
-		set_text_key("AMVPlugin.Status.MissingScene", "MISSING SCENE");
-		bandColor = 0xC0601020;
-		entry = &status_missing_scene_;
-		break;
-	case StatusOverlayKind::Fallback:
-		/* Phase 3 / M5.4: when a cell renders a Lost-Signal fallback
-		 * (PGM / PRVW / Scene / Source / static image) instead of its
-		 * configured source, surface that with a translucent yellow band
-		 * so the user can tell at a glance the cell is on a fallback,
-		 * not the real assignment. */
-		set_text_key("AMVPlugin.Status.Fallback", "FALLBACK");
-		bandColor = 0xC0806000; /* warm amber, ~75% opacity */
-		entry = &status_fallback_;
-		break;
-	case StatusOverlayKind::Reconnecting:
-		/* Phase 3 / M6 step 10: external-cell health supervisor put
-		 * the cell in Connecting / RetryScheduled. Blue band so it's
-		 * distinct from MISSING (grey) and SIGNAL LOST (red).
-		 *
-		 * Same overlay covers both initial connection (cell just
-		 * created, source still resolving its URL / opening codec)
-		 * and post-Lost retry escalation. Wording is "CONNECTING..."
-		 * for both cases since the supervisor doesn't distinguish
-		 * them and "RECONNECTING" reads awkwardly during the very
-		 * first attempt. */
-		set_text_key("AMVPlugin.Status.Connecting", "CONNECTING...");
-		bandColor = 0xC0204060; /* deep blue, ~75% opacity */
-		entry = &status_reconnecting_;
-		break;
-	case StatusOverlayKind::SignalLost:
-		/* Phase 3 / M6 step 10: external cell escalated to Lost / Error.
-		 * Red band signals the user the source is gone and may not
-		 * recover without intervention (Reconnect Now / Edit Source). */
-		set_text_key("AMVPlugin.Status.SignalLost", "SIGNAL LOST");
-		bandColor = 0xC0601020; /* dark red, ~75% opacity */
-		entry = &status_signal_lost_;
-		break;
-	case StatusOverlayKind::ProviderMissing:
-		/* Phase 3 / M6.2: host plugin (DistroAV / obs-spout2 / VLC) is
-		 * not installed or failed to load. Distinct purple band so the
-		 * user knows the fix is to install the missing plugin, not to
-		 * troubleshoot the network / source. */
-		set_text_key("AMVPlugin.Status.ProviderMissing", "PROVIDER MISSING");
-		bandColor = 0xC0401060; /* deep purple, ~75% opacity */
-		entry = &status_provider_missing_;
-		break;
-	case StatusOverlayKind::Paused:
-		/* Phase 3 / M6.6: user pressed Play/Pause from the cell
-		 * context menu (obs_source_media_play_pause). Not a failure;
-		 * the cell paints the last decoded frame. Soft cyan band so it
-		 * reads as informational rather than an error state. */
-		set_text_key("AMVPlugin.Status.Paused", "PAUSED");
-		bandColor = 0xC0205060; /* desaturated teal, ~75% opacity */
-		entry = &status_paused_;
-		break;
-	case StatusOverlayKind::AudioOnly:
-		set_text_key("AMVPlugin.Status.AudioOnly", "AUDIO ONLY");
-		bandColor = 0xC0204060; /* same blue family as CONNECTING... */
-		entry = &status_audio_only_;
-		break;
-	default:
-		return;
-	}
+	static_assert(sizeof(kStatusOverlayDescs) / sizeof(kStatusOverlayDescs[0]) == kStatusOverlayKindCount,
+		      "status overlay descriptor table must have one entry per StatusOverlayKind");
+	const StatusOverlayDesc &desc = kStatusOverlayDescs[(int)kind];
+	if (!desc.textKey)
+		return; /* None / un-resourced kind: same short-circuit as the former default. */
+	set_text_key(desc.textKey, desc.textFallback);
+	uint32_t bandColor = desc.bandColor;
+	entry = &status_[(int)kind];
 
 	const LabelSettings *labelSettings =
 		cellIndex < (int)effective_visuals_.size() ? &effective_visuals_[cellIndex].label : nullptr;
