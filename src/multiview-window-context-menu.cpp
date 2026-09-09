@@ -31,15 +31,18 @@ License: GPL-2.0-or-later
 
 #include <QAction>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QInputDialog>
 #include <QMenu>
 
+#include <cmath>
 #include <functional>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QScreen>
 #include <QSize>
 #include <QTimer>
+#include <QWindow>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -52,6 +55,45 @@ static QSize GetPixelSize(QWidget *w)
 {
 	const qreal dpr = w->devicePixelRatioF();
 	return QSize(qRound((qreal)w->width() * dpr), qRound((qreal)w->height() * dpr));
+}
+
+/* Format one screen's projector-menu label exactly as OBS does, so the
+ * multiview "Fullscreen Projector to…" submenu reads 1:1 with OBS's built-in
+ * projector menu (issue #19). Source of truth:
+ * obs-studio frontend/widgets/OBSBasic_Projectors.cpp
+ * GetProjectorMenuMonitorsFormatted().
+ *
+ * Label form: "<name>: <phys-w>x<phys-h> @ <x>,<y>". Resolution is the
+ * PHYSICAL pixel size, even-rounded (round(logical*dpr / 2) * 2); position is
+ * the LOGICAL geometry origin (never scaled by the device pixel ratio). The
+ * name comes from screen->name() on Windows/macOS and screen->model() (trailing
+ * '-' chopped) elsewhere, falling back to "Display N" when empty. */
+static QString format_projector_screen_label(int index, QScreen *screen)
+{
+	QRect screenGeometry = screen->geometry();
+	qreal screenPixelRatio = screen->devicePixelRatio();
+	QString name = "";
+#if defined(__APPLE__) || defined(_WIN32)
+	name = screen->name();
+#else
+	name = screen->model().simplified();
+
+	if (name.length() > 1 && name.endsWith("-")) {
+		name.chop(1);
+	}
+#endif
+	name = name.simplified();
+
+	if (name.length() == 0) {
+		name = QString("%1 %2").arg(amv::text("AMVPlugin.ContextMenu.Display")).arg(QString::number(index + 1));
+	}
+
+	int screenPixelWidth = std::round((screenGeometry.width() * screenPixelRatio) * 0.5f) * 2;
+	int screenPixelHeight = std::round((screenGeometry.height() * screenPixelRatio) * 0.5f) * 2;
+
+	return QString("%1: %2x%3 @ %4,%5")
+		.arg(name, QString::number(screenPixelWidth), QString::number(screenPixelHeight),
+		     QString::number(screenGeometry.x()), QString::number(screenGeometry.y()));
 }
 
 int MultiviewWindow::cell_index_at_widget_pos(const QPointF &position)
@@ -180,10 +222,66 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 
 	/* ---------- Section 1: window / instance ---------- */
 
-	QAction *fullscreenAction = menu.addAction(amv::text("AMVPlugin.ContextMenu.Fullscreen"));
-	fullscreenAction->setCheckable(true);
-	fullscreenAction->setChecked(isFullScreen());
-	connect(fullscreenAction, &QAction::triggered, this, &MultiviewWindow::on_toggle_fullscreen);
+	/* Fullscreen Projector submenu (issue #19): mirrors OBS's built-in
+	 * projector "Fullscreen Projector (…)" menu. The parent item is also wired
+	 * to toggle fullscreen on the current screen for Qt styles that let a
+	 * submenu's parent action be clicked, but that behaviour is unreliable
+	 * across styles/platforms, so the submenu always carries an explicit
+	 * "Current Screen" item as its first (reliable) entry. */
+	QMenu *projMenu = menu.addMenu(amv::text("AMVPlugin.ContextMenu.FullscreenProjector"));
+	connect(projMenu->menuAction(), &QAction::triggered, this, &MultiviewWindow::on_toggle_fullscreen);
+
+	/* Resolve which screen currently shows this window while fullscreen, so the
+	 * matching monitor entry below can be checked. windowHandle() can be null
+	 * before the native window is realized; fall back to QWidget::screen(). */
+	QScreen *currentScreen = nullptr;
+	if (isFullScreen()) {
+		QWindow *wh = windowHandle();
+		currentScreen = wh ? wh->screen() : screen();
+	}
+
+	/* First item: Current Screen — preserves today's exact toggle semantics
+	 * (exit fullscreen when already fullscreen, otherwise go fullscreen on the
+	 * current screen). This is the guaranteed fallback for the clickable
+	 * parent above. */
+	/* Not checkable: the live fullscreen state is shown by the checked monitor
+	 * entry below (checking this too would render two checkmarks at once). This is
+	 * the toggle action — fullscreen the current screen, or exit if already
+	 * fullscreen. */
+	QAction *currentScreenAction = projMenu->addAction(amv::text("AMVPlugin.ContextMenu.FullscreenCurrentScreen"));
+	connect(currentScreenAction, &QAction::triggered, this, &MultiviewWindow::on_toggle_fullscreen);
+
+	/* One entry per connected monitor, labelled 1:1 with OBS. Selecting one
+	 * fullscreens THIS window onto that screen (not a toggle). */
+	const QList<QScreen *> screens = QGuiApplication::screens();
+	for (int i = 0; i < screens.size(); i++) {
+		QScreen *sc = screens[i];
+		QAction *screenAction = projMenu->addAction(format_projector_screen_label(i, sc));
+		screenAction->setCheckable(true);
+		screenAction->setChecked(isFullScreen() && sc == currentScreen);
+		/* Capture the index, not the raw QScreen*, and re-resolve on trigger:
+		 * the screen list is stable during the modal menu exec, but a monitor
+		 * hot-unplug between opening the menu and clicking would dangle a raw
+		 * pointer. QList::value(i) returns nullptr when out of range. */
+		connect(screenAction, &QAction::triggered, this, [this, i]() {
+			const QList<QScreen *> cur = QGuiApplication::screens();
+			QScreen *target = cur.value(i);
+			if (!target)
+				return;
+			/* Save the windowed geometry before the first fullscreen transition
+			 * so exiting restores the original window, not this monitor's full
+			 * rect (issue #19; mirrors OBSProjector::OpenFullScreenProjector). */
+			if (!isFullScreen())
+				windowed_geometry_ = geometry();
+			setGeometry(target->geometry());
+			showFullScreen();
+		});
+	}
+
+	/* Windowed projection: open another multiview window for this instance. */
+	projMenu->addSeparator();
+	QAction *openWindowAction = projMenu->addAction(amv::text("AMVPlugin.ContextMenu.OpenNewWindow"));
+	connect(openWindowAction, &QAction::triggered, this, [this]() { open_multiview_window(uuid_); });
 
 	QAction *onTopAction = menu.addAction(amv::text("AMVPlugin.ContextMenu.AlwaysOnTop"));
 	onTopAction->setCheckable(true);
@@ -978,7 +1076,15 @@ void MultiviewWindow::on_toggle_fullscreen()
 {
 	if (isFullScreen()) {
 		showNormal();
+		/* Restore the pre-fullscreen window. A prior "fullscreen to monitor X"
+		 * (setGeometry + showFullScreen) leaves Qt's normal geometry set to that
+		 * monitor's full rect, so showNormal alone would produce a decorated
+		 * window filling the whole monitor; setGeometry corrects it. Mirrors
+		 * OBSProjector::OpenWindowedProjector (issue #19). */
+		if (!windowed_geometry_.isNull())
+			setGeometry(windowed_geometry_);
 	} else {
+		windowed_geometry_ = geometry();
 		showFullScreen();
 	}
 }

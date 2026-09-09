@@ -27,6 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QWidget>
 #include <QWindow>
 #include <QPointF>
+#include <QRect>
 
 #include <atomic>
 #include <memory>
@@ -120,6 +121,13 @@ private:
 
 	ConfigManager *config_;
 	std::string uuid_;
+
+	/* Windowed geometry saved before the window is sent fullscreen, so exiting
+	 * fullscreen restores the original window instead of Qt's normal geometry —
+	 * which a "fullscreen to a specific monitor" (setGeometry + showFullScreen)
+	 * poisons with the target monitor's full rect (issue #19; mirrors OBS's
+	 * OBSProjector prevGeometry). Null until the first fullscreen transition. */
+	QRect windowed_geometry_;
 
 	/* The shared per-instance state + render logic. NON-owning: the core lives
 	 * in plugin-main's g_cores and outlives / outdies this view independently
