@@ -111,12 +111,15 @@ void LayoutEngine::compute()
 		int rs = span.rowSpan;
 		int cs = span.colSpan;
 
-		/* Safety clamp */
+		/* Safety clamp. r0/c0 are proven in range first, so `rows - r0` /
+		 * `cols - c0` stay non-negative and the span guard is written as
+		 * `rs > rows - r0` (not `r0 + rs > rows`) to avoid signed overflow on
+		 * a large span that slipped past deserialization clamping. */
 		if (r0 < 0 || c0 < 0 || r0 >= rows || c0 >= cols)
 			continue;
-		if (r0 + rs > rows)
+		if (rs > rows - r0)
 			rs = rows - r0;
-		if (c0 + cs > cols)
+		if (cs > cols - c0)
 			cs = cols - c0;
 		if (rs < 1 || cs < 1)
 			continue;

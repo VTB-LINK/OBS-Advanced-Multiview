@@ -1118,7 +1118,11 @@ void ManagerDialog::on_new_instance()
 		return;
 
 	MultiviewInstance *inst = config_->add_instance(name.trimmed().toStdString());
-	(void)inst;
+	if (!inst) {
+		QMessageBox::warning(this, amv::text("AMVPlugin.Manager.Instance.New"),
+				     amv::text("AMVPlugin.Manager.Instance.LimitReached"));
+		return;
+	}
 	config_->save();
 	refresh_instance_list();
 
@@ -1173,7 +1177,11 @@ void ManagerDialog::on_clone_instance()
 	if (!ok || name.trimmed().isEmpty())
 		return;
 
-	config_->clone_instance(uuid, name.trimmed().toStdString());
+	if (!config_->clone_instance(uuid, name.trimmed().toStdString())) {
+		QMessageBox::warning(this, amv::text("AMVPlugin.Manager.Instance.Clone"),
+				     amv::text("AMVPlugin.Manager.Instance.LimitReached"));
+		return;
+	}
 	config_->save();
 	refresh_instance_list();
 }

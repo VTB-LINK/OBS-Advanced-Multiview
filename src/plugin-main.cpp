@@ -129,6 +129,16 @@ static void refresh_view_numbers(const std::string &uuid)
 static bool g_main_render_registered = false;
 static std::vector<AmvInstanceCore *> g_output_hosts;
 
+/* S1 hardening: ceiling on the total number of concurrently armed output
+ * backends the graphics thread drives each frame. kMaxInstances (config load)
+ * already bounds the core count, but a corrupt/oversized config could still arm
+ * up to three backends per instance; this second, driver-layer ceiling
+ * guarantees a damaged config can never make the render thread compose + read
+ * back for an unbounded number of senders. Over-cap hosts keep their (idle)
+ * senders but are not fed frames — a bounded degradation, never a crash or a
+ * stalled program render. */
+static constexpr size_t kMaxArmedOutputBackends = 64;
+
 static void on_main_rendered(void *)
 {
 	for (auto *core : g_output_hosts) {
@@ -148,12 +158,40 @@ void multiview_refresh_output_driver()
 	std::lock_guard<std::recursive_mutex> lk(g_registry_mutex);
 	obs_enter_graphics();
 	g_output_hosts.clear();
+	size_t armedBackends = 0;
+	bool capHit = false;
 	for (auto &[id, core] : g_cores) {
-		if (core && core->has_output())
-			g_output_hosts.push_back(core.get());
+		if (!core || !core->has_output())
+			continue;
+		/* Count this host's armed backends from its persisted config. A core
+		 * with output_ live but no config instance (e.g. a stale core mid
+		 * scene-collection switch) counts as one, conservatively. */
+		size_t backends = 1;
+		if (config_manager) {
+			const MultiviewInstance *inst = config_manager->find_instance(id);
+			if (inst) {
+				const InstanceOutputSettings &os = inst->outputSettings;
+				backends =
+					(size_t)os.spout.enabled + (size_t)os.ndi.enabled + (size_t)os.decklink.enabled;
+				if (backends == 0)
+					backends = 1;
+			}
+		}
+		if (armedBackends + backends > kMaxArmedOutputBackends) {
+			capHit = true;
+			continue;
+		}
+		armedBackends += backends;
+		g_output_hosts.push_back(core.get());
 	}
 	const bool need = !g_output_hosts.empty();
 	obs_leave_graphics();
+
+	/* Logged once per reconcile (outside the graphics lock), not per frame. */
+	if (capHit)
+		obs_log(LOG_WARNING,
+			"[output] armed output-backend cap (%zu) reached; skipping further output hosts to protect the render thread (corrupt/oversized config?)",
+			kMaxArmedOutputBackends);
 
 	if (need && !g_main_render_registered) {
 		obs_add_main_rendered_callback(on_main_rendered, nullptr);

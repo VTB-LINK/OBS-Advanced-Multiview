@@ -28,7 +28,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QUuid>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
+
+/* S1 hardening: cap on the number of instances accepted from one config file.
+ * Each loaded instance can arm a headless output core + network sender on the
+ * graphics thread, so a corrupt / out-of-sync / rolled-back scene-collection
+ * config must never be able to arm an unbounded number of those at load time.
+ * 64 is far above any legitimate multiview count; excess entries are dropped
+ * with a warning. */
+static constexpr size_t kMaxInstances = 64;
 
 /* ---- helpers ---- */
 
@@ -147,6 +156,12 @@ bool ConfigManager::load_from_file(const std::string &path)
 	obs_data_array_t *arr = obs_data_get_array(data, "instances");
 	if (arr) {
 		size_t count = obs_data_array_count(arr);
+		if (count > kMaxInstances) {
+			obs_log(LOG_WARNING,
+				"config declares %zu instances; capping to %zu (corrupt or oversized config?) — extra instances ignored",
+				count, kMaxInstances);
+			count = kMaxInstances;
+		}
 		for (size_t i = 0; i < count; i++) {
 			obs_data_t *item = obs_data_array_item(arr, i);
 			instances_.push_back(MultiviewInstance::from_obs_data(item));
@@ -376,9 +391,18 @@ void ConfigManager::seed_current_from_snapshot(const SceneCollectionChange &snap
 	global_settings_ = snapshot.sourceGlobal;
 	layout_presets_ = snapshot.sourcePresets;
 	instances_.clear();
-	instances_.reserve(snapshot.sourceInstances.size());
-	for (const auto &src : snapshot.sourceInstances) {
-		MultiviewInstance copy = src;
+	/* S1 defense-in-depth: every upstream path already bounds the source set to
+	 * kMaxInstances, but enforce the cap here too (mirroring load_from_file) so a
+	 * future change can never let a snapshot seed an unbounded collection. */
+	size_t count = snapshot.sourceInstances.size();
+	if (count > kMaxInstances) {
+		obs_log(LOG_WARNING, "snapshot declares %zu instances; capping to %zu — extra instances ignored", count,
+			kMaxInstances);
+		count = kMaxInstances;
+	}
+	instances_.reserve(count);
+	for (size_t i = 0; i < count; i++) {
+		MultiviewInstance copy = snapshot.sourceInstances[i];
 		copy.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
 		instances_.push_back(std::move(copy));
 	}
@@ -394,6 +418,14 @@ void ConfigManager::seed_current_from_snapshot(const SceneCollectionChange &snap
 
 MultiviewInstance *ConfigManager::add_instance(const std::string &name)
 {
+	/* S1 hardening: keep the create path symmetric with the load cap
+	 * (load_from_file truncates to kMaxInstances). Refusing the extra instance
+	 * here prevents building a config the loader would silently drop and then
+	 * overwrite on the next save. Callers must handle the null return. */
+	if (instances_.size() >= kMaxInstances) {
+		obs_log(LOG_WARNING, "instance cap (%zu) reached; refusing to add '%s'", kMaxInstances, name.c_str());
+		return nullptr;
+	}
 	instances_.push_back(MultiviewInstance::create_new(name));
 	return &instances_.back();
 }
@@ -412,6 +444,12 @@ MultiviewInstance *ConfigManager::clone_instance(const std::string &uuid, const 
 	MultiviewInstance *src = find_instance(uuid);
 	if (!src)
 		return nullptr;
+	/* S1 hardening: symmetric with the load cap (see add_instance). */
+	if (instances_.size() >= kMaxInstances) {
+		obs_log(LOG_WARNING, "instance cap (%zu) reached; refusing to clone '%s'", kMaxInstances,
+			newName.c_str());
+		return nullptr;
+	}
 	instances_.push_back(src->clone_instance(newName));
 	return &instances_.back();
 }

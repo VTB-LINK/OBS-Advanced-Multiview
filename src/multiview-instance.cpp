@@ -33,6 +33,46 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "multiview-instance-serialize.hpp"
 
+/* ---------- deserialization hardening constants ---------- */
+
+/* The multiview grid is bounded to 20x20: LayoutData::from_obs_data clamps both
+ * rows and columns to [1,20]. These constants tie the span (S2) and cell-
+ * assignment (S5) hardening below to that same grid ceiling, so a corrupt or
+ * oversized config can never drive unbounded work on the graphics thread. */
+static constexpr int kMaxGridDimension = 20;
+static constexpr size_t kMaxCellAssignments = (size_t)kMaxGridDimension * kMaxGridDimension; /* 20x20 = 400 */
+
+/* Upper bound (in bytes) on a deserialized instance name. The name is broadcast
+ * verbatim as the NDI/Spout sender name and as window titles, so it must be
+ * bounded like the other persisted strings (fontFamily 128, path 4096). */
+static constexpr size_t kMaxInstanceNameBytes = 256;
+
+/* S4 hardening: sanitize an instance name read from a (possibly corrupt) config
+ * before it is broadcast as a sender name / window title. Strips C0 control
+ * bytes (< 0x20) and DEL (0x7F) — each is a single ASCII byte in UTF-8, so
+ * removing them never splits a multibyte code point — then clamps to
+ * kMaxInstanceNameBytes on a UTF-8 code-point boundary so truncation never
+ * leaves a dangling continuation byte. Valid multibyte sequences are preserved. */
+static std::string sanitize_instance_name(const std::string &raw)
+{
+	std::string out;
+	out.reserve(raw.size() < kMaxInstanceNameBytes ? raw.size() : kMaxInstanceNameBytes);
+	for (unsigned char c : raw) {
+		if (c < 0x20 || c == 0x7F)
+			continue;
+		out.push_back((char)c);
+	}
+	if (out.size() > kMaxInstanceNameBytes) {
+		size_t cut = kMaxInstanceNameBytes;
+		/* Back off while the cut lands inside a multibyte sequence
+		 * (continuation bytes have their top two bits set to 10). */
+		while (cut > 0 && ((unsigned char)out[cut] & 0xC0) == 0x80)
+			--cut;
+		out.resize(cut);
+	}
+	return out;
+}
+
 /* ---------- SpanRegion ---------- */
 
 obs_data_t *SpanRegion::to_obs_data() const
@@ -52,10 +92,17 @@ SpanRegion SpanRegion::from_obs_data(obs_data_t *data)
 	s.col = (int)obs_data_get_int(data, "col");
 	s.rowSpan = (int)obs_data_get_int(data, "rowSpan");
 	s.colSpan = (int)obs_data_get_int(data, "colSpan");
+	/* S2 hardening: clamp span to the same [1,20] bound as rows/columns. Without
+	 * an upper bound a near-INT_MAX span makes the layout engine's `r0 + rs`
+	 * overflow (signed UB) on the graphics thread every recompute. */
 	if (s.rowSpan < 1)
 		s.rowSpan = 1;
+	else if (s.rowSpan > kMaxGridDimension)
+		s.rowSpan = kMaxGridDimension;
 	if (s.colSpan < 1)
 		s.colSpan = 1;
+	else if (s.colSpan > kMaxGridDimension)
+		s.colSpan = kMaxGridDimension;
 	return s;
 }
 
@@ -197,7 +244,9 @@ MultiviewInstance MultiviewInstance::from_obs_data(obs_data_t *data)
 {
 	MultiviewInstance inst;
 	inst.uuid = obs_data_get_string(data, "uuid");
-	inst.name = obs_data_get_string(data, "name");
+	/* S4 hardening: clamp/strip control chars before the name is broadcast as a
+	 * sender name / window title (see sanitize_instance_name). */
+	inst.name = sanitize_instance_name(obs_data_get_string(data, "name"));
 	inst.folder = obs_data_get_string(data, "folder");
 
 	if (obs_data_has_user_value(data, "useGlobalGutter"))
@@ -232,6 +281,17 @@ MultiviewInstance MultiviewInstance::from_obs_data(obs_data_t *data)
 	obs_data_array_t *arr = obs_data_get_array(data, "cellAssignments");
 	if (arr) {
 		size_t count = obs_data_array_count(arr);
+		/* S5 hardening: every source refresh scans cellAssignments linearly per
+		 * cell under source_mutex_. The grid is at most 20x20, so no more than
+		 * kMaxCellAssignments entries can ever resolve to a live cell; cap the
+		 * accepted count so a corrupt/oversized config cannot inflate that
+		 * per-refresh scan without bound. */
+		if (count > kMaxCellAssignments) {
+			obs_log(LOG_WARNING,
+				"instance '%s' declares %zu cellAssignments; capping to %zu (grid is at most 20x20) — extra entries ignored",
+				inst.name.c_str(), count, kMaxCellAssignments);
+			count = kMaxCellAssignments;
+		}
 		for (size_t i = 0; i < count; i++) {
 			obs_data_t *item = obs_data_array_item(arr, i);
 			CellAssignment ca = CellAssignment::from_obs_data(item);

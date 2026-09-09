@@ -21,6 +21,14 @@ License: GPL-2.0-or-later
 #include <cstdio>
 #include <cstring>
 
+/* Shared output-dimension bounds. A huge or zero output size feeds straight
+ * into gs_texrender_create and the GPU shared texture, so every resolved
+ * dimension is clamped to [kMinDim,kMaxDim]: the lower bound matches the dialog
+ * spinbox (16), the upper (16384, >8K) stays well within texture-size limits.
+ * Used by both the Custom-mode deserialization clamp and the final
+ * resolve_output_dimensions clamp (S3). */
+static constexpr uint32_t kMinDim = 16, kMaxDim = 16384;
+
 /* ---------- External output settings (issue #11) ---------- */
 
 static const char *output_res_mode_to_str(OutputResolutionMode m)
@@ -149,9 +157,7 @@ OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
 		s.customHeight = (uint32_t)obs_data_get_int(data, "customHeight");
 	/* Defensive clamp against hand-edited / corrupt configs: a huge or zero
 	 * custom resolution feeds straight into gs_texrender_create and the GPU
-	 * shared texture. Match the dialog spinbox lower bound (16) and cap at
-	 * 16384 (>8K, well within texture-size limits). */
-	constexpr uint32_t kMinDim = 16, kMaxDim = 16384;
+	 * shared texture (shared kMinDim/kMaxDim bounds above). */
 	if (s.customWidth < kMinDim)
 		s.customWidth = kMinDim;
 	else if (s.customWidth > kMaxDim)
@@ -236,29 +242,59 @@ InstanceOutputSettings InstanceOutputSettings::from_obs_data(obs_data_t *data)
 
 std::pair<uint32_t, uint32_t> resolve_output_dimensions(const OutputBackendSettings &s)
 {
-	if (s.resMode == OutputResolutionMode::Custom)
-		return {s.customWidth, s.customHeight};
+	uint32_t w = 0, h = 0;
 
-	if (s.resMode == OutputResolutionMode::ObsStreamRescale) {
-		uint32_t w = 0, h = 0;
-		if (obs_stream_rescale_dimensions(w, h))
-			return {w, h};
-		/* Rescale turned off in OBS since this was picked — fall back to
-		 * the global OBS output (scaled) resolution below. */
-	} else if (s.resMode == OutputResolutionMode::ObsRecordRescale) {
-		uint32_t w = 0, h = 0;
-		if (obs_record_rescale_dimensions(w, h))
-			return {w, h};
-		/* Fall back to the global OBS output resolution below. */
+	if (s.resMode == OutputResolutionMode::Custom) {
+		w = s.customWidth;
+		h = s.customHeight;
+	} else {
+		if (s.resMode == OutputResolutionMode::ObsStreamRescale) {
+			uint32_t rw = 0, rh = 0;
+			if (obs_stream_rescale_dimensions(rw, rh)) {
+				w = rw;
+				h = rh;
+			}
+			/* Rescale turned off in OBS since this was picked — fall back to
+			 * the global OBS output (scaled) resolution below. */
+		} else if (s.resMode == OutputResolutionMode::ObsRecordRescale) {
+			uint32_t rw = 0, rh = 0;
+			if (obs_record_rescale_dimensions(rw, rh)) {
+				w = rw;
+				h = rh;
+			}
+			/* Fall back to the global OBS output resolution below. */
+		}
+
+		if (w == 0 || h == 0) {
+			struct obs_video_info ovi;
+			if (!obs_get_video_info(&ovi))
+				return {0, 0}; /* No video info: signal "skip" (reconcile drops w/h==0). */
+
+			if (s.resMode == OutputResolutionMode::ObsOutput ||
+			    s.resMode == OutputResolutionMode::ObsStreamRescale ||
+			    s.resMode == OutputResolutionMode::ObsRecordRescale) {
+				w = ovi.output_width;
+				h = ovi.output_height;
+			} else {
+				w = ovi.base_width; /* CanvasBase */
+				h = ovi.base_height;
+			}
+		}
 	}
 
-	struct obs_video_info ovi;
-	if (!obs_get_video_info(&ovi))
-		return {0, 0};
-
-	if (s.resMode == OutputResolutionMode::ObsOutput || s.resMode == OutputResolutionMode::ObsStreamRescale ||
-	    s.resMode == OutputResolutionMode::ObsRecordRescale)
-		return {ovi.output_width, ovi.output_height};
-
-	return {ovi.base_width, ovi.base_height}; /* CanvasBase */
+	/* S3 hardening: clamp every RESOLVED size to [kMinDim,kMaxDim]. Custom is
+	 * already clamped at deserialization, but the OBS rescale exports
+	 * (RescaleRes=NNNNxNNNN from the profile ini) and the canvas/output dims
+	 * bypassed it and flow straight into gs_texrender_create. The {0,0} "no
+	 * video info" bail above returns earlier and is intentionally left
+	 * unclamped so reconcile still skips the backend. */
+	if (w < kMinDim)
+		w = kMinDim;
+	else if (w > kMaxDim)
+		w = kMaxDim;
+	if (h < kMinDim)
+		h = kMinDim;
+	else if (h > kMaxDim)
+		h = kMaxDim;
+	return {w, h};
 }
