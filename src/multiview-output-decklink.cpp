@@ -343,8 +343,19 @@ void create_task(void *param)
 	obs_output_set_mixer(inst->out, mixerIdx);
 
 	if (!obs_output_start(inst->out)) {
+		/* X1: the mode was already validated against this device at the canvas
+		 * fps (decklink_mode_valid + non-zero mode_id above) and the raster
+		 * resolved, so a start failure here is almost never a config error —
+		 * it is overwhelmingly the DeckLink device being held by another output
+		 * (a second AMV instance targeting the same device_hash, another OBS
+		 * DeckLink output, or an external app). Log the device_hash and any
+		 * output last-error so the hardware conflict is diagnosable instead of
+		 * silent, and distinct from the "config error" refusals logged above
+		 * (mode unset / mode invalid). */
+		const char *lastErr = obs_output_get_last_error(inst->out);
 		obs_log(LOG_WARNING,
-			"[multiview-output/decklink] obs_output_start failed (FPS mismatch or device busy)");
+			"[multiview-output/decklink] obs_output_start failed for device_hash '%s' — the DeckLink device is likely already in use by another output/instance or application (last error: %s)",
+			cfg.deviceHash.c_str(), (lastErr && *lastErr) ? lastErr : "none reported");
 		close_output_instance(std::move(inst));
 		mark_idle_cooldown(sh);
 		return;

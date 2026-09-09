@@ -119,8 +119,17 @@ public:
 	/* "[<inst-name>(<uuid8>)] " log prefix, resolved each call. */
 	std::string log_prefix() const;
 
-	/* Instance display name (for the output sender name). */
+	/* Instance display name (human-readable; used for the window title and as
+	 * the base of the output sender name). */
 	std::string instance_display_name() const;
+
+	/* Globally-unique external-output sender name: instance_display_name() plus
+	 * a short per-instance uuid suffix (e.g. "Multiview (ab12cd34)"). Two
+	 * instances can share a display name (rename, clone, #14 duplicate copies
+	 * it verbatim); an identically named NDI/Spout sender would let a downstream
+	 * switcher lock onto the wrong feed and put the wrong multiview on air (X1),
+	 * so the broadcast identity must be unique even when the name is not. */
+	std::string output_sender_name() const;
 
 	/* ---- cell runtime state (Phase 3 / M5), public so the view's context
 	 * menu can introspect a cell without reaching into the core internals. */

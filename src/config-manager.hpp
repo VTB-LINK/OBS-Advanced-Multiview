@@ -111,6 +111,16 @@ private:
 	std::string previous_collection_; /* collection active before the last change */
 	std::set<std::string> known_collections_;
 
+	/* X2: configVersion found on disk for the currently-loaded collection.
+	 * 0 = no file / no version key / unreadable (a brand-new or legacy config).
+	 * Set by load_from_file on every load, so it always reflects the collection
+	 * held in memory (only one is loaded at a time; a collection switch reloads
+	 * and updates it — that is the per-collection version memory). When this is
+	 * GREATER than CURRENT_CONFIG_VERSION the config was written by a newer build
+	 * and save_to_file refuses to overwrite it, so a struct round-trip cannot
+	 * silently drop unknown keys and downgrade the on-disk version. */
+	int loaded_disk_config_version_ = 0;
+
 	GlobalSettings global_settings_;
 	std::vector<MultiviewInstance> instances_;
 	std::vector<LayoutPreset> layout_presets_;

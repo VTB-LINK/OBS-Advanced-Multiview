@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/config-file.h>
 #include <plugin-support.h>
 
+#include <algorithm>
 #include <cstdio>
 
 #include <cstring>
@@ -349,6 +350,13 @@ MultiviewInstance MultiviewInstance::from_obs_data(obs_data_t *data)
 		obs_data_array_release(cls_arr);
 	}
 
+	/* X3: drop any per-cell entry left outside the loaded grid by an older build
+	 * (a config persisted before the prune-on-shrink fix, or hand-edited). Runtime
+	 * shrink prunes at auto_save_layout, but a stale entry saved before this fix
+	 * would otherwise silently revive if the grid is later enlarged; cleaning on
+	 * load closes that window. Safe: only orphan, non-rendered entries are removed
+	 * (layout + all cell vectors are fully populated by this point). */
+	inst.prune_cells_to_grid();
 	return inst;
 }
 
@@ -398,6 +406,37 @@ const CellLostSignalSettings *MultiviewInstance::find_cell_lost_signal(int row, 
 			return &cls;
 	}
 	return nullptr;
+}
+
+void MultiviewInstance::prune_cells_to_grid()
+{
+	const int rows = layout.rows;
+	const int cols = layout.columns;
+	/* Out of the current grid iff the start coordinate is at/beyond an edge. An
+	 * in-bounds start is always kept (a merged-cell origin stays even if its span
+	 * would extend past the edge); only entries whose own (row, col) left the grid
+	 * are dropped. */
+	auto stale = [rows, cols](int row, int col) {
+		return row >= rows || col >= cols;
+	};
+
+	const size_t before = cellAssignments.size() + cellVisualSettings.size() + cellLostSignalSettings.size();
+
+	cellAssignments.erase(std::remove_if(cellAssignments.begin(), cellAssignments.end(),
+					     [&](const CellAssignment &a) { return stale(a.row, a.col); }),
+			      cellAssignments.end());
+	cellVisualSettings.erase(std::remove_if(cellVisualSettings.begin(), cellVisualSettings.end(),
+						[&](const CellVisualSettings &c) { return stale(c.row, c.col); }),
+				 cellVisualSettings.end());
+	cellLostSignalSettings.erase(
+		std::remove_if(cellLostSignalSettings.begin(), cellLostSignalSettings.end(),
+			       [&](const CellLostSignalSettings &c) { return stale(c.row, c.col); }),
+		cellLostSignalSettings.end());
+
+	const size_t after = cellAssignments.size() + cellVisualSettings.size() + cellLostSignalSettings.size();
+	if (after != before)
+		obs_log(LOG_INFO, "pruned %zu per-cell entr%s outside %dx%d grid for instance '%s'", before - after,
+			(before - after) == 1 ? "y" : "ies", rows, cols, name.c_str());
 }
 
 /* ---------- LayoutPreset ---------- */

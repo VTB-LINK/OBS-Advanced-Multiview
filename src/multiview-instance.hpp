@@ -757,6 +757,17 @@ struct MultiviewInstance {
 	/* Find cell Lost Signal override for given coordinate, or nullptr */
 	const CellLostSignalSettings *find_cell_lost_signal(int row, int col) const;
 
+	/* X3: drop every per-cell entry (assignment / visual / lost-signal override)
+	 * whose start coordinate falls outside the current layout.rows x
+	 * layout.columns grid. Per-cell state is addressed by absolute (row, col);
+	 * without this, shrinking the grid leaves out-of-bounds entries lingering
+	 * invisibly, they silently re-attach to different logical cells if the grid
+	 * is later enlarged, and they accumulate without bound across resize cycles.
+	 * Call at every grid-size change, before persisting/refreshing. Only the
+	 * entry's own start coordinate is checked (these carry no span), so a merged
+	 * cell whose origin is still in-bounds is kept. */
+	void prune_cells_to_grid();
+
 	obs_data_t *to_obs_data() const;
 	static MultiviewInstance from_obs_data(obs_data_t *data);
 

@@ -109,6 +109,12 @@ bool ConfigManager::load()
 
 bool ConfigManager::load_from_file(const std::string &path)
 {
+	/* X2: reset the remembered on-disk version first, so a missing file or a
+	 * parse failure leaves it at 0 (a brand-new / unreadable config is never
+	 * treated as newer-than-supported and thus never blocks a save). Only a
+	 * successfully parsed config below sets it to the stored configVersion. */
+	loaded_disk_config_version_ = 0;
+
 	if (!os_file_exists(path.c_str())) {
 		obs_log(LOG_INFO, "no config file found, using defaults: %s", path.c_str());
 		instances_.clear();
@@ -130,10 +136,15 @@ bool ConfigManager::load_from_file(const std::string &path)
 	 * configs are safe-fallback via per-struct from_obs_data() defaults; we
 	 * only log the upgrade so user / support can trace it. */
 	int version = (int)obs_data_get_int(data, "configVersion");
+	loaded_disk_config_version_ = version;
 	if (version > 0 && version < CURRENT_CONFIG_VERSION) {
 		obs_log(LOG_INFO, "upgrading config from v%d to v%d", version, CURRENT_CONFIG_VERSION);
 	} else if (version > CURRENT_CONFIG_VERSION) {
-		obs_log(LOG_WARNING, "config v%d is newer than supported v%d; some fields may be ignored or reset",
+		/* X2: a struct round-trip would drop the newer build's unknown keys and
+		 * stamp our older version back. save_to_file refuses to overwrite this
+		 * collection (read-only load) so the newer config is preserved. */
+		obs_log(LOG_WARNING,
+			"config v%d is newer than supported v%d; loading read-only (will not overwrite to avoid downgrading it)",
 			version, CURRENT_CONFIG_VERSION);
 	}
 
@@ -203,6 +214,22 @@ bool ConfigManager::save()
 
 bool ConfigManager::save_to_file(const std::string &path)
 {
+	/* X2: never downgrade a config written by a newer build. If the version we
+	 * loaded from disk for this collection is higher than what we understand,
+	 * a struct round-trip here would silently drop the unknown keys and stamp
+	 * the older CURRENT_CONFIG_VERSION back — silent data loss. Treat such a
+	 * collection as read-only: skip the write and warn. The in-memory state is
+	 * untouched (edits simply do not persist), which is preferable to corrupting
+	 * a forward config. loaded_disk_config_version_ tracks the collection held in
+	 * memory, which is exactly the one this path writes (save -> save_to_file for
+	 * the current collection). */
+	if (loaded_disk_config_version_ > CURRENT_CONFIG_VERSION) {
+		obs_log(LOG_WARNING,
+			"config on disk is v%d, newer than supported v%d; refusing to overwrite '%s' to avoid downgrading it — changes are not persisted",
+			loaded_disk_config_version_, CURRENT_CONFIG_VERSION, path.c_str());
+		return false;
+	}
+
 	obs_data_t *data = obs_data_create();
 	obs_data_set_int(data, "configVersion", CURRENT_CONFIG_VERSION);
 

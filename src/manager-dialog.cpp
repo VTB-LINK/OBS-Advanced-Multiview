@@ -52,10 +52,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QStackedWidget>
 #include <QSvgRenderer>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+
+/* Debounce window (ms) for committing a grid rows/cols change. A settled value
+ * for this long triggers the destructive commit; rapid transient changes (typed
+ * or wheel/arrow overshoot) keep restarting it and are coalesced into one. */
+static constexpr int kGridCommitDebounceMs = 400;
 
 /* Compute a muted "secondary text" color from the current palette.
  * Blends WindowText and Window at 50% for a reliably readable subdued color. */
@@ -135,7 +141,19 @@ ManagerDialog::ManagerDialog(ConfigManager *config, QWidget *parent) : QDialog(p
 	update_button_states();
 }
 
-ManagerDialog::~ManagerDialog() = default;
+ManagerDialog::~ManagerDialog()
+{
+	/* Commit a still-pending debounced grid-size change before teardown so an
+	 * edit made within the debounce window right before shutdown is not lost.
+	 * Safe here: the dialog is destroyed before config_ (plugin exit/unload
+	 * ordering), and auto_save_layout() touches no child widgets - it only reads
+	 * grid_edit_layout_ and writes to the instance + config. Deliberately does
+	 * NOT call update_grid_preview(), which would touch a child being torn down. */
+	if (grid_commit_timer_ && grid_commit_timer_->isActive()) {
+		grid_commit_timer_->stop();
+		auto_save_layout();
+	}
+}
 
 bool ManagerDialog::eventFilter(QObject *obj, QEvent *event)
 {
@@ -522,12 +540,18 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 	grid_ctrl_row->addWidget(new QLabel(amv::text("AMVPlugin.Manager.Grid.Rows"), page_instance_));
 	grid_rows_spin_ = new QSpinBox(page_instance_);
 	grid_rows_spin_->setRange(1, 20);
+	/* Keyboard tracking off: while typing a multi-digit value, valueChanged
+	 * fires only on the settled value (Enter/focus-out), not on each partial
+	 * digit. This stops an intermediate value (e.g. the "1" while typing "12")
+	 * from ever reaching the destructive commit path. */
+	grid_rows_spin_->setKeyboardTracking(false);
 	grid_rows_spin_->setMinimumWidth(60);
 	grid_ctrl_row->addWidget(grid_rows_spin_);
 
 	grid_ctrl_row->addWidget(new QLabel(amv::text("AMVPlugin.Manager.Grid.Cols"), page_instance_));
 	grid_cols_spin_ = new QSpinBox(page_instance_);
 	grid_cols_spin_->setRange(1, 20);
+	grid_cols_spin_->setKeyboardTracking(false); /* see grid_rows_spin_ above */
 	grid_cols_spin_->setMinimumWidth(60);
 	grid_ctrl_row->addWidget(grid_cols_spin_);
 
@@ -641,25 +665,39 @@ void ManagerDialog::setup_right_panel(QWidget *panel)
 		config_->save();
 	});
 
-	/* Grid rows/cols - auto save */
+	/* Grid rows/cols - debounced auto save.
+	 *
+	 * A grid-size change is DESTRUCTIVE (it trims spans that no longer fit and
+	 * prunes per-cell assignments/overrides that fall outside a shrunk grid,
+	 * then persists to disk). Running that on every intermediate spinbox value
+	 * would permanently delete live grid content on transient values: the "1"
+	 * emitted while typing "12", or a single wheel/arrow overshoot (4->3->4).
+	 *
+	 * So the valueChanged handlers do only NON-destructive work - update the
+	 * working copy and the live preview - and (re)start a debounce timer. The
+	 * destructive commit (span trim + prune + save + notify) runs once, from
+	 * the timer, after the value has settled. Span trimming is intentionally
+	 * NOT done here: it lives in the single commit gate (auto_save_layout) so a
+	 * transient shrink cannot drop a span either. The preview safely renders a
+	 * span that momentarily exceeds the grid (LayoutEngine clamps it). */
+	grid_commit_timer_ = new QTimer(this);
+	grid_commit_timer_->setSingleShot(true);
+	grid_commit_timer_->setInterval(kGridCommitDebounceMs);
+	connect(grid_commit_timer_, &QTimer::timeout, this, [this]() {
+		auto_save_layout();
+		update_grid_preview(); /* reflect any span trim the commit performed */
+	});
+
 	connect(grid_rows_spin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int val) {
 		grid_edit_layout_.rows = val;
-		auto &spans = grid_edit_layout_.spans;
-		spans.erase(std::remove_if(spans.begin(), spans.end(),
-					   [&](const SpanRegion &s) { return s.row + s.rowSpan > val; }),
-			    spans.end());
 		update_grid_preview();
-		auto_save_layout();
+		grid_commit_timer_->start();
 	});
 
 	connect(grid_cols_spin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int val) {
 		grid_edit_layout_.columns = val;
-		auto &spans = grid_edit_layout_.spans;
-		spans.erase(std::remove_if(spans.begin(), spans.end(),
-					   [&](const SpanRegion &s) { return s.col + s.colSpan > val; }),
-			    spans.end());
 		update_grid_preview();
-		auto_save_layout();
+		grid_commit_timer_->start();
 	});
 
 	/* Span controls */
@@ -1290,6 +1328,15 @@ void ManagerDialog::show_context_menu(const QPoint &pos)
 
 void ManagerDialog::show_instance_detail(const std::string &uuid)
 {
+	/* Flush a still-pending debounced grid-size change for the CURRENTLY shown
+	 * instance before the working copy is overwritten below, so a size edit made
+	 * just before switching (or refreshing) instances is committed, not dropped.
+	 * Runs against the still-current current_detail_uuid_. */
+	if (grid_commit_timer_ && grid_commit_timer_->isActive()) {
+		grid_commit_timer_->stop();
+		auto_save_layout();
+	}
+
 	MultiviewInstance *inst = config_->find_instance(uuid);
 	if (!inst) {
 		right_stack_->setCurrentIndex(PAGE_EMPTY);
@@ -1368,9 +1415,28 @@ void ManagerDialog::auto_save_layout()
 	if (!inst)
 		return;
 
+	/* Single destructive-commit gate. Trim spans that no longer fit the current
+	 * (possibly shrunk) working grid here - NOT in the spinbox valueChanged
+	 * handlers - so span trimming, like the per-cell prune below, only ever runs
+	 * on a committed value (debounced size commit, or a span edit button) and
+	 * never on a transient spinbox state. Predicate preserves the original
+	 * inline behavior: drop any span extending past the current row/col count. */
+	auto &spans = grid_edit_layout_.spans;
+	const int rows = grid_edit_layout_.rows;
+	const int cols = grid_edit_layout_.columns;
+	spans.erase(std::remove_if(spans.begin(), spans.end(),
+				   [&](const SpanRegion &s) {
+					   return s.row + s.rowSpan > rows || s.col + s.colSpan > cols;
+				   }),
+		    spans.end());
+
 	inst->layout.rows = grid_edit_layout_.rows;
 	inst->layout.columns = grid_edit_layout_.columns;
 	inst->layout.spans = grid_edit_layout_.spans;
+	/* X3: the grid size may have shrunk; drop per-cell overrides/assignments now
+	 * outside it so they can't linger invisibly and silently revive if the grid
+	 * is later enlarged. Done before save + refresh so both see the pruned set. */
+	inst->prune_cells_to_grid();
 	inst->layoutDirty = true;
 	config_->save();
 	notify_multiview_layout_changed(current_detail_uuid_);

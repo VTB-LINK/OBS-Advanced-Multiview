@@ -36,6 +36,7 @@ class QCheckBox;
 class QComboBox;
 class QSplitter;
 class QMenu;
+class QTimer;
 class GridPreviewWidget;
 
 class ManagerDialog : public QDialog {
@@ -121,6 +122,13 @@ private:
 	QPushButton *btn_remove_span_;
 	QPushButton *btn_reset_all_;
 	QLabel *grid_span_info_;
+	/* Debounce timer for destructive grid-size commits: rows/cols valueChanged
+	 * only updates the working copy + live preview and (re)starts this timer;
+	 * the destructive commit (span trim + per-cell prune + save + notify) runs
+	 * once the value settles, so transient/intermediate spinbox values (typed
+	 * or wheel/arrow overshoot) never delete live cells or spans. Parented to
+	 * the dialog, so a pending timeout is cancelled on destruction. */
+	QTimer *grid_commit_timer_ = nullptr;
 	std::string current_detail_uuid_;
 	LayoutData grid_edit_layout_; /* working copy */
 

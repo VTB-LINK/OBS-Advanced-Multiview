@@ -1183,7 +1183,7 @@ void AmvInstanceCore::render_output_only()
 	if (!output_)
 		return;
 	output_->render_all(
-		instance_display_name(), output_settings_,
+		output_sender_name(), output_settings_,
 		[this](int w, int h) {
 			/* Output renders at its own (canvas/config) resolution via the core's
 		 * own engine, independent of any view's viewport cache. */
@@ -1205,6 +1205,27 @@ std::string AmvInstanceCore::instance_display_name() const
 	if (inst && !inst->name.empty())
 		return inst->name;
 	return "OBS Advanced Multiview";
+}
+
+std::string AmvInstanceCore::output_sender_name() const
+{
+	/* X1: the NDI/Spout sender name is broadcast on the network and must be
+	 * unique across instances (see header). Append a short, stable per-instance
+	 * uuid suffix so two same-named instances publish distinct sender names
+	 * while each stays human-readable (e.g. "Multiview (ab12cd34)"). The uuid is
+	 * fixed for the instance's lifetime, so the sender identity is stable across
+	 * restarts (receivers reconnect to the same name). The window title keeps
+	 * the plain name (MultiviewWindow::refresh_title) — only the broadcast
+	 * identity needs the suffix. DeckLink ignores this name (its OBS output name
+	 * is already per-backend unique), so passing the suffixed name is harmless. */
+	std::string name = instance_display_name();
+	const std::string short_uuid = uuid_.size() > 8 ? uuid_.substr(0, 8) : uuid_;
+	if (!short_uuid.empty()) {
+		name += " (";
+		name += short_uuid;
+		name += ")";
+	}
+	return name;
 }
 
 void AmvInstanceCore::apply_output_settings()
