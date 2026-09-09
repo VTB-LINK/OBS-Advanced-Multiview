@@ -173,8 +173,9 @@ void multiview_refresh_output_driver()
 			const MultiviewInstance *inst = config_manager->find_instance(id);
 			if (inst) {
 				const InstanceOutputSettings &os = inst->outputSettings;
-				backends =
-					(size_t)os.spout.enabled + (size_t)os.ndi.enabled + (size_t)os.decklink.enabled;
+				backends = 0;
+				for (const auto &kv : os.backends)
+					backends += (size_t)kv.second.enabled;
 				if (backends == 0)
 					backends = 1;
 			}

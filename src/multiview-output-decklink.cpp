@@ -387,15 +387,26 @@ public:
 	/* SDI is a continuous feed: always want a frame while running. */
 	bool wants_frame() override { return sh_->active.load(); }
 
-	/* Graphics-thread reconcile entry (called every frame while enabled). Caches
-	 * the desired config and drives the internal lifecycle by dispatching UI
-	 * tasks — never touches the output/video_t/hardware directly. */
+	/* Graphics-thread: cache the DeckLink hardware settings into the desired
+	 * config. Called every frame during reconcile BEFORE configure_audio (the
+	 * manager guarantees the order), so the create/restart decision in
+	 * configure_audio sees these fields already set — equivalent to the pre-A3
+	 * single call that filled all six DeckCfg fields at once. Pure setter: no
+	 * lifecycle work happens here. */
+	void configure_decklink(const DeckLinkBackendSettings &hw) override
+	{
+		want_cfg_.deviceHash = hw.deviceHash;
+		want_cfg_.modeId = hw.modeId;
+		want_cfg_.keyer = hw.keyer;
+		want_cfg_.forceSdr = hw.forceSdr;
+	}
+
+	/* Graphics-thread reconcile entry (called every frame while enabled, AFTER
+	 * configure_decklink). Caches the desired audio config and drives the internal
+	 * lifecycle by dispatching UI tasks — never touches the output/video_t/
+	 * hardware directly. */
 	void configure_audio(const OutputBackendSettings &cfg) override
 	{
-		want_cfg_.deviceHash = cfg.deckDeviceHash;
-		want_cfg_.modeId = cfg.deckModeId;
-		want_cfg_.keyer = cfg.deckKeyer;
-		want_cfg_.forceSdr = cfg.deckForceSdr;
 		want_cfg_.audioMode = cfg.audioMode;
 		want_cfg_.audioTrack = cfg.audioTrackIndex;
 

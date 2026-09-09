@@ -65,10 +65,20 @@ private:
 	static void populate_decklink_modes(const BackendWidgets &w, const QString &deviceHash);
 	static void load_backend(const BackendWidgets &w, const OutputBackendSettings &s);
 	static OutputBackendSettings read_backend(const BackendWidgets &w);
-	static void load_decklink(const BackendWidgets &w, const OutputBackendSettings &s);
-	static OutputBackendSettings read_decklink(const BackendWidgets &w);
+	/* The DeckLink tab reads/writes its common settings (enabled/audio) and its
+	 * hardware settings (device/mode/keyer/forceSdr) separately, since A3 split
+	 * them into two structs. */
+	static void load_decklink(const BackendWidgets &w, const OutputBackendSettings &common,
+				  const DeckLinkBackendSettings &hw);
+	static void read_decklink(const BackendWidgets &w, OutputBackendSettings &common, DeckLinkBackendSettings &hw);
 
 	BackendWidgets spout_;
 	BackendWidgets ndi_;
 	BackendWidgets decklink_;
+
+	/* Out-of-build backend sub-objects the dialog can't edit (e.g. a Spout config
+	 * loaded on a macOS build). Captured from set_settings and copied back into
+	 * get_settings verbatim so editing output settings on a narrower build never
+	 * drops a wider build's config (matches InstanceOutputSettings::unknownBackends). */
+	std::map<std::string, std::string> preservedUnknownBackends_;
 };

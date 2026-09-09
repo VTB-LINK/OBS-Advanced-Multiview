@@ -332,75 +332,78 @@ QWidget *ExternalOutputSettingsDialog::build_decklink_tab(BackendWidgets &w, boo
 	return tab;
 }
 
-void ExternalOutputSettingsDialog::load_decklink(const BackendWidgets &w, const OutputBackendSettings &s)
+void ExternalOutputSettingsDialog::load_decklink(const BackendWidgets &w, const OutputBackendSettings &common,
+						 const DeckLinkBackendSettings &hw)
 {
-	w.enabled->setChecked(s.enabled);
+	w.enabled->setChecked(common.enabled);
 
 	/* Device: select the saved hash if still present; else leave on the first. */
-	int devIdx = w.deckDevice->findData(QString::fromStdString(s.deckDeviceHash));
+	int devIdx = w.deckDevice->findData(QString::fromStdString(hw.deviceHash));
 	if (devIdx >= 0)
 		w.deckDevice->setCurrentIndex(devIdx);
 
 	/* currentIndexChanged already repopulated modes for the selected device; make
 	 * sure they match the current selection (covers the no-change case too). */
 	populate_decklink_modes(w, w.deckDevice->currentData().toString());
-	int modeIdx = w.deckMode->findData(QVariant::fromValue<qlonglong>(s.deckModeId));
+	int modeIdx = w.deckMode->findData(QVariant::fromValue<qlonglong>(hw.modeId));
 	if (modeIdx >= 0)
 		w.deckMode->setCurrentIndex(modeIdx);
 
-	int keyerIdx = w.deckKeyer->findData(s.deckKeyer);
+	int keyerIdx = w.deckKeyer->findData(hw.keyer);
 	w.deckKeyer->setCurrentIndex(keyerIdx >= 0 ? keyerIdx : 0);
 
-	w.deckForceSdr->setChecked(s.deckForceSdr);
+	w.deckForceSdr->setChecked(hw.forceSdr);
 
-	int audIdx = w.audioMode->findData((int)s.audioMode);
+	int audIdx = w.audioMode->findData((int)common.audioMode);
 	w.audioMode->setCurrentIndex(audIdx >= 0 ? audIdx : 0);
-	w.audioTrack->setValue(s.audioTrackIndex);
+	w.audioTrack->setValue(common.audioTrackIndex);
 }
 
-OutputBackendSettings ExternalOutputSettingsDialog::read_decklink(const BackendWidgets &w)
+void ExternalOutputSettingsDialog::read_decklink(const BackendWidgets &w, OutputBackendSettings &common,
+						 DeckLinkBackendSettings &hw)
 {
-	OutputBackendSettings s;
-	s.enabled = w.enabled->isChecked();
-	s.deckDeviceHash = w.deckDevice->currentData().toString().toStdString();
-	s.deckModeId = w.deckMode->currentData().isValid() ? w.deckMode->currentData().toLongLong() : 0;
-	s.deckKeyer = w.deckKeyer->currentData().toInt();
-	s.deckForceSdr = w.deckForceSdr->isChecked();
-	s.audioMode = (OutputAudioMode)w.audioMode->currentData().toInt();
-	s.audioTrackIndex = w.audioTrack->value();
+	common = OutputBackendSettings{};
+	hw = DeckLinkBackendSettings{};
+
+	common.enabled = w.enabled->isChecked();
+	hw.deviceHash = w.deckDevice->currentData().toString().toStdString();
+	hw.modeId = w.deckMode->currentData().isValid() ? w.deckMode->currentData().toLongLong() : 0;
+	hw.keyer = w.deckKeyer->currentData().toInt();
+	hw.forceSdr = w.deckForceSdr->isChecked();
+	common.audioMode = (OutputAudioMode)w.audioMode->currentData().toInt();
+	common.audioTrackIndex = w.audioTrack->value();
 
 	/* Lock the composition to the selected mode's native raster (§3.4): resMode
 	 * stays Custom and customWidth/customHeight carry the raster, so both the
 	 * dialog and resolve_output_dimensions agree and there is zero scaling. A
 	 * scratch output reports the raster via its video conversion. */
-	s.resMode = OutputResolutionMode::Custom;
-	s.fpsDivisor = 1; /* DeckLink runs at full canvas fps (FPS must match exactly) */
+	common.resMode = OutputResolutionMode::Custom;
+	common.fpsDivisor = 1; /* DeckLink runs at full canvas fps (FPS must match exactly) */
 
 	/* H2: never persist enabled + device-but-no-mode. mode_id 0 (empty mode
 	 * combo) would crash decklink_output_create (null DeckLinkDeviceMode deref),
 	 * so refuse to enable instead of saving a config that can't start. */
-	if (s.enabled && !s.deckDeviceHash.empty() && s.deckModeId == 0)
-		s.enabled = false;
+	if (common.enabled && !hw.deviceHash.empty() && hw.modeId == 0)
+		common.enabled = false;
 
 	/* Probe the selected device+mode for its native raster only when a real mode
 	 * is chosen — a probe with mode_id 0 would hit the same crash as the live
 	 * output. */
-	if (!s.deckDeviceHash.empty() && s.deckModeId != 0) {
+	if (!hw.deviceHash.empty() && hw.modeId != 0) {
 		OBSDataAutoRelease probeSettings = obs_data_create();
-		obs_data_set_string(probeSettings, "device_hash", s.deckDeviceHash.c_str());
-		obs_data_set_int(probeSettings, "mode_id", s.deckModeId);
-		obs_data_set_bool(probeSettings, "force_sdr", s.deckForceSdr);
+		obs_data_set_string(probeSettings, "device_hash", hw.deviceHash.c_str());
+		obs_data_set_int(probeSettings, "mode_id", hw.modeId);
+		obs_data_set_bool(probeSettings, "force_sdr", hw.forceSdr);
 		OBSOutputAutoRelease probe =
 			obs_output_create("decklink_output", "amv-decklink-probe", probeSettings, nullptr);
 		if (probe) {
 			const struct video_scale_info *conv = obs_output_get_video_conversion(probe);
 			if (conv && conv->width > 0 && conv->height > 0) {
-				s.customWidth = conv->width;
-				s.customHeight = conv->height;
+				common.customWidth = conv->width;
+				common.customHeight = conv->height;
 			}
 		}
 	}
-	return s;
 }
 
 void ExternalOutputSettingsDialog::load_backend(const BackendWidgets &w, const OutputBackendSettings &s)
@@ -436,16 +439,23 @@ OutputBackendSettings ExternalOutputSettingsDialog::read_backend(const BackendWi
 
 void ExternalOutputSettingsDialog::set_settings(const InstanceOutputSettings &s)
 {
-	load_backend(spout_, s.spout);
-	load_backend(ndi_, s.ndi);
-	load_decklink(decklink_, s.decklink);
+	load_backend(spout_, s.at(OutputBackendKind::Spout));
+	load_backend(ndi_, s.at(OutputBackendKind::Ndi));
+	load_decklink(decklink_, s.at(OutputBackendKind::Decklink), s.decklink);
+	/* Carry through any out-of-build backend config the dialog can't edit. */
+	preservedUnknownBackends_ = s.unknownBackends;
 }
 
 InstanceOutputSettings ExternalOutputSettingsDialog::get_settings() const
 {
 	InstanceOutputSettings s;
-	s.spout = read_backend(spout_);
-	s.ndi = read_backend(ndi_);
-	s.decklink = read_decklink(decklink_);
+	s.backends[OutputBackendKind::Spout] = read_backend(spout_);
+	s.backends[OutputBackendKind::Ndi] = read_backend(ndi_);
+	OutputBackendSettings deckCommon;
+	read_decklink(decklink_, deckCommon, s.decklink);
+	s.backends[OutputBackendKind::Decklink] = deckCommon;
+	/* Preserve out-of-build backend config (see the member) so applying the
+	 * dialog result doesn't drop it. */
+	s.unknownBackends = preservedUnknownBackends_;
 	return s;
 }

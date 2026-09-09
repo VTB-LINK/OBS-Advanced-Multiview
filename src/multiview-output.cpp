@@ -126,22 +126,9 @@ static const OutputBackendDesc &desc_for(OutputBackendKind kind)
 	return kUnknown;
 }
 
-const OutputBackendSettings &MultiviewOutputManager::settings_for(OutputBackendKind kind,
-								  const InstanceOutputSettings &cfg)
+void MultiviewOutputManager::reconcile(BackendEntry &e, const InstanceOutputSettings &cfg)
 {
-	switch (kind) {
-	case OutputBackendKind::Spout:
-		return cfg.spout;
-	case OutputBackendKind::Ndi:
-		return cfg.ndi;
-	case OutputBackendKind::Decklink:
-		return cfg.decklink;
-	}
-	return cfg.spout;
-}
-
-void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSettings &s)
-{
+	const OutputBackendSettings &s = cfg.at(e.kind);
 	const OutputBackendDesc &desc = desc_for(e.kind);
 	const bool want = s.enabled && desc.available();
 
@@ -172,6 +159,13 @@ void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSetti
 			e.h = bh;
 		}
 		e.fpsDivisor = (s.fpsDivisor == 2) ? 2 : 1;
+		/* Push the DeckLink hardware settings BEFORE configure_audio: the
+		 * DeckLink backend caches both into one DeckCfg and drives its
+		 * create/restart decision from configure_audio, which must therefore see
+		 * the hardware fields already set. Called unconditionally on every
+		 * backend (no manager-side kind switch); non-DeckLink backends default it
+		 * to a no-op, matching the set_double_buffer pattern. */
+		e.backend->configure_decklink(cfg.decklink);
 		/* (Re)connect audio capture to the selected track (NDI only). */
 		e.backend->configure_audio(s);
 	}
@@ -236,7 +230,7 @@ void MultiviewOutputManager::render_all(const std::string &name, const InstanceO
 		return;
 
 	for (BackendEntry &e : backends_)
-		reconcile(e, settings_for(e.kind, cfg));
+		reconcile(e, cfg);
 
 	/* Push the user's global NDI readback double-buffer choice to the backend
 	 * (graphics thread). Cheap to set every frame. Only NDI honors it; Spout has

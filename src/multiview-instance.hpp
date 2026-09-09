@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -676,6 +677,18 @@ bool obs_record_rescale_dimensions(uint32_t &w, uint32_t &h);
  * audio, so its audio controls are disabled in the dialog. */
 enum class OutputAudioMode { FollowStreaming, ManualTrack, None };
 
+/* Compile-time set of output backend kinds. Every kind that is built
+ * (AMV_ENABLE_*_OUTPUT) has exactly one descriptor in output_backend_registry()
+ * and exactly one entry in InstanceOutputSettings::backends; kinds whose feature
+ * is compiled out are absent from both. Defined here (not in multiview-output.hpp)
+ * because InstanceOutputSettings keys its per-backend container on it while
+ * multiview-output.hpp already includes this header — the dependency only goes
+ * one way. */
+enum class OutputBackendKind { Spout, Ndi, Decklink };
+
+/* Fields common to every output backend. DeckLink's hardware-specific fields live
+ * in DeckLinkBackendSettings, not here, so Spout/NDI don't persist or validate
+ * settings that are meaningless to them (A3). */
 struct OutputBackendSettings {
 	bool enabled = false;
 	OutputResolutionMode resMode = OutputResolutionMode::CanvasBase;
@@ -690,24 +703,58 @@ struct OutputBackendSettings {
 	OutputAudioMode audioMode = OutputAudioMode::FollowStreaming;
 	int audioTrackIndex = 1; /* 1..6, only used when audioMode == ManualTrack */
 
-	/* DeckLink output (issue #16). Ignored by the Spout/NDI backends. The mode
-	 * raster is locked into customWidth/customHeight by the dialog (resMode stays
-	 * Custom), so resolve_output_dimensions composes at native SDI size. */
-	std::string deckDeviceHash; /* OBS decklink_output "device_hash" */
-	long long deckModeId = 0;   /* OBS decklink_output "mode_id" */
-	int deckKeyer = 0;          /* 0 = Disabled, 1 = External, 2 = Internal */
-	bool deckForceSdr = false;  /* force SDR colorspace (709) over HDR (2100 PQ) */
-
 	obs_data_t *to_obs_data() const;
 	static OutputBackendSettings from_obs_data(obs_data_t *data);
 };
 
-struct InstanceOutputSettings {
-	OutputBackendSettings spout;
-	OutputBackendSettings ndi;
-	OutputBackendSettings decklink; /* issue #16 */
+/* DeckLink-only hardware settings (issue #16). Kept out of the shared
+ * OutputBackendSettings so the Spout/NDI backends carry no per-hardware fields.
+ * The mode raster is locked into the DeckLink backend's common customWidth/
+ * customHeight by the dialog (resMode stays Custom), so resolve_output_dimensions
+ * composes at native SDI size. */
+struct DeckLinkBackendSettings {
+	std::string deviceHash; /* OBS decklink_output "device_hash" */
+	long long modeId = 0;   /* OBS decklink_output "mode_id" */
+	int keyer = 0;          /* 0 = Disabled, 1 = External, 2 = Internal */
+	bool forceSdr = false;  /* force SDR colorspace (709) over HDR (2100 PQ) */
 
-	bool any_enabled() const { return spout.enabled || ndi.enabled || decklink.enabled; }
+	obs_data_t *to_obs_data() const;
+	static DeckLinkBackendSettings from_obs_data(obs_data_t *data);
+};
+
+struct InstanceOutputSettings {
+	/* One common-settings entry per registered backend kind, keyed by kind.
+	 * Populated by from_obs_data (iterating output_backend_registry()) and by
+	 * the settings dialog. A kind that is compiled out has no entry. */
+	std::map<OutputBackendKind, OutputBackendSettings> backends;
+
+	/* DeckLink hardware settings (device/mode/keyer/forceSdr). Always present
+	 * (a plain member, independent of AMV_ENABLE_DECKLINK_OUTPUT) so the DeckLink
+	 * hardware config round-trips losslessly even on a build without the DeckLink
+	 * backend. */
+	DeckLinkBackendSettings decklink;
+
+	/* Verbatim (JSON) copies of any persisted backend sub-object whose kind is
+	 * NOT in this build's registry — e.g. a Windows-authored Spout config opened
+	 * on a macOS build where Spout is compiled out. Kept so re-saving the config
+	 * on the narrower build doesn't silently drop the wider build's settings, the
+	 * same "never discard config you don't understand" guarantee as the X2
+	 * config-version guard. Keyed by the config sub-object key. Empty on a build
+	 * where every persisted kind is present. */
+	std::map<std::string, std::string> unknownBackends;
+
+	/* Common settings for `kind`, or a shared default (disabled) when the kind
+	 * has no entry. The returned reference is valid for the lifetime of this
+	 * object (or the process, for the default). */
+	const OutputBackendSettings &at(OutputBackendKind kind) const;
+
+	bool any_enabled() const
+	{
+		for (const auto &kv : backends)
+			if (kv.second.enabled)
+				return true;
+		return false;
+	}
 
 	obs_data_t *to_obs_data() const;
 	static InstanceOutputSettings from_obs_data(obs_data_t *data);

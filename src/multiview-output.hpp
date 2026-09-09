@@ -61,11 +61,22 @@ public:
 	virtual void submit_frame(const std::string &name, gs_texture_t *tex, uint32_t w, uint32_t h,
 				  int fpsDivisor) = 0;
 
-	/* Configure audio transmission from the backend's settings (audio source
-	 * track). Called on the graphics thread during reconcile. Backends without
-	 * an audio path (Spout) ignore it; NDI (re)connects its OBS audio capture
-	 * when the selected track changes. */
+	/* Configure audio transmission from the backend's COMMON settings (audio
+	 * source track, from OutputBackendSettings). Called on the graphics thread
+	 * during reconcile. Backends without an audio path (Spout) ignore it; NDI
+	 * (re)connects its OBS audio capture when the selected track changes. The
+	 * DeckLink backend reads only audioMode/audioTrackIndex here — its hardware
+	 * fields arrive via configure_decklink instead. */
 	virtual void configure_audio(const OutputBackendSettings &cfg) { (void)cfg; }
+
+	/* Issue #16 / A3: receive DeckLink hardware settings (device/mode/keyer/
+	 * forceSdr). Only the DeckLink backend overrides it; other backends have no
+	 * hardware config. Kept separate from configure_audio so the shared
+	 * OutputBackendSettings carries no per-hardware fields. Called on the graphics
+	 * thread during reconcile, BEFORE configure_audio (the DeckLink backend drives
+	 * its create/restart decision from configure_audio and must see the hardware
+	 * fields already cached). */
+	virtual void configure_decklink(const DeckLinkBackendSettings &hw) { (void)hw; }
 
 	/* Issue #10: toggle GPU->CPU readback double-buffering. Called on the
 	 * graphics thread during reconcile with the user's global setting. Only the
@@ -117,11 +128,11 @@ public:
 	virtual bool is_active() const = 0;
 };
 
-/* Compile-time set of output backend kinds. Every kind that is built
+/* OutputBackendKind is defined in multiview-instance.hpp (included above), where
+ * InstanceOutputSettings keys its per-backend container on it. Every built kind
  * (AMV_ENABLE_*_OUTPUT) has exactly one descriptor in output_backend_registry();
- * kinds whose feature is compiled out are absent from the registry (and so from
- * the manager's live container) entirely. */
-enum class OutputBackendKind { Spout, Ndi, Decklink };
+ * kinds compiled out are absent from the registry (and so from the manager's live
+ * container) entirely. */
 
 /* Static, stateless descriptor for one output backend kind. The registry owns a
  * fixed table of these (one per built backend); the manager holds the live
@@ -161,7 +172,7 @@ public:
 	MultiviewOutputManager &operator=(const MultiviewOutputManager &) = delete;
 
 	/* Graphics-thread, once per frame. Reconcile backends against `cfg`
-	 * (create/stop Spout per cfg.spout.enabled; NDI inert for now), then for
+	 * (create/stop each backend per cfg.at(kind).enabled), then for
 	 * each UNIQUE enabled output resolution that is due this frame: render the
 	 * grid into that resolution's texrender via `draw(w,h)` (which paints the
 	 * composition mapped to 0,0,w,h) and submit to each backend at that
@@ -211,12 +222,11 @@ private:
 
 	static uint64_t res_key(uint32_t w, uint32_t h) { return ((uint64_t)w << 32) | (uint64_t)h; }
 
-	/* The single kind->settings mapping. reconcile() reads each backend's config
-	 * from the instance settings through here; 4b removes it when
-	 * InstanceOutputSettings becomes a kind-keyed container. */
-	static const OutputBackendSettings &settings_for(OutputBackendKind kind, const InstanceOutputSettings &cfg);
-
-	void reconcile(BackendEntry &e, const OutputBackendSettings &s);
+	/* Reconcile one live backend slot against the whole instance config. Reads the
+	 * slot's common settings via cfg.at(kind) and (for DeckLink) its hardware
+	 * settings via cfg.decklink; the kind->settings mapping now lives entirely in
+	 * InstanceOutputSettings (no manager-side switch). */
+	void reconcile(BackendEntry &e, const InstanceOutputSettings &cfg);
 	gs_texrender_t *get_texrender(uint64_t key);
 	void render_one_resolution(const std::string &name, uint32_t w, uint32_t h,
 				   const std::function<void(int w, int h)> &draw);

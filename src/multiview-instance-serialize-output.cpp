@@ -12,6 +12,7 @@ License: GPL-2.0-or-later
 */
 
 #include "multiview-instance.hpp"
+#include "multiview-output.hpp"
 
 #include <obs.h>
 #include <obs-data.h>
@@ -20,6 +21,8 @@ License: GPL-2.0-or-later
 
 #include <cstdio>
 #include <cstring>
+#include <set>
+#include <string>
 
 /* Shared output-dimension bounds. A huge or zero output size feeds straight
  * into gs_texrender_create and the GPU shared texture, so every resolved
@@ -134,11 +137,6 @@ obs_data_t *OutputBackendSettings::to_obs_data() const
 	obs_data_set_int(data, "fpsDivisor", fpsDivisor);
 	obs_data_set_string(data, "audioMode", output_audio_mode_to_str(audioMode));
 	obs_data_set_int(data, "audioTrackIndex", audioTrackIndex);
-	/* DeckLink (issue #16); Spout/NDI ignore these. */
-	obs_data_set_string(data, "deckDeviceHash", deckDeviceHash.c_str());
-	obs_data_set_int(data, "deckModeId", deckModeId);
-	obs_data_set_int(data, "deckKeyer", deckKeyer);
-	obs_data_set_bool(data, "deckForceSdr", deckForceSdr);
 	return data;
 }
 
@@ -180,46 +178,82 @@ OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
 		s.audioTrackIndex = 1;
 	else if (s.audioTrackIndex > 6)
 		s.audioTrackIndex = 6;
-	/* DeckLink (issue #16); absent keys -> defaults (disabled). */
-	if (obs_data_has_user_value(data, "deckDeviceHash"))
-		s.deckDeviceHash = obs_data_get_string(data, "deckDeviceHash");
-	if (obs_data_has_user_value(data, "deckModeId"))
-		s.deckModeId = obs_data_get_int(data, "deckModeId");
+	return s;
+}
+
+obs_data_t *DeckLinkBackendSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_string(data, "deviceHash", deviceHash.c_str());
+	obs_data_set_int(data, "modeId", modeId);
+	obs_data_set_int(data, "keyer", keyer);
+	obs_data_set_bool(data, "forceSdr", forceSdr);
+	return data;
+}
+
+DeckLinkBackendSettings DeckLinkBackendSettings::from_obs_data(obs_data_t *data)
+{
+	DeckLinkBackendSettings s;
+	if (!data)
+		return s;
+	if (obs_data_has_user_value(data, "deviceHash"))
+		s.deviceHash = obs_data_get_string(data, "deviceHash");
+	if (obs_data_has_user_value(data, "modeId"))
+		s.modeId = obs_data_get_int(data, "modeId");
 	/* H2: a negative mode_id is garbage; clamp to 0 (= "unset"), which the
 	 * backend treats as a hard refusal-to-create rather than feeding it to
 	 * obs_output_create (null DeckLinkDeviceMode deref). */
-	if (s.deckModeId < 0)
-		s.deckModeId = 0;
-	if (obs_data_has_user_value(data, "deckKeyer"))
-		s.deckKeyer = (int)obs_data_get_int(data, "deckKeyer");
+	if (s.modeId < 0)
+		s.modeId = 0;
+	if (obs_data_has_user_value(data, "keyer"))
+		s.keyer = (int)obs_data_get_int(data, "keyer");
 	/* keyer is 0 (Disabled) / 1 (External) / 2 (Internal). */
-	if (s.deckKeyer < 0 || s.deckKeyer > 2)
-		s.deckKeyer = 0;
-	if (obs_data_has_user_value(data, "deckForceSdr"))
-		s.deckForceSdr = obs_data_get_bool(data, "deckForceSdr");
-	/* M1: a DeckLink config (a device is selected) locks the compose size to the
-	 * mode raster carried in customWidth/customHeight with resMode Custom. Force
-	 * Custom so a hand-edited/corrupt resMode can't make the manager compose at
-	 * the canvas/output size while the backend opens its video_t at the SDI
-	 * raster — which would drop every frame on the dimension guard. No-op for
-	 * Spout/NDI (they never set deckDeviceHash). */
-	if (!s.deckDeviceHash.empty())
-		s.resMode = OutputResolutionMode::Custom;
+	if (s.keyer < 0 || s.keyer > 2)
+		s.keyer = 0;
+	if (obs_data_has_user_value(data, "forceSdr"))
+		s.forceSdr = obs_data_get_bool(data, "forceSdr");
 	return s;
+}
+
+const OutputBackendSettings &InstanceOutputSettings::at(OutputBackendKind kind) const
+{
+	auto it = backends.find(kind);
+	if (it != backends.end())
+		return it->second;
+	/* No entry for this kind (default-constructed settings, or a kind compiled
+	 * out of this build): a shared, program-lifetime disabled default. */
+	static const OutputBackendSettings kDefault;
+	return kDefault;
 }
 
 obs_data_t *InstanceOutputSettings::to_obs_data() const
 {
 	obs_data_t *data = obs_data_create();
-	obs_data_t *sp = spout.to_obs_data();
-	obs_data_set_obj(data, "spout", sp);
-	obs_data_release(sp);
-	obs_data_t *nd = ndi.to_obs_data();
-	obs_data_set_obj(data, "ndi", nd);
-	obs_data_release(nd);
-	obs_data_t *dl = decklink.to_obs_data();
-	obs_data_set_obj(data, "decklink", dl);
-	obs_data_release(dl);
+	/* Each backend's common settings under its registry id ("spout"/"ndi"/
+	 * "decklink"): iterate the registry so a newly added kind is serialized with
+	 * zero extra code (and a compiled-out kind is simply never written). */
+	for (const auto &desc : output_backend_registry()) {
+		obs_data_t *bo = at(desc.kind).to_obs_data();
+		obs_data_set_obj(data, desc.id, bo);
+		obs_data_release(bo);
+	}
+	/* DeckLink hardware settings, nested separately so the shared per-backend
+	 * object stays hardware-agnostic. Always written (the member is always
+	 * present) — harmless on a build without the DeckLink backend. */
+	obs_data_t *dh = decklink.to_obs_data();
+	obs_data_set_obj(data, "decklinkHw", dh);
+	obs_data_release(dh);
+	/* Re-emit any sub-object for a kind not in this build's registry, verbatim,
+	 * so a narrower build never drops a wider build's settings (see the member's
+	 * declaration). These keys never collide with the registry ids or
+	 * "decklinkHw" above (from_obs_data only captured keys that matched none). */
+	for (const auto &kv : unknownBackends) {
+		obs_data_t *sub = obs_data_create_from_json(kv.second.c_str());
+		if (sub) {
+			obs_data_set_obj(data, kv.first.c_str(), sub);
+			obs_data_release(sub);
+		}
+	}
 	return data;
 }
 
@@ -228,15 +262,49 @@ InstanceOutputSettings InstanceOutputSettings::from_obs_data(obs_data_t *data)
 	InstanceOutputSettings s;
 	if (!data)
 		return s;
-	obs_data_t *sp = obs_data_get_obj(data, "spout");
-	s.spout = OutputBackendSettings::from_obs_data(sp);
-	obs_data_release(sp);
-	obs_data_t *nd = obs_data_get_obj(data, "ndi");
-	s.ndi = OutputBackendSettings::from_obs_data(nd);
-	obs_data_release(nd);
-	obs_data_t *dl = obs_data_get_obj(data, "decklink");
-	s.decklink = OutputBackendSettings::from_obs_data(dl);
-	obs_data_release(dl);
+	/* One common-settings entry per registered backend kind, read from its
+	 * registry-id sub-object (absent sub-object -> defaults). */
+	for (const auto &desc : output_backend_registry()) {
+		obs_data_t *bo = obs_data_get_obj(data, desc.id);
+		s.backends[desc.kind] = OutputBackendSettings::from_obs_data(bo);
+		obs_data_release(bo);
+	}
+	obs_data_t *dh = obs_data_get_obj(data, "decklinkHw");
+	s.decklink = DeckLinkBackendSettings::from_obs_data(dh);
+	obs_data_release(dh);
+	/* M1: a DeckLink config (a device is selected) locks the compose size to the
+	 * mode raster carried in the DeckLink backend's customWidth/customHeight with
+	 * resMode Custom. Force Custom so a hand-edited/corrupt resMode can't make the
+	 * manager compose at the canvas/output size while the backend opens its
+	 * video_t at the SDI raster — which would drop every frame on the dimension
+	 * guard. Applied here (not in OutputBackendSettings::from_obs_data) because it
+	 * couples the DeckLink hardware settings to the DeckLink common settings, and
+	 * only this scope sees both. No-op when DeckLink is compiled out (no entry) or
+	 * no device is selected. */
+	if (!s.decklink.deviceHash.empty()) {
+		auto it = s.backends.find(OutputBackendKind::Decklink);
+		if (it != s.backends.end())
+			it->second.resMode = OutputResolutionMode::Custom;
+	}
+	/* Retain, verbatim, any persisted backend sub-object whose kind this build's
+	 * registry doesn't know (e.g. "spout" on a macOS build) so to_obs_data can
+	 * write it back unchanged instead of silently dropping it. The consumed keys
+	 * are the registry ids (read above) plus "decklinkHw" (always read); every
+	 * other object-typed top-level key is an out-of-build backend to preserve. */
+	std::set<std::string> consumed;
+	for (const auto &desc : output_backend_registry())
+		consumed.insert(desc.id);
+	consumed.insert("decklinkHw");
+	for (obs_data_item_t *item = obs_data_first(data); item; obs_data_item_next(&item)) {
+		const char *key = obs_data_item_get_name(item);
+		if (!key || obs_data_item_gettype(item) != OBS_DATA_OBJECT || consumed.count(key))
+			continue;
+		obs_data_t *sub = obs_data_item_get_obj(item);
+		if (sub) {
+			s.unknownBackends[key] = obs_data_get_json(sub);
+			obs_data_release(sub);
+		}
+	}
 	return s;
 }
 
