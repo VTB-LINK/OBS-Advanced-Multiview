@@ -197,67 +197,48 @@ void SourcePicker::on_accept()
 		activeList = scene_list_;
 	else if (idx == 2)
 		activeList = source_list_;
-	else if (tabs_->widget(idx) == media_tab_) {
-		/* Phase 3 / M6.1+ task 9.1.B: full ffmpeg parity. The form
-		 * builds a ready-to-persist SignalConfig with provider=Ffmpeg
-		 * and providerSettings carrying every key the user touched
-		 * (defaults are dropped to keep persisted JSON compact). */
-		if (!media_form_ || !media_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.MediaRequired"),
-						 media_form_ ? media_form_->invalid_reason() : QString());
+	else {
+		/* External provider tabs. The tab -> settings-form wiring below
+		 * is the only per-provider knowledge left here; validation and
+		 * read-back are uniform through ProviderSettingsForm. `form` is
+		 * null when the tab gated its provider out as unavailable (no
+		 * form was built); the fallback title then matches what the
+		 * form's invalid_title_key() would return, so the shown title is
+		 * identical whether or not the form exists. */
+		struct ProviderTab {
+			QWidget *tab;
+			ProviderSettingsForm *form;
+			const char *fallback_title;
+		};
+		const ProviderTab provider_tabs[] = {
+			{media_tab_, media_form_, "AMVPlugin.EditSource.Error.MediaRequired"},
+			{ndi_tab_, ndi_form_, "AMVPlugin.EditSource.Error.NDIRequired"},
+			{spout_tab_, spout_form_, "AMVPlugin.EditSource.Error.SpoutRequired"},
+			{vlc_tab_, vlc_form_, "AMVPlugin.EditSource.Error.PlaylistRequired"},
+		};
+
+		QWidget *cur = tabs_->widget(idx);
+		for (const auto &pt : provider_tabs) {
+			if (cur != pt.tab)
+				continue;
+			ProviderSettingsForm *form = pt.form;
+			if (!form || !form->is_valid()) {
+				QMessageBox::information(
+					this, amv::text(form ? form->invalid_title_key() : pt.fallback_title),
+					form ? form->invalid_reason() : QString());
+				return;
+			}
+			result_ = CellAssignment{};
+			result_.signalConfig = form->to_signal_config();
+			accept();
 			return;
 		}
-		result_ = CellAssignment{};
-		result_.signalConfig = media_form_->to_signal_config();
-		accept();
-		return;
-	} else if (tabs_->widget(idx) == ndi_tab_) {
-		/* Phase 3 / M6.2: NDI tab. Form yields a SignalConfig with
-		 * provider=Ndi and providerSettings carrying ndi_source_name +
-		 * the user's choice of bandwidth / latency / audio / framesync
-		 * / hardware acceleration. */
-		if (!ndi_form_ || !ndi_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.NDIRequired"),
-						 ndi_form_ ? ndi_form_->invalid_reason() : QString());
-			return;
-		}
-		result_ = CellAssignment{};
-		result_.signalConfig = ndi_form_->to_signal_config();
-		accept();
-		return;
-	} else if (tabs_->widget(idx) == spout_tab_) {
-		/* Phase 3 / M6.3: Spout tab. Form yields a SignalConfig with
-		 * provider=Spout and providerSettings carrying spoutsenders
-		 * (or "usefirstavailablesender") + composite mode + tick
-		 * speed. */
-		if (!spout_form_ || !spout_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.SpoutRequired"),
-						 spout_form_ ? spout_form_->invalid_reason() : QString());
-			return;
-		}
-		result_ = CellAssignment{};
-		result_.signalConfig = spout_form_->to_signal_config();
-		accept();
-		return;
-	} else if (tabs_->widget(idx) == vlc_tab_) {
-		/* Phase 3 / M6.4: VLC tab. Form yields a SignalConfig with
-		 * provider=Vlc and providerSettings carrying playlist +
-		 * loop / shuffle / behavior / network_caching / track. */
-		if (!vlc_form_ || !vlc_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.PlaylistRequired"),
-						 vlc_form_ ? vlc_form_->invalid_reason() : QString());
-			return;
-		}
-		result_ = CellAssignment{};
-		result_.signalConfig = vlc_form_->to_signal_config();
-		accept();
-		return;
-	} else {
-		/* Other external provider tabs are still placeholders. Surface
-		 * a clear message instead of silently rejecting so the user
-		 * knows the tab is a real capability that just is not
-		 * implemented yet, then keep the dialog open so they can pick
-		 * something else. */
+
+		/* Other external provider tabs are still placeholders (e.g. the
+		 * reserved WebRTC slot). Surface a clear message instead of
+		 * silently rejecting so the user knows the tab is a real
+		 * capability that just is not implemented yet, then keep the
+		 * dialog open so they can pick something else. */
 		QMessageBox::information(this, amv::text("AMVPlugin.SourcePicker.ExternalUnavailable.Title"),
 					 amv::text("AMVPlugin.SourcePicker.ExternalUnavailable.Message"));
 		return;
@@ -347,7 +328,7 @@ QWidget *SourcePicker::build_media_tab()
 	auto *scroll = new QScrollArea(page);
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
-	media_form_ = new FfmpegMediaForm();
+	media_form_ = make_provider_settings_form(SignalProviderType::Ffmpeg);
 	scroll->setWidget(media_form_);
 	layout->addWidget(scroll, 1);
 
@@ -409,7 +390,7 @@ QWidget *SourcePicker::build_ndi_tab()
 	auto *scroll = new QScrollArea(page);
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
-	ndi_form_ = new NdiSourceForm();
+	ndi_form_ = make_provider_settings_form(SignalProviderType::Ndi);
 	scroll->setWidget(ndi_form_);
 	layout->addWidget(scroll, 1);
 
@@ -474,7 +455,7 @@ QWidget *SourcePicker::build_spout_tab()
 	auto *scroll = new QScrollArea(page);
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
-	spout_form_ = new SpoutSenderForm();
+	spout_form_ = make_provider_settings_form(SignalProviderType::Spout);
 	scroll->setWidget(spout_form_);
 	layout->addWidget(scroll, 1);
 
@@ -521,7 +502,7 @@ QWidget *SourcePicker::build_vlc_tab()
 	auto *scroll = new QScrollArea(page);
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
-	vlc_form_ = new VlcMediaForm();
+	vlc_form_ = make_provider_settings_form(SignalProviderType::Vlc);
 	scroll->setWidget(vlc_form_);
 	layout->addWidget(scroll, 1);
 

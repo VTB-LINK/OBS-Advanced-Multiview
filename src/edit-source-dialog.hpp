@@ -18,10 +18,7 @@ License: GPL-2.0-or-later
 
 #include <QDialog>
 
-class FfmpegMediaForm;
-class NdiSourceForm;
-class SpoutSenderForm;
-class VlcMediaForm;
+class ProviderSettingsForm;
 
 class EditSourceDialog : public QDialog {
 	Q_OBJECT
@@ -40,9 +37,8 @@ private slots:
 	void on_accept();
 
 private:
-	SignalProviderType provider_ = SignalProviderType::Unknown;
-	FfmpegMediaForm *ffmpeg_form_ = nullptr;
-	NdiSourceForm *ndi_form_ = nullptr;
-	SpoutSenderForm *spout_form_ = nullptr;
-	VlcMediaForm *vlc_form_ = nullptr;
+	/* The provider's settings form, or nullptr when the cell's provider
+	 * has no editable form (factory returned nullptr). One member instead
+	 * of one per provider: the type -> form choice lives in the factory. */
+	ProviderSettingsForm *form_ = nullptr;
 };

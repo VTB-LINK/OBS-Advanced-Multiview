@@ -17,7 +17,7 @@ License: GPL-2.0-or-later
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : QDialog(parent), provider_(cfg.provider)
+EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : QDialog(parent)
 {
 	setWindowTitle(amv::text("AMVPlugin.EditSource.Title"));
 	setModal(true);
@@ -96,57 +96,36 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 		root->addWidget(banner);
 	}
 
-	if (cfg.provider == SignalProviderType::Ffmpeg) {
+	/* The type -> form choice lives in make_provider_settings_form(); this
+	 * dialog no longer switches on the provider to pick a form. Spout's
+	 * platform gate generalizes to "disable the form when the provider is
+	 * unsupported on this platform" — provider_platform_supported is only
+	 * ever false for Spout on non-Windows, so this is a no-op for the
+	 * other providers (see signal_provider_supported_on_platform). */
+	form_ = make_provider_settings_form(cfg.provider);
+	if (form_) {
 		auto *scroll = new QScrollArea(this);
 		scroll->setWidgetResizable(true);
 		scroll->setFrameShape(QFrame::NoFrame);
-		ffmpeg_form_ = new FfmpegMediaForm();
-		ffmpeg_form_->load_from(cfg);
-		scroll->setWidget(ffmpeg_form_);
-		root->addWidget(scroll, 1);
-	} else if (cfg.provider == SignalProviderType::Ndi) {
-		auto *scroll = new QScrollArea(this);
-		scroll->setWidgetResizable(true);
-		scroll->setFrameShape(QFrame::NoFrame);
-		ndi_form_ = new NdiSourceForm();
-		ndi_form_->load_from(cfg);
-		scroll->setWidget(ndi_form_);
-		root->addWidget(scroll, 1);
-	} else if (cfg.provider == SignalProviderType::Spout) {
-		auto *scroll = new QScrollArea(this);
-		scroll->setWidgetResizable(true);
-		scroll->setFrameShape(QFrame::NoFrame);
-		spout_form_ = new SpoutSenderForm();
-		spout_form_->load_from(cfg);
+		form_->load_from(cfg);
 		if (!provider_platform_supported)
-			spout_form_->setEnabled(false);
-		scroll->setWidget(spout_form_);
-		root->addWidget(scroll, 1);
-	} else if (cfg.provider == SignalProviderType::Vlc) {
-		auto *scroll = new QScrollArea(this);
-		scroll->setWidgetResizable(true);
-		scroll->setFrameShape(QFrame::NoFrame);
-		vlc_form_ = new VlcMediaForm();
-		vlc_form_->load_from(cfg);
-		scroll->setWidget(vlc_form_);
+			form_->setEnabled(false);
+		scroll->setWidget(form_);
 		root->addWidget(scroll, 1);
 	} else {
-		/* Other external providers don't have an editor yet; their
-		 * own milestones (M6.3 Spout, M6.4 VLC) will add sibling
-		 * forms. Until then, show a plain message so the user knows
-		 * nothing was saved. */
+		/* Providers without a settings form (e.g. the reserved WebRTC
+		 * slot) fall through here. Show a plain message so the user
+		 * knows nothing was saved. */
 		auto *msg = new QLabel(amv::text("AMVPlugin.EditSource.NotImplemented"), this);
 		msg->setWordWrap(true);
 		root->addWidget(msg);
 	}
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-	if ((cfg.provider != SignalProviderType::Ffmpeg && cfg.provider != SignalProviderType::Ndi &&
-	     cfg.provider != SignalProviderType::Spout && cfg.provider != SignalProviderType::Vlc) ||
-	    !provider_available) {
-		/* No editable form for unsupported providers yet, OR the cell's
-		 * provider is missing in this OBS install. Either way disable
-		 * Save so cancel is the only safe action. */
+	if (!form_ || !provider_available) {
+		/* No editable form for this provider yet (form_ == nullptr), OR
+		 * the cell's provider is missing in this OBS install. Either way
+		 * disable Save so cancel is the only safe action. */
 		QPushButton *okBtn = buttons->button(QDialogButtonBox::Ok);
 		if (okBtn)
 			okBtn->setEnabled(false);
@@ -159,43 +138,14 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 
 void EditSourceDialog::on_accept()
 {
-	if (provider_ == SignalProviderType::Ffmpeg && ffmpeg_form_) {
-		if (!ffmpeg_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.MediaRequired"),
-						 ffmpeg_form_->invalid_reason());
-			return;
-		}
-	} else if (provider_ == SignalProviderType::Ndi && ndi_form_) {
-		if (!ndi_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.NDIRequired"),
-						 ndi_form_->invalid_reason());
-			return;
-		}
-	} else if (provider_ == SignalProviderType::Spout && spout_form_) {
-		if (!spout_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.SpoutRequired"),
-						 spout_form_->invalid_reason());
-			return;
-		}
-	} else if (provider_ == SignalProviderType::Vlc && vlc_form_) {
-		if (!vlc_form_->is_valid()) {
-			QMessageBox::information(this, amv::text("AMVPlugin.EditSource.Error.PlaylistRequired"),
-						 vlc_form_->invalid_reason());
-			return;
-		}
+	if (form_ && !form_->is_valid()) {
+		QMessageBox::information(this, amv::text(form_->invalid_title_key()), form_->invalid_reason());
+		return;
 	}
 	accept();
 }
 
 SignalConfig EditSourceDialog::signal_config() const
 {
-	if (provider_ == SignalProviderType::Ffmpeg && ffmpeg_form_)
-		return ffmpeg_form_->to_signal_config();
-	if (provider_ == SignalProviderType::Ndi && ndi_form_)
-		return ndi_form_->to_signal_config();
-	if (provider_ == SignalProviderType::Spout && spout_form_)
-		return spout_form_->to_signal_config();
-	if (provider_ == SignalProviderType::Vlc && vlc_form_)
-		return vlc_form_->to_signal_config();
-	return SignalConfig();
+	return form_ ? form_->to_signal_config() : SignalConfig();
 }

@@ -46,7 +46,7 @@ constexpr int kVlcDefaultTrack = 1;
 
 } // namespace
 
-VlcMediaForm::VlcMediaForm(QWidget *parent) : QWidget(parent)
+VlcMediaForm::VlcMediaForm(QWidget *parent) : ProviderSettingsForm(parent)
 {
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(0, 0, 0, 0);

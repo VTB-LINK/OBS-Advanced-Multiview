@@ -95,6 +95,7 @@ target_sources(
     src/signal-provider-spout.cpp
     src/signal-provider-vlc.cpp
     src/provider-settings-forms.hpp
+    src/provider-settings-forms.cpp
     src/provider-settings-forms-common.hpp
     src/provider-settings-forms-ffmpeg.cpp
     src/provider-settings-forms-ndi.cpp

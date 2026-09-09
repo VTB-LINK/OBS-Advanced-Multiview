@@ -75,7 +75,7 @@ constexpr int kNdiYuvSpaceBT2100 = 3;
 
 } // namespace
 
-NdiSourceForm::NdiSourceForm(QWidget *parent) : QWidget(parent)
+NdiSourceForm::NdiSourceForm(QWidget *parent) : ProviderSettingsForm(parent)
 {
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(0, 0, 0, 0);

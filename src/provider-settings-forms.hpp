@@ -37,6 +37,53 @@ License: GPL-2.0-or-later
 #include <string>
 #include <vector>
 
+/* Abstract base for the per-provider settings form widgets below.
+ *
+ * The two dialogs that host these forms (EditSourceDialog and
+ * SourcePicker) drive them only through this interface: load an existing
+ * config in, read a config / validity out. Neither dialog needs to know
+ * which concrete provider form it is showing, and the single place that
+ * maps a SignalProviderType to a concrete form is the factory
+ * make_provider_settings_form() below. A new provider's settings-form
+ * dispatch is then one case in that factory rather than a parallel
+ * form switch in each dialog (a dialog may still carry its own
+ * per-provider bits, e.g. EditSourceDialog's heading label).
+ *
+ * This is a Qt-side convenience only and is deliberately NOT the same
+ * abstraction as ISignalProvider (signal-provider.hpp): that stays
+ * Qt-free strategy code the runtime uses, whereas these widgets never
+ * cross into the runtime. */
+class ProviderSettingsForm : public QWidget {
+	Q_OBJECT
+public:
+	explicit ProviderSettingsForm(QWidget *parent = nullptr) : QWidget(parent) {}
+
+	/* Populate the form from an existing SignalConfig (for Edit Source /
+	 * re-open). Defaults are applied for keys not present in the data. */
+	virtual void load_from(const SignalConfig &cfg) = 0;
+
+	/* Build a SignalConfig from the current form state. Callers must
+	 * check is_valid() first; the result is undefined otherwise. */
+	virtual SignalConfig to_signal_config() const = 0;
+
+	/* Cheap validity check for the required-field gate. */
+	virtual bool is_valid() const = 0;
+
+	/* User-visible reason when is_valid() returns false; empty when
+	 * valid. Shown as the "invalid input" message-box body. */
+	virtual QString invalid_reason() const = 0;
+
+	/* i18n key for the "invalid input" message-box title, per provider. */
+	virtual const char *invalid_title_key() const = 0;
+};
+
+/* Factory: the single SignalProviderType -> settings-form mapping.
+ * Returns a heap-allocated form (Qt-parented to `parent`), or nullptr for
+ * providers that have no settings form yet (e.g. the reserved WebRTC
+ * slot); callers fall back to their "no editable form" path in that
+ * case. */
+ProviderSettingsForm *make_provider_settings_form(SignalProviderType type, QWidget *parent = nullptr);
+
 /* Form for the FFmpeg media provider.
  *
  * Models the full ffmpeg_source feature surface in two visual layers:
@@ -69,29 +116,31 @@ License: GPL-2.0-or-later
  * those locked values regardless of what's in providerSettings, so a
  * user editing the JSON by hand cannot break activation either.
  */
-class FfmpegMediaForm : public QWidget {
+class FfmpegMediaForm : public ProviderSettingsForm {
 	Q_OBJECT
 public:
 	explicit FfmpegMediaForm(QWidget *parent = nullptr);
 
 	/* Populate the form from an existing SignalConfig (for Edit Source).
 	 * Defaults are applied for keys not present in the data. */
-	void load_from(const SignalConfig &cfg);
+	void load_from(const SignalConfig &cfg) override;
 
 	/* Build a SignalConfig with provider == Ffmpeg, displayName from URL
 	 * or local file path, and providerSettings populated from the form.
 	 * Returns an empty SignalConfig() if the form is invalid (e.g.
 	 * neither URL nor local file given). The caller should validate
 	 * with `is_valid()` before calling this. */
-	SignalConfig to_signal_config() const;
+	SignalConfig to_signal_config() const override;
 
 	/* Cheap validity check: at least one of input URL / local file path
 	 * must be non-empty. */
-	bool is_valid() const;
+	bool is_valid() const override;
 
 	/* User-visible reason when is_valid() returns false. Empty when
 	 * valid. UI uses this in the "URL required" warning popup. */
-	QString invalid_reason() const;
+	QString invalid_reason() const override;
+
+	const char *invalid_title_key() const override { return "AMVPlugin.EditSource.Error.MediaRequired"; }
 
 private slots:
 	void on_local_file_toggled(bool checked);
@@ -139,15 +188,16 @@ private:
  * Discovery is fully driven by signal_provider_ndi_discover_sources()
  * which talks to DistroAV's NDIFinder via a long-lived dormant
  * ndi_source probe. The form just renders the returned list. */
-class NdiSourceForm : public QWidget {
+class NdiSourceForm : public ProviderSettingsForm {
 	Q_OBJECT
 public:
 	explicit NdiSourceForm(QWidget *parent = nullptr);
 
-	void load_from(const SignalConfig &cfg);
-	SignalConfig to_signal_config() const;
-	bool is_valid() const;
-	QString invalid_reason() const;
+	void load_from(const SignalConfig &cfg) override;
+	SignalConfig to_signal_config() const override;
+	bool is_valid() const override;
+	QString invalid_reason() const override;
+	const char *invalid_title_key() const override { return "AMVPlugin.EditSource.Error.NDIRequired"; }
 
 public slots:
 	void refresh_discovery();
@@ -197,15 +247,16 @@ std::vector<std::string> signal_provider_ndi_discover_sources();
  * Discovery is fully driven by signal_provider_spout_discover_senders()
  * which talks to obs-spout2 via a long-lived dormant spout_capture
  * probe. The form just renders the returned list. */
-class SpoutSenderForm : public QWidget {
+class SpoutSenderForm : public ProviderSettingsForm {
 	Q_OBJECT
 public:
 	explicit SpoutSenderForm(QWidget *parent = nullptr);
 
-	void load_from(const SignalConfig &cfg);
-	SignalConfig to_signal_config() const;
-	bool is_valid() const;
-	QString invalid_reason() const;
+	void load_from(const SignalConfig &cfg) override;
+	SignalConfig to_signal_config() const override;
+	bool is_valid() const override;
+	QString invalid_reason() const override;
+	const char *invalid_title_key() const override { return "AMVPlugin.EditSource.Error.SpoutRequired"; }
 
 public slots:
 	void refresh_discovery();
@@ -244,15 +295,16 @@ std::vector<std::string> signal_provider_spout_discover_senders();
  * Persisted JSON shape is identical to OBS's vlc_source so the
  * resulting providerSettings could in principle be moved into a real
  * OBS scene without translation. */
-class VlcMediaForm : public QWidget {
+class VlcMediaForm : public ProviderSettingsForm {
 	Q_OBJECT
 public:
 	explicit VlcMediaForm(QWidget *parent = nullptr);
 
-	void load_from(const SignalConfig &cfg);
-	SignalConfig to_signal_config() const;
-	bool is_valid() const;
-	QString invalid_reason() const;
+	void load_from(const SignalConfig &cfg) override;
+	SignalConfig to_signal_config() const override;
+	bool is_valid() const override;
+	QString invalid_reason() const override;
+	const char *invalid_title_key() const override { return "AMVPlugin.EditSource.Error.PlaylistRequired"; }
 
 private:
 	/* Each playlist row's text() is the path/URL; we don't store a

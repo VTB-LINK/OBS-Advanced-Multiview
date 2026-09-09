@@ -37,7 +37,7 @@ constexpr int kDefaultSpeedPercent = 100;
 
 } // namespace
 
-FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : QWidget(parent)
+FfmpegMediaForm::FfmpegMediaForm(QWidget *parent) : ProviderSettingsForm(parent)
 {
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(0, 0, 0, 0);

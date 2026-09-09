@@ -28,10 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTabWidget>
 #include <QWidget>
 
-class FfmpegMediaForm;
-class NdiSourceForm;
-class SpoutSenderForm;
-class VlcMediaForm;
+class ProviderSettingsForm;
 
 class SourcePicker : public QDialog {
 	Q_OBJECT
@@ -101,19 +98,23 @@ private:
 	 * on_accept can read its value). Null until build_media_tab runs. */
 	QLineEdit *media_url_edit_ = nullptr;
 
-	/* Phase 3 / M6.1+ task 9.1.B: full ffmpeg parity form. Owned by
-	 * the Media tab page; lifetime ends with the dialog. */
-	FfmpegMediaForm *media_form_ = nullptr;
+	/* Per-tab provider settings forms. Each is created via
+	 * make_provider_settings_form() and owned by its tab page; lifetime
+	 * ends with the dialog. Typed as the common base so on_accept()
+	 * validates and reads them back uniformly — the concrete type is
+	 * chosen only in the factory.
+	 *
+	 * Phase 3 / M6.1+ task 9.1.B: full ffmpeg parity form (Media tab). */
+	ProviderSettingsForm *media_form_ = nullptr;
 
-	/* Phase 3 / M6.2: NDI form. Owned by the NDI tab page; lifetime
-	 * ends with the dialog. */
-	NdiSourceForm *ndi_form_ = nullptr;
+	/* Phase 3 / M6.2: NDI form (NDI tab). */
+	ProviderSettingsForm *ndi_form_ = nullptr;
 
-	/* Phase 3 / M6.3: Spout form. Owned by the Spout tab page. */
-	SpoutSenderForm *spout_form_ = nullptr;
+	/* Phase 3 / M6.3: Spout form (Spout tab). */
+	ProviderSettingsForm *spout_form_ = nullptr;
 
-	/* Phase 3 / M6.4: VLC form. Owned by the VLC tab page. */
-	VlcMediaForm *vlc_form_ = nullptr;
+	/* Phase 3 / M6.4: VLC form (VLC tab). */
+	ProviderSettingsForm *vlc_form_ = nullptr;
 
 	CellAssignment result_;
 };

@@ -45,7 +45,7 @@ constexpr int kSpoutTickSlow = 1000;
 
 } // namespace
 
-SpoutSenderForm::SpoutSenderForm(QWidget *parent) : QWidget(parent)
+SpoutSenderForm::SpoutSenderForm(QWidget *parent) : ProviderSettingsForm(parent)
 {
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(0, 0, 0, 0);
