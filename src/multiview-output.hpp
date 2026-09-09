@@ -23,6 +23,7 @@ License: GPL-2.0-or-later
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 /* One output protocol (Spout / NDI / ...). All methods run on the OBS
  * graphics thread. */
@@ -116,6 +117,39 @@ public:
 	virtual bool is_active() const = 0;
 };
 
+/* Compile-time set of output backend kinds. Every kind that is built
+ * (AMV_ENABLE_*_OUTPUT) has exactly one descriptor in output_backend_registry();
+ * kinds whose feature is compiled out are absent from the registry (and so from
+ * the manager's live container) entirely. */
+enum class OutputBackendKind { Spout, Ndi, Decklink };
+
+/* Static, stateless descriptor for one output backend kind. The registry owns a
+ * fixed table of these (one per built backend); the manager holds the live
+ * instances. This mirrors SignalProviderRegistry in spirit, but the backend set
+ * is fixed at compile time, so a static descriptor table replaces runtime
+ * self-registration. Adding a backend = adding one descriptor, and every
+ * reconcile/render/teardown/shutdown path iterates the registry-derived
+ * container, so no path can silently drift out of coverage. */
+struct OutputBackendDesc {
+	OutputBackendKind kind;
+	/* "spout"/"ndi"/"decklink": the serialize key from 4b, also the dialog tab id. */
+	const char *id;
+	/* "Spout"/"NDI"/"DeckLink": human-readable name for logs and the dialog. */
+	const char *displayName;
+	/* = MultiviewOutputManager::{spout,ndi,decklink}_supported. */
+	bool (*available)();
+	/* = create_{spout,ndi,decklink}_output_backend. */
+	std::unique_ptr<IMultiviewOutputBackend> (*create)();
+	/* Whether the backend has an audio path; the dialog greys out the audio
+	 * controls when false (Spout=false, NDI/DeckLink=true). */
+	bool supportsAudio;
+};
+
+/* The single output-backend registry: a program-lifetime static table built
+ * once, conditionally including one descriptor per built backend
+ * (#ifdef AMV_ENABLE_*_OUTPUT). Element addresses are stable for the process. */
+const std::vector<OutputBackendDesc> &output_backend_registry();
+
 /* Owns one offscreen render target per unique output resolution and the active
  * backends for one multiview instance. */
 class MultiviewOutputManager {
@@ -162,12 +196,12 @@ public:
 	static bool decklink_supported();
 
 private:
-	enum class Kind { Spout, Ndi, Decklink };
-
-	/* One backend slot. `enabled` + resolved {w,h} + fpsDivisor are refreshed
-	 * from cfg each frame by reconcile(); `frame` advances once per frame and
-	 * drives the divisor. */
+	/* One backend slot. `kind` names which registry descriptor built it (fixed
+	 * for the slot's lifetime); `enabled` + resolved {w,h} + fpsDivisor are
+	 * refreshed from cfg each frame by reconcile(); `frame` advances once per
+	 * frame and drives the divisor. */
 	struct BackendEntry {
+		OutputBackendKind kind = OutputBackendKind::Spout;
 		std::unique_ptr<IMultiviewOutputBackend> backend;
 		bool enabled = false;
 		uint32_t w = 0, h = 0;
@@ -176,17 +210,21 @@ private:
 	};
 
 	static uint64_t res_key(uint32_t w, uint32_t h) { return ((uint64_t)w << 32) | (uint64_t)h; }
-	static bool backend_available(Kind k);
-	static std::unique_ptr<IMultiviewOutputBackend> create_backend(Kind k);
-	static const char *kind_name(Kind k);
 
-	void reconcile(BackendEntry &e, const OutputBackendSettings &s, Kind kind);
+	/* The single kind->settings mapping. reconcile() reads each backend's config
+	 * from the instance settings through here; 4b removes it when
+	 * InstanceOutputSettings becomes a kind-keyed container. */
+	static const OutputBackendSettings &settings_for(OutputBackendKind kind, const InstanceOutputSettings &cfg);
+
+	void reconcile(BackendEntry &e, const OutputBackendSettings &s);
 	gs_texrender_t *get_texrender(uint64_t key);
 	void render_one_resolution(const std::string &name, uint32_t w, uint32_t h,
 				   const std::function<void(int w, int h)> &draw);
 
-	BackendEntry spout_;
-	BackendEntry ndi_;
-	BackendEntry decklink_; /* issue #16 */
+	/* One entry per output_backend_registry() descriptor, built in registry
+	 * order by the constructor. reconcile/render/teardown/shutdown all iterate
+	 * this one container, so no backend can be covered by one path and missed by
+	 * another (the pre-registry hazard). */
+	std::vector<BackendEntry> backends_;
 	std::map<uint64_t, gs_texrender_t *> texrenders_;
 };

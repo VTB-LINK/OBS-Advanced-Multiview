@@ -29,7 +29,19 @@ License: GPL-2.0-or-later
 #include "multiview-output-decklink.hpp"
 #endif
 
-MultiviewOutputManager::MultiviewOutputManager() = default;
+MultiviewOutputManager::MultiviewOutputManager()
+{
+	/* One live slot per built backend, in registry order. Every reconcile/
+	 * render/teardown/shutdown path iterates backends_, so a backend that is in
+	 * the registry is covered by all of them or by none — never a subset. */
+	const auto &registry = output_backend_registry();
+	backends_.reserve(registry.size());
+	for (const auto &desc : registry) {
+		BackendEntry e;
+		e.kind = desc.kind;
+		backends_.push_back(std::move(e));
+	}
+}
 
 MultiviewOutputManager::~MultiviewOutputManager()
 {
@@ -70,64 +82,79 @@ bool MultiviewOutputManager::decklink_supported()
 #endif
 }
 
-bool MultiviewOutputManager::backend_available(Kind k)
+const std::vector<OutputBackendDesc> &output_backend_registry()
 {
-	switch (k) {
-	case Kind::Spout:
-		return spout_supported();
-	case Kind::Ndi:
-		return ndi_supported();
-	case Kind::Decklink:
-		return decklink_supported();
-	}
-	return false;
-}
-
-const char *MultiviewOutputManager::kind_name(Kind k)
-{
-	switch (k) {
-	case Kind::Spout:
-		return "Spout";
-	case Kind::Ndi:
-		return "NDI";
-	case Kind::Decklink:
-		return "DeckLink";
-	}
-	return "?";
-}
-
-std::unique_ptr<IMultiviewOutputBackend> MultiviewOutputManager::create_backend(Kind k)
-{
+	/* Program-lifetime static table. Each descriptor's available/create point at
+	 * the existing per-backend gates and factories, so the behavior of "is this
+	 * backend possible" and "make one" is unchanged — only the dispatch moves
+	 * from three switches into this table. Conditionally compiled: a backend
+	 * whose feature is off is simply not registered (matching the old inert
+	 * named member, which was always present but could never be created). */
+	static const std::vector<OutputBackendDesc> registry = [] {
+		std::vector<OutputBackendDesc> r;
 #ifdef AMV_ENABLE_SPOUT_OUTPUT
-	if (k == Kind::Spout)
-		return create_spout_output_backend();
+		r.push_back({OutputBackendKind::Spout, "spout", "Spout", &MultiviewOutputManager::spout_supported,
+			     &create_spout_output_backend, /*supportsAudio=*/false});
 #endif
 #ifdef AMV_ENABLE_NDI_OUTPUT
-	if (k == Kind::Ndi)
-		return create_ndi_output_backend();
+		r.push_back({OutputBackendKind::Ndi, "ndi", "NDI", &MultiviewOutputManager::ndi_supported,
+			     &create_ndi_output_backend, /*supportsAudio=*/true});
 #endif
 #ifdef AMV_ENABLE_DECKLINK_OUTPUT
-	if (k == Kind::Decklink)
-		return create_decklink_output_backend();
+		r.push_back({OutputBackendKind::Decklink, "decklink", "DeckLink",
+			     &MultiviewOutputManager::decklink_supported, &create_decklink_output_backend,
+			     /*supportsAudio=*/true});
 #endif
-	(void)k;
-	return nullptr;
+		return r;
+	}();
+	return registry;
 }
 
-void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSettings &s, Kind kind)
+/* The descriptor for a live slot's kind. backends_ is built from the registry,
+ * so every live slot's kind resolves in the loop below; the fallback is
+ * unreachable on any real path (an empty registry yields no slots to reconcile,
+ * so desc_for is never called). Degrade to a program-lifetime empty descriptor
+ * rather than registry.front() so a future misuse — or an all-backends-compiled-
+ * out build — can never dereference past the end of an empty vector. */
+static const OutputBackendDesc &desc_for(OutputBackendKind kind)
 {
-	const bool want = s.enabled && backend_available(kind);
+	const auto &registry = output_backend_registry();
+	for (const auto &d : registry)
+		if (d.kind == kind)
+			return d;
+	static const OutputBackendDesc kUnknown{};
+	return kUnknown;
+}
+
+const OutputBackendSettings &MultiviewOutputManager::settings_for(OutputBackendKind kind,
+								  const InstanceOutputSettings &cfg)
+{
+	switch (kind) {
+	case OutputBackendKind::Spout:
+		return cfg.spout;
+	case OutputBackendKind::Ndi:
+		return cfg.ndi;
+	case OutputBackendKind::Decklink:
+		return cfg.decklink;
+	}
+	return cfg.spout;
+}
+
+void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSettings &s)
+{
+	const OutputBackendDesc &desc = desc_for(e.kind);
+	const bool want = s.enabled && desc.available();
 
 	if (want && !e.backend) {
-		e.backend = create_backend(kind);
+		e.backend = desc.create();
 		e.frame = 0;
 		if (e.backend)
-			obs_log(LOG_INFO, "[multiview-output] %s output enabled", kind_name(kind));
+			obs_log(LOG_INFO, "[multiview-output] %s output enabled", desc.displayName);
 	} else if (!want && e.backend) {
 		e.backend->stop();
 		e.backend.reset();
 		e.frame = 0;
-		obs_log(LOG_INFO, "[multiview-output] %s output disabled", kind_name(kind));
+		obs_log(LOG_INFO, "[multiview-output] %s output disabled", desc.displayName);
 	}
 
 	e.enabled = (e.backend != nullptr);
@@ -195,11 +222,10 @@ void MultiviewOutputManager::render_one_resolution(const std::string &name, uint
 	 * frame (frame % fpsDivisor == 0) AND wants a frame (#2: an NDI backend with
 	 * no receiver is skipped even when a co-resolution backend forced the
 	 * compose). */
-	BackendEntry *entries[] = {&spout_, &ndi_, &decklink_};
-	for (BackendEntry *e : entries) {
-		if (e->enabled && e->w == w && e->h == h && (e->frame % e->fpsDivisor) == 0 && e->backend &&
-		    e->backend->wants_frame())
-			e->backend->submit_frame(name, tex, w, h, e->fpsDivisor);
+	for (BackendEntry &e : backends_) {
+		if (e.enabled && e.w == w && e.h == h && (e.frame % e.fpsDivisor) == 0 && e.backend &&
+		    e.backend->wants_frame())
+			e.backend->submit_frame(name, tex, w, h, e.fpsDivisor);
 	}
 }
 
@@ -209,25 +235,25 @@ void MultiviewOutputManager::render_all(const std::string &name, const InstanceO
 	if (!draw)
 		return;
 
-	reconcile(spout_, cfg.spout, Kind::Spout);
-	reconcile(ndi_, cfg.ndi, Kind::Ndi);
-	reconcile(decklink_, cfg.decklink, Kind::Decklink);
+	for (BackendEntry &e : backends_)
+		reconcile(e, settings_for(e.kind, cfg));
 
 	/* Push the user's global NDI readback double-buffer choice to the backend
-	 * (graphics thread; no-op on Spout). Cheap to set every frame. DeckLink
-	 * always double-buffers internally (never stall the main program), so it
-	 * ignores this too. */
-	if (ndi_.backend)
-		ndi_.backend->set_double_buffer(ndiDoubleBuffer);
-
-	BackendEntry *entries[] = {&spout_, &ndi_, &decklink_};
+	 * (graphics thread). Cheap to set every frame. Only NDI honors it; Spout has
+	 * no readback and DeckLink always double-buffers internally (never stall the
+	 * main program), so both implement set_double_buffer as a no-op — iterating
+	 * every backend here is behaviorally identical to the old NDI-only call. */
+	for (BackendEntry &e : backends_) {
+		if (e.backend)
+			e.backend->set_double_buffer(ndiDoubleBuffer);
+	}
 
 	/* #2: give every enabled backend a chance to (re)create its sender so it
 	 * stays discoverable even on frames we skip. NDI needs this so receivers can
 	 * connect while idle; Spout's prepare() is a no-op. Done before any compose. */
-	for (BackendEntry *e : entries) {
-		if (e->enabled && e->backend)
-			e->backend->prepare(name);
+	for (BackendEntry &e : backends_) {
+		if (e.enabled && e.backend)
+			e.backend->prepare(name);
 	}
 
 	/* Unique resolutions that have at least one backend DUE this frame.
@@ -242,12 +268,12 @@ void MultiviewOutputManager::render_all(const std::string &name, const InstanceO
 	 * realloc spike. */
 	std::set<uint64_t> due_res;
 	std::set<uint64_t> live_res;
-	for (BackendEntry *e : entries) {
-		if (!e->enabled || e->w == 0 || e->h == 0)
+	for (BackendEntry &e : backends_) {
+		if (!e.enabled || e.w == 0 || e.h == 0)
 			continue;
-		live_res.insert(res_key(e->w, e->h));
-		if ((e->frame % e->fpsDivisor) == 0 && e->backend && e->backend->wants_frame())
-			due_res.insert(res_key(e->w, e->h));
+		live_res.insert(res_key(e.w, e.h));
+		if ((e.frame % e.fpsDivisor) == 0 && e.backend && e.backend->wants_frame())
+			due_res.insert(res_key(e.w, e.h));
 	}
 
 	for (uint64_t key : due_res) {
@@ -257,9 +283,9 @@ void MultiviewOutputManager::render_all(const std::string &name, const InstanceO
 	}
 
 	/* Advance frame counters for all enabled backends. */
-	for (BackendEntry *e : entries) {
-		if (e->enabled)
-			e->frame++;
+	for (BackendEntry &e : backends_) {
+		if (e.enabled)
+			e.frame++;
 	}
 
 	/* GC texrenders no longer matching any live resolution (resolution change
@@ -276,21 +302,16 @@ void MultiviewOutputManager::render_all(const std::string &name, const InstanceO
 
 void MultiviewOutputManager::teardown_locked()
 {
-	if (spout_.backend) {
-		spout_.backend->stop();
-		spout_.backend.reset();
+	/* Stop + release every backend in registry order (Spout, NDI, DeckLink),
+	 * then clear its enabled flag — identical to the old three explicit blocks. */
+	for (BackendEntry &e : backends_) {
+		if (e.backend) {
+			e.backend->stop();
+			e.backend.reset();
+		}
 	}
-	if (ndi_.backend) {
-		ndi_.backend->stop();
-		ndi_.backend.reset();
-	}
-	if (decklink_.backend) {
-		decklink_.backend->stop();
-		decklink_.backend.reset();
-	}
-	spout_.enabled = false;
-	ndi_.enabled = false;
-	decklink_.enabled = false;
+	for (BackendEntry &e : backends_)
+		e.enabled = false;
 
 	for (auto &kv : texrenders_)
 		gs_texrender_destroy(kv.second);
@@ -299,7 +320,14 @@ void MultiviewOutputManager::teardown_locked()
 
 void MultiviewOutputManager::shutdown_graphics()
 {
-	if (!spout_.backend && !ndi_.backend && !decklink_.backend && texrenders_.empty())
+	bool any_backend = false;
+	for (const BackendEntry &e : backends_) {
+		if (e.backend) {
+			any_backend = true;
+			break;
+		}
+	}
+	if (!any_backend && texrenders_.empty())
 		return;
 
 	obs_enter_graphics();

@@ -128,9 +128,10 @@ bool NdiRuntime::available()
 {
 	/* The NDI runtime's presence is fixed for the session, so probe once and
 	 * cache the result. reconcile() reaches this every frame while NDI output
-	 * is enabled (via MultiviewOutputManager::backend_available) — we don't
-	 * want a load probe per frame. A runtime installed mid-session is picked up
-	 * on the next restart (matching how OBS NDI plugins resolve it at load). */
+	 * is enabled (via the NDI descriptor's available() -> ndi_supported()) — we
+	 * don't want a load probe per frame. A runtime installed mid-session is
+	 * picked up on the next restart (matching how OBS NDI plugins resolve it at
+	 * load). */
 	static std::mutex mtx;
 	static int cached = -1;
 
