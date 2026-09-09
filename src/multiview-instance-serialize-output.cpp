@@ -126,6 +126,11 @@ obs_data_t *OutputBackendSettings::to_obs_data() const
 	obs_data_set_int(data, "fpsDivisor", fpsDivisor);
 	obs_data_set_string(data, "audioMode", output_audio_mode_to_str(audioMode));
 	obs_data_set_int(data, "audioTrackIndex", audioTrackIndex);
+	/* DeckLink (issue #16); Spout/NDI ignore these. */
+	obs_data_set_string(data, "deckDeviceHash", deckDeviceHash.c_str());
+	obs_data_set_int(data, "deckModeId", deckModeId);
+	obs_data_set_int(data, "deckKeyer", deckKeyer);
+	obs_data_set_bool(data, "deckForceSdr", deckForceSdr);
 	return data;
 }
 
@@ -169,6 +174,31 @@ OutputBackendSettings OutputBackendSettings::from_obs_data(obs_data_t *data)
 		s.audioTrackIndex = 1;
 	else if (s.audioTrackIndex > 6)
 		s.audioTrackIndex = 6;
+	/* DeckLink (issue #16); absent keys -> defaults (disabled). */
+	if (obs_data_has_user_value(data, "deckDeviceHash"))
+		s.deckDeviceHash = obs_data_get_string(data, "deckDeviceHash");
+	if (obs_data_has_user_value(data, "deckModeId"))
+		s.deckModeId = obs_data_get_int(data, "deckModeId");
+	/* H2: a negative mode_id is garbage; clamp to 0 (= "unset"), which the
+	 * backend treats as a hard refusal-to-create rather than feeding it to
+	 * obs_output_create (null DeckLinkDeviceMode deref). */
+	if (s.deckModeId < 0)
+		s.deckModeId = 0;
+	if (obs_data_has_user_value(data, "deckKeyer"))
+		s.deckKeyer = (int)obs_data_get_int(data, "deckKeyer");
+	/* keyer is 0 (Disabled) / 1 (External) / 2 (Internal). */
+	if (s.deckKeyer < 0 || s.deckKeyer > 2)
+		s.deckKeyer = 0;
+	if (obs_data_has_user_value(data, "deckForceSdr"))
+		s.deckForceSdr = obs_data_get_bool(data, "deckForceSdr");
+	/* M1: a DeckLink config (a device is selected) locks the compose size to the
+	 * mode raster carried in customWidth/customHeight with resMode Custom. Force
+	 * Custom so a hand-edited/corrupt resMode can't make the manager compose at
+	 * the canvas/output size while the backend opens its video_t at the SDI
+	 * raster — which would drop every frame on the dimension guard. No-op for
+	 * Spout/NDI (they never set deckDeviceHash). */
+	if (!s.deckDeviceHash.empty())
+		s.resMode = OutputResolutionMode::Custom;
 	return s;
 }
 
@@ -181,6 +211,9 @@ obs_data_t *InstanceOutputSettings::to_obs_data() const
 	obs_data_t *nd = ndi.to_obs_data();
 	obs_data_set_obj(data, "ndi", nd);
 	obs_data_release(nd);
+	obs_data_t *dl = decklink.to_obs_data();
+	obs_data_set_obj(data, "decklink", dl);
+	obs_data_release(dl);
 	return data;
 }
 
@@ -195,6 +228,9 @@ InstanceOutputSettings InstanceOutputSettings::from_obs_data(obs_data_t *data)
 	obs_data_t *nd = obs_data_get_obj(data, "ndi");
 	s.ndi = OutputBackendSettings::from_obs_data(nd);
 	obs_data_release(nd);
+	obs_data_t *dl = obs_data_get_obj(data, "decklink");
+	s.decklink = OutputBackendSettings::from_obs_data(dl);
+	obs_data_release(dl);
 	return s;
 }
 

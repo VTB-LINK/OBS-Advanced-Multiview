@@ -86,6 +86,8 @@ target_sources(
     src/multiview-output-ndi.cpp
     src/multiview-ndi-runtime.hpp
     src/multiview-ndi-runtime.cpp
+    src/multiview-output-decklink.hpp
+    src/multiview-output-decklink.cpp
     src/signal-provider.hpp
     src/signal-provider.cpp
     src/signal-provider-ffmpeg.cpp
@@ -146,6 +148,16 @@ endif()
 if(ENABLE_NDI_OUTPUT)
   target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${NDI_SDK_INCLUDE_DIR}")
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AMV_ENABLE_NDI_OUTPUT)
+endif()
+
+# DeckLink output (issue #16). No SDK dependency: the backend reuses OBS's
+# already-registered "decklink_output" type via obs_output_create + a self-owned
+# video_t, so there is nothing to find or link. Availability is probed at runtime
+# (obs_get_output_flags), cross-platform wherever the OBS DeckLink plugin ships.
+option(ENABLE_DECKLINK_OUTPUT "Build multiview DeckLink output (reuses OBS decklink_output)" ON)
+
+if(ENABLE_DECKLINK_OUTPUT)
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AMV_ENABLE_DECKLINK_OUTPUT)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

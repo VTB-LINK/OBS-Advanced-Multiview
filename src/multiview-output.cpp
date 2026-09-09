@@ -25,6 +25,10 @@ License: GPL-2.0-or-later
 #include "multiview-ndi-runtime.hpp"
 #endif
 
+#ifdef AMV_ENABLE_DECKLINK_OUTPUT
+#include "multiview-output-decklink.hpp"
+#endif
+
 MultiviewOutputManager::MultiviewOutputManager() = default;
 
 MultiviewOutputManager::~MultiviewOutputManager()
@@ -54,6 +58,18 @@ bool MultiviewOutputManager::ndi_supported()
 #endif
 }
 
+bool MultiviewOutputManager::decklink_supported()
+{
+#ifdef AMV_ENABLE_DECKLINK_OUTPUT
+	/* obs_output_create returns a lazy object even for an unregistered id, so
+	 * probe the registered output flags: non-zero => the OBS DeckLink plugin is
+	 * present and "decklink_output" is usable. */
+	return obs_get_output_flags("decklink_output") != 0;
+#else
+	return false;
+#endif
+}
+
 bool MultiviewOutputManager::backend_available(Kind k)
 {
 	switch (k) {
@@ -61,8 +77,23 @@ bool MultiviewOutputManager::backend_available(Kind k)
 		return spout_supported();
 	case Kind::Ndi:
 		return ndi_supported();
+	case Kind::Decklink:
+		return decklink_supported();
 	}
 	return false;
+}
+
+const char *MultiviewOutputManager::kind_name(Kind k)
+{
+	switch (k) {
+	case Kind::Spout:
+		return "Spout";
+	case Kind::Ndi:
+		return "NDI";
+	case Kind::Decklink:
+		return "DeckLink";
+	}
+	return "?";
 }
 
 std::unique_ptr<IMultiviewOutputBackend> MultiviewOutputManager::create_backend(Kind k)
@@ -74,6 +105,10 @@ std::unique_ptr<IMultiviewOutputBackend> MultiviewOutputManager::create_backend(
 #ifdef AMV_ENABLE_NDI_OUTPUT
 	if (k == Kind::Ndi)
 		return create_ndi_output_backend();
+#endif
+#ifdef AMV_ENABLE_DECKLINK_OUTPUT
+	if (k == Kind::Decklink)
+		return create_decklink_output_backend();
 #endif
 	(void)k;
 	return nullptr;
@@ -87,13 +122,12 @@ void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSetti
 		e.backend = create_backend(kind);
 		e.frame = 0;
 		if (e.backend)
-			obs_log(LOG_INFO, "[multiview-output] %s output enabled",
-				kind == Kind::Spout ? "Spout" : "NDI");
+			obs_log(LOG_INFO, "[multiview-output] %s output enabled", kind_name(kind));
 	} else if (!want && e.backend) {
 		e.backend->stop();
 		e.backend.reset();
 		e.frame = 0;
-		obs_log(LOG_INFO, "[multiview-output] %s output disabled", kind == Kind::Spout ? "Spout" : "NDI");
+		obs_log(LOG_INFO, "[multiview-output] %s output disabled", kind_name(kind));
 	}
 
 	e.enabled = (e.backend != nullptr);
@@ -101,6 +135,15 @@ void MultiviewOutputManager::reconcile(BackendEntry &e, const OutputBackendSetti
 		auto dims = resolve_output_dimensions(s);
 		e.w = dims.first;
 		e.h = dims.second;
+		/* M1: a backend with an authoritative compose size (DeckLink locked to
+		 * its hardware mode raster once Running) overrides the persisted snapshot,
+		 * so a stale/mismatched customWidth/customHeight can't silently drop every
+		 * frame. Not-yet-Running backends report false and keep the resolve value. */
+		uint32_t bw = 0, bh = 0;
+		if (e.backend->compose_size(bw, bh) && bw > 0 && bh > 0) {
+			e.w = bw;
+			e.h = bh;
+		}
 		e.fpsDivisor = (s.fpsDivisor == 2) ? 2 : 1;
 		/* (Re)connect audio capture to the selected track (NDI only). */
 		e.backend->configure_audio(s);
@@ -152,7 +195,7 @@ void MultiviewOutputManager::render_one_resolution(const std::string &name, uint
 	 * frame (frame % fpsDivisor == 0) AND wants a frame (#2: an NDI backend with
 	 * no receiver is skipped even when a co-resolution backend forced the
 	 * compose). */
-	BackendEntry *entries[] = {&spout_, &ndi_};
+	BackendEntry *entries[] = {&spout_, &ndi_, &decklink_};
 	for (BackendEntry *e : entries) {
 		if (e->enabled && e->w == w && e->h == h && (e->frame % e->fpsDivisor) == 0 && e->backend &&
 		    e->backend->wants_frame())
@@ -168,13 +211,16 @@ void MultiviewOutputManager::render_all(const std::string &name, const InstanceO
 
 	reconcile(spout_, cfg.spout, Kind::Spout);
 	reconcile(ndi_, cfg.ndi, Kind::Ndi);
+	reconcile(decklink_, cfg.decklink, Kind::Decklink);
 
 	/* Push the user's global NDI readback double-buffer choice to the backend
-	 * (graphics thread; no-op on Spout). Cheap to set every frame. */
+	 * (graphics thread; no-op on Spout). Cheap to set every frame. DeckLink
+	 * always double-buffers internally (never stall the main program), so it
+	 * ignores this too. */
 	if (ndi_.backend)
 		ndi_.backend->set_double_buffer(ndiDoubleBuffer);
 
-	BackendEntry *entries[] = {&spout_, &ndi_};
+	BackendEntry *entries[] = {&spout_, &ndi_, &decklink_};
 
 	/* #2: give every enabled backend a chance to (re)create its sender so it
 	 * stays discoverable even on frames we skip. NDI needs this so receivers can
@@ -238,8 +284,13 @@ void MultiviewOutputManager::teardown_locked()
 		ndi_.backend->stop();
 		ndi_.backend.reset();
 	}
+	if (decklink_.backend) {
+		decklink_.backend->stop();
+		decklink_.backend.reset();
+	}
 	spout_.enabled = false;
 	ndi_.enabled = false;
+	decklink_.enabled = false;
 
 	for (auto &kv : texrenders_)
 		gs_texrender_destroy(kv.second);
@@ -248,7 +299,7 @@ void MultiviewOutputManager::teardown_locked()
 
 void MultiviewOutputManager::shutdown_graphics()
 {
-	if (!spout_.backend && !ndi_.backend && texrenders_.empty())
+	if (!spout_.backend && !ndi_.backend && !decklink_.backend && texrenders_.empty())
 		return;
 
 	obs_enter_graphics();

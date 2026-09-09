@@ -10,6 +10,10 @@ License: GPL-2.0-or-later
 #include "multiview-output.hpp"
 
 #include <obs.h>
+#include <obs.hpp>
+#include <media-io/video-io.h>
+
+#include <string>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -19,6 +23,7 @@ License: GPL-2.0-or-later
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QTabWidget>
+#include <QVariant>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -72,6 +77,13 @@ void ExternalOutputSettingsDialog::setup_ui()
 	const QString ndiReason = ndiAvailable ? QString() : amv::text("AMVPlugin.Output.NDI.Unavailable");
 	tabs->addTab(build_backend_tab(ndi_, ndiAvailable, ndiReason, /*supportsAudio=*/true),
 		     amv::text("AMVPlugin.Output.Tab.NDI"));
+
+	/* DeckLink needs OBS's decklink_output type registered (the OBS DeckLink
+	 * plugin present); grey the tab out with a hint otherwise. */
+	const bool deckAvailable = MultiviewOutputManager::decklink_supported();
+	const QString deckReason = deckAvailable ? QString() : amv::text("AMVPlugin.Output.DeckLink.Unavailable");
+	tabs->addTab(build_decklink_tab(decklink_, deckAvailable, deckReason),
+		     amv::text("AMVPlugin.Output.Tab.DeckLink"));
 
 	mainLayout->addWidget(tabs);
 
@@ -196,6 +208,201 @@ QWidget *ExternalOutputSettingsDialog::build_backend_tab(BackendWidgets &w, bool
 	return tab;
 }
 
+/* Fill `w.deckMode` with the output modes of `deviceHash` that match the canvas
+ * frame rate. We drive OBS's own decklink_output property machinery: query its
+ * properties, write the device into a scratch obs_data, fire the device's
+ * modified callback (which clears + fills the mode list, already fps-filtered —
+ * decklink_output requires an exactly equal frame rate), then copy the items. */
+void ExternalOutputSettingsDialog::populate_decklink_modes(const BackendWidgets &w, const QString &deviceHash)
+{
+	if (!w.deckMode)
+		return;
+	w.deckMode->clear();
+	if (deviceHash.isEmpty())
+		return;
+
+	obs_properties_t *props = obs_get_output_properties("decklink_output");
+	if (!props)
+		return;
+
+	obs_property_t *deviceProp = obs_properties_get(props, "device_hash");
+	obs_property_t *modeProp = obs_properties_get(props, "mode_id");
+	if (deviceProp && modeProp) {
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_string(settings, "device_hash", deviceHash.toUtf8().constData());
+		/* Runs decklink_output_device_changed: fills mode_id filtered by fps. */
+		obs_property_modified(deviceProp, settings);
+
+		const size_t count = obs_property_list_item_count(modeProp);
+		for (size_t i = 0; i < count; i++) {
+			const char *modeName = obs_property_list_item_name(modeProp, i);
+			const long long modeId = obs_property_list_item_int(modeProp, i);
+			w.deckMode->addItem(QString::fromUtf8(modeName ? modeName : ""),
+					    QVariant::fromValue<qlonglong>(modeId));
+		}
+	}
+
+	obs_properties_destroy(props);
+}
+
+QWidget *ExternalOutputSettingsDialog::build_decklink_tab(BackendWidgets &w, bool available,
+							  const QString &unavailableReason)
+{
+	auto *tab = new QWidget(this);
+	auto *form = new QFormLayout(tab);
+
+	w.enabled = new QCheckBox(amv::text("AMVPlugin.Output.Enable"), tab);
+	form->addRow(w.enabled);
+
+	/* Device list (data = device_hash). Enumerated from the OBS decklink_output
+	 * properties; empty when no DeckLink device is present. */
+	w.deckDevice = new QComboBox(tab);
+	w.deckMode = new QComboBox(tab);
+
+	if (available) {
+		obs_properties_t *props = obs_get_output_properties("decklink_output");
+		if (props) {
+			obs_property_t *deviceProp = obs_properties_get(props, "device_hash");
+			if (deviceProp) {
+				const size_t count = obs_property_list_item_count(deviceProp);
+				for (size_t i = 0; i < count; i++) {
+					const char *name = obs_property_list_item_name(deviceProp, i);
+					const char *hash = obs_property_list_item_string(deviceProp, i);
+					w.deckDevice->addItem(QString::fromUtf8(name ? name : ""),
+							      QString::fromUtf8(hash ? hash : ""));
+				}
+			}
+			obs_properties_destroy(props);
+		}
+	}
+
+	form->addRow(amv::text("AMVPlugin.Output.DeckLink.Device"), w.deckDevice);
+	form->addRow(amv::text("AMVPlugin.Output.DeckLink.Mode"), w.deckMode);
+
+	/* Repopulate modes whenever the device changes. */
+	connect(w.deckDevice, QOverload<int>::of(&QComboBox::currentIndexChanged), tab,
+		[&w](int) { populate_decklink_modes(w, w.deckDevice->currentData().toString()); });
+
+	/* Populate modes for the initially selected device (if any). */
+	if (available && w.deckDevice->count() > 0)
+		populate_decklink_modes(w, w.deckDevice->currentData().toString());
+
+	/* Keyer: Disabled / External / Internal (0 / 1 / 2). */
+	w.deckKeyer = new QComboBox(tab);
+	w.deckKeyer->addItem(amv::text("AMVPlugin.Output.DeckLink.Keyer.Disabled"), 0);
+	w.deckKeyer->addItem(amv::text("AMVPlugin.Output.DeckLink.Keyer.External"), 1);
+	w.deckKeyer->addItem(amv::text("AMVPlugin.Output.DeckLink.Keyer.Internal"), 2);
+	form->addRow(amv::text("AMVPlugin.Output.DeckLink.Keyer"), w.deckKeyer);
+
+	w.deckForceSdr = new QCheckBox(amv::text("AMVPlugin.Output.DeckLink.ForceSDR"), tab);
+	form->addRow(w.deckForceSdr);
+
+	/* Audio (DeckLink embeds SDI/HDMI audio, so the full audio path applies). */
+	w.audioMode = new QComboBox(tab);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.FollowStreaming"),
+			     (int)OutputAudioMode::FollowStreaming);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.ManualTrack"), (int)OutputAudioMode::ManualTrack);
+	w.audioMode->addItem(amv::text("AMVPlugin.Output.Audio.None"), (int)OutputAudioMode::None);
+	form->addRow(amv::text("AMVPlugin.Output.Audio"), w.audioMode);
+
+	w.audioTrack = new QSpinBox(tab);
+	w.audioTrack->setRange(1, 6);
+	w.audioTrack->setPrefix(amv::text("AMVPlugin.Output.Audio.TrackPrefix"));
+	form->addRow(amv::text("AMVPlugin.Output.Audio.ManualTrackLabel"), w.audioTrack);
+
+	auto syncAudio = [&w]() {
+		const bool manual = w.audioMode->currentData().toInt() == (int)OutputAudioMode::ManualTrack;
+		w.audioTrack->setEnabled(manual);
+	};
+	connect(w.audioMode, QOverload<int>::of(&QComboBox::currentIndexChanged), tab,
+		[syncAudio](int) { syncAudio(); });
+	syncAudio();
+
+	/* A note that the mode list is already filtered to the canvas frame rate. */
+	auto *fpsNote = new QLabel(amv::text("AMVPlugin.Output.DeckLink.FpsNote"), tab);
+	fpsNote->setWordWrap(true);
+	form->addRow(fpsNote);
+
+	if (!available) {
+		tab->setEnabled(false);
+		if (!unavailableReason.isEmpty())
+			tab->setToolTip(unavailableReason);
+	}
+
+	return tab;
+}
+
+void ExternalOutputSettingsDialog::load_decklink(const BackendWidgets &w, const OutputBackendSettings &s)
+{
+	w.enabled->setChecked(s.enabled);
+
+	/* Device: select the saved hash if still present; else leave on the first. */
+	int devIdx = w.deckDevice->findData(QString::fromStdString(s.deckDeviceHash));
+	if (devIdx >= 0)
+		w.deckDevice->setCurrentIndex(devIdx);
+
+	/* currentIndexChanged already repopulated modes for the selected device; make
+	 * sure they match the current selection (covers the no-change case too). */
+	populate_decklink_modes(w, w.deckDevice->currentData().toString());
+	int modeIdx = w.deckMode->findData(QVariant::fromValue<qlonglong>(s.deckModeId));
+	if (modeIdx >= 0)
+		w.deckMode->setCurrentIndex(modeIdx);
+
+	int keyerIdx = w.deckKeyer->findData(s.deckKeyer);
+	w.deckKeyer->setCurrentIndex(keyerIdx >= 0 ? keyerIdx : 0);
+
+	w.deckForceSdr->setChecked(s.deckForceSdr);
+
+	int audIdx = w.audioMode->findData((int)s.audioMode);
+	w.audioMode->setCurrentIndex(audIdx >= 0 ? audIdx : 0);
+	w.audioTrack->setValue(s.audioTrackIndex);
+}
+
+OutputBackendSettings ExternalOutputSettingsDialog::read_decklink(const BackendWidgets &w)
+{
+	OutputBackendSettings s;
+	s.enabled = w.enabled->isChecked();
+	s.deckDeviceHash = w.deckDevice->currentData().toString().toStdString();
+	s.deckModeId = w.deckMode->currentData().isValid() ? w.deckMode->currentData().toLongLong() : 0;
+	s.deckKeyer = w.deckKeyer->currentData().toInt();
+	s.deckForceSdr = w.deckForceSdr->isChecked();
+	s.audioMode = (OutputAudioMode)w.audioMode->currentData().toInt();
+	s.audioTrackIndex = w.audioTrack->value();
+
+	/* Lock the composition to the selected mode's native raster (§3.4): resMode
+	 * stays Custom and customWidth/customHeight carry the raster, so both the
+	 * dialog and resolve_output_dimensions agree and there is zero scaling. A
+	 * scratch output reports the raster via its video conversion. */
+	s.resMode = OutputResolutionMode::Custom;
+	s.fpsDivisor = 1; /* DeckLink runs at full canvas fps (FPS must match exactly) */
+
+	/* H2: never persist enabled + device-but-no-mode. mode_id 0 (empty mode
+	 * combo) would crash decklink_output_create (null DeckLinkDeviceMode deref),
+	 * so refuse to enable instead of saving a config that can't start. */
+	if (s.enabled && !s.deckDeviceHash.empty() && s.deckModeId == 0)
+		s.enabled = false;
+
+	/* Probe the selected device+mode for its native raster only when a real mode
+	 * is chosen — a probe with mode_id 0 would hit the same crash as the live
+	 * output. */
+	if (!s.deckDeviceHash.empty() && s.deckModeId != 0) {
+		OBSDataAutoRelease probeSettings = obs_data_create();
+		obs_data_set_string(probeSettings, "device_hash", s.deckDeviceHash.c_str());
+		obs_data_set_int(probeSettings, "mode_id", s.deckModeId);
+		obs_data_set_bool(probeSettings, "force_sdr", s.deckForceSdr);
+		OBSOutputAutoRelease probe =
+			obs_output_create("decklink_output", "amv-decklink-probe", probeSettings, nullptr);
+		if (probe) {
+			const struct video_scale_info *conv = obs_output_get_video_conversion(probe);
+			if (conv && conv->width > 0 && conv->height > 0) {
+				s.customWidth = conv->width;
+				s.customHeight = conv->height;
+			}
+		}
+	}
+	return s;
+}
+
 void ExternalOutputSettingsDialog::load_backend(const BackendWidgets &w, const OutputBackendSettings &s)
 {
 	w.enabled->setChecked(s.enabled);
@@ -231,6 +438,7 @@ void ExternalOutputSettingsDialog::set_settings(const InstanceOutputSettings &s)
 {
 	load_backend(spout_, s.spout);
 	load_backend(ndi_, s.ndi);
+	load_decklink(decklink_, s.decklink);
 }
 
 InstanceOutputSettings ExternalOutputSettingsDialog::get_settings() const
@@ -238,5 +446,6 @@ InstanceOutputSettings ExternalOutputSettingsDialog::get_settings() const
 	InstanceOutputSettings s;
 	s.spout = read_backend(spout_);
 	s.ndi = read_backend(ndi_);
+	s.decklink = read_decklink(decklink_);
 	return s;
 }

@@ -690,15 +690,24 @@ struct OutputBackendSettings {
 	OutputAudioMode audioMode = OutputAudioMode::FollowStreaming;
 	int audioTrackIndex = 1; /* 1..6, only used when audioMode == ManualTrack */
 
+	/* DeckLink output (issue #16). Ignored by the Spout/NDI backends. The mode
+	 * raster is locked into customWidth/customHeight by the dialog (resMode stays
+	 * Custom), so resolve_output_dimensions composes at native SDI size. */
+	std::string deckDeviceHash; /* OBS decklink_output "device_hash" */
+	long long deckModeId = 0;   /* OBS decklink_output "mode_id" */
+	int deckKeyer = 0;          /* 0 = Disabled, 1 = External, 2 = Internal */
+	bool deckForceSdr = false;  /* force SDR colorspace (709) over HDR (2100 PQ) */
+
 	obs_data_t *to_obs_data() const;
 	static OutputBackendSettings from_obs_data(obs_data_t *data);
 };
 
 struct InstanceOutputSettings {
 	OutputBackendSettings spout;
-	OutputBackendSettings ndi; /* persisted but inert until the NDI backend lands */
+	OutputBackendSettings ndi;
+	OutputBackendSettings decklink; /* issue #16 */
 
-	bool any_enabled() const { return spout.enabled || ndi.enabled; }
+	bool any_enabled() const { return spout.enabled || ndi.enabled || decklink.enabled; }
 
 	obs_data_t *to_obs_data() const;
 	static InstanceOutputSettings from_obs_data(obs_data_t *data);

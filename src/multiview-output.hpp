@@ -71,6 +71,19 @@ public:
 	 * NDI backend implements it (Spout has no readback). */
 	virtual void set_double_buffer(bool enabled) { (void)enabled; }
 
+	/* Issue #16 (M1): report the backend's authoritative compose size, if it has
+	 * one. A DeckLink backend locked to a hardware mode raster overrides the
+	 * persisted customWidth/customHeight snapshot once Running, so a stale or
+	 * mismatched snapshot can't make the manager compose at the wrong size and
+	 * silently drop every frame. Returns false (default) to let the manager use
+	 * resolve_output_dimensions. Called on the graphics thread during reconcile. */
+	virtual bool compose_size(uint32_t &w, uint32_t &h) const
+	{
+		(void)w;
+		(void)h;
+		return false;
+	}
+
 	/* Release the sender and all GPU/OS resources. Called on the graphics
 	 * thread. Safe to call when never started. */
 	virtual void stop() = 0;
@@ -118,8 +131,14 @@ public:
 	 * settings UI to enable/disable the NDI tab. */
 	static bool ndi_supported();
 
+	/* Whether DeckLink output is possible here: the plugin was built with
+	 * DeckLink support AND OBS's "decklink_output" type is registered
+	 * (obs_get_output_flags != 0; the OBS DeckLink plugin is present). Used by
+	 * the settings UI to enable/disable the DeckLink tab. */
+	static bool decklink_supported();
+
 private:
-	enum class Kind { Spout, Ndi };
+	enum class Kind { Spout, Ndi, Decklink };
 
 	/* One backend slot. `enabled` + resolved {w,h} + fpsDivisor are refreshed
 	 * from cfg each frame by reconcile(); `frame` advances once per frame and
@@ -135,6 +154,7 @@ private:
 	static uint64_t res_key(uint32_t w, uint32_t h) { return ((uint64_t)w << 32) | (uint64_t)h; }
 	static bool backend_available(Kind k);
 	static std::unique_ptr<IMultiviewOutputBackend> create_backend(Kind k);
+	static const char *kind_name(Kind k);
 
 	void reconcile(BackendEntry &e, const OutputBackendSettings &s, Kind kind);
 	gs_texrender_t *get_texrender(uint64_t key);
@@ -142,6 +162,7 @@ private:
 				   const std::function<void(int w, int h)> &draw);
 
 	BackendEntry spout_;
-	BackendEntry ndi_; /* inert until the NDI backend lands (Phase 3) */
+	BackendEntry ndi_;
+	BackendEntry decklink_; /* issue #16 */
 	std::map<uint64_t, gs_texrender_t *> texrenders_;
 };
