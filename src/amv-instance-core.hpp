@@ -157,6 +157,14 @@ private:
 		std::string name;       /* source name for lazy re-resolution */
 		OBSWeakSource weak_ref; /* cached for scene/source only */
 		bool showing = false;
+		/* C1: the render thread lazily re-resolved this cell's primary
+		 * scene/source by name (undo/redo recovery) and cached weak_ref, but
+		 * must not obs_source_inc_showing there (render thread, graphics lock +
+		 * source_mutex_). Set on the render thread, cleared on the core's UI
+		 * thread by reconcile_primary_showing(), which performs the actual
+		 * inc_showing outside both locks. Mirrors the Issue #5 fallback-showing
+		 * deferral. */
+		bool primary_show_pending = false;
 		bool prvw_fallback = false; /* PRVW fell back to PGM */
 		bool audio_only = false;    /* direct OBS source has audio but no video output */
 
@@ -457,6 +465,17 @@ private:
 	 * discipline as lost_images_rebuild_pending_. */
 	std::atomic<bool> fallback_showing_reconcile_pending_{false};
 	void reconcile_fallback_showing();
+
+	/* C1: coalesced render-thread -> main-thread reconcile of the PRIMARY
+	 * scene/source inc_showing. The render thread lazily re-resolves a bound
+	 * source by name (undo/redo) but cannot inc_showing there (render thread,
+	 * graphics lock + source_mutex_ — inc_showing walks the active tree and
+	 * fires host-plugin show callbacks); it only caches the weak ref, sets
+	 * CellSource::primary_show_pending, and posts this. reconcile_primary_showing()
+	 * performs the inc on the core's UI thread, outside source_mutex_. Same
+	 * coalescing discipline as fallback_showing_reconcile_pending_. */
+	std::atomic<bool> primary_showing_reconcile_pending_{false};
+	void reconcile_primary_showing();
 
 	/* PGM / PRVW cell highlight borders. */
 	enum class HighlightKind { None, PgmDirect, PrvwDirect, PgmNested, PrvwNested };

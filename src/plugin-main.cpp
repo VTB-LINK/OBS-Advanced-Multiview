@@ -29,6 +29,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "multiview-window.hpp"
 #include "signal-provider.hpp"
 
+#include <QCoreApplication>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QMainWindow>
 #include <QMessageBox>
@@ -553,6 +555,39 @@ static void close_all_multiview_windows()
 	g_cores.clear();
 }
 
+/* C2: run the NDI + DeckLink deferred output-teardown closures to completion
+ * before OBS destroys the Qt event loop and the NDI runtime.
+ *
+ * Those backends defer their blocking teardown off the graphics-locked stop()
+ * call via QMetaObject::invokeMethod(qApp, ..., Qt::QueuedConnection) — NDI's
+ * send_destroy (which flushes pending async frames), DeckLink's
+ * obs_output_stop/release (which joins the capture thread + Deactivates the
+ * hardware). Each such call posts a QMetaCallEvent to qApp; mid-session the main
+ * event loop runs it a tick later, which is exactly what keeps stop() non-blocking
+ * (see IMultiviewOutputBackend::stop()). On the exit / module-unload path,
+ * however, the event loop can stop before those events are dispatched, which
+ * would leak the NDI sender AND fire ~NdiRuntime -> NDIlib_destroy while a sender
+ * is still alive (can hang the NDI worker at exit), and leak the DeckLink
+ * OutputInstance with its hardware never released. close_all_multiview_windows()
+ * has, by the time this runs, destroyed every core -> MultiviewOutputManager ->
+ * backend stop(), so the closures are already posted; flush them here.
+ *
+ * Drain ONLY QEvent::MetaCall (not processEvents()): the posted teardown closures
+ * are the sole thing that must flush, and pumping the whole queue during shutdown
+ * could dispatch paint/timer/input events to half-destroyed widgets. Because the
+ * closures are posted to qApp, sendPostedEvents(qApp, MetaCall) dispatches only
+ * qApp-addressed meta-calls and never touches an already-deleted view/dialog.
+ * MUST run OUTSIDE g_registry_mutex (call it after close_all_multiview_windows()
+ * returns) and off the OBS graphics lock — teardown ran inside shutdown_graphics'
+ * obs_enter/leave_graphics, which returned before these closures were posted.
+ * Main thread only (the frontend EXIT event and obs_module_unload both run there;
+ * sendPostedEvents must run on the receiver's — qApp's — thread). */
+static void drain_deferred_output_teardowns()
+{
+	if (qApp)
+		QCoreApplication::sendPostedEvents(qApp, QEvent::MetaCall);
+}
+
 /* Phase 3 / M5: bridge OBS core source-list signals to all open MultiviewWindows.
  *
  * The render thread re-resolves cell sources every frame, but volmeters and the
@@ -820,6 +855,14 @@ static void on_frontend_event(enum obs_frontend_event event, void *)
 			config_manager->save();
 
 		close_all_multiview_windows();
+		/* C2: flush the NDI/DeckLink deferred teardown closures now, while qApp +
+		 * the NDI runtime are still alive (the event loop may not run again).
+		 * Also drop any pending scene-collection duplicate prompt: it is queued to
+		 * qApp as well, so reset g_pending_dup so that if the flush (or a later loop
+		 * spin) reaches maybe_prompt_duplicate it no-ops instead of popping a modal /
+		 * reloading the collection during shutdown. */
+		g_pending_dup.reset();
+		drain_deferred_output_teardowns();
 
 		if (manager_dialog) {
 			manager_dialog->close();
@@ -863,6 +906,12 @@ void obs_module_unload(void)
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 
 	close_all_multiview_windows();
+	/* C2: flush the NDI/DeckLink deferred teardown closures before qApp + the NDI
+	 * runtime go away — obs_module_unload can be reached without a prior EXIT event
+	 * (and the drain is idempotent: a no-op when nothing is pending). Drop any
+	 * pending duplicate prompt first (see the EXIT path) so the flush can't run it. */
+	g_pending_dup.reset();
+	drain_deferred_output_teardowns();
 
 	if (manager_dialog) {
 		delete manager_dialog;

@@ -18,6 +18,9 @@ License: GPL-2.0-or-later
 #include <graphics/graphics.h>
 #include <media-io/audio-io.h>
 
+#include <QCoreApplication>
+#include <QObject>
+
 /* <cstddef> for NULL used by the NDI headers' default args (clang/gcc). */
 #include <cstddef>
 
@@ -210,33 +213,90 @@ public:
 
 	void stop() override
 	{
-		/* Stop audio first so no capture callback fires past sender teardown,
-		 * then destroy the sender BEFORE releasing the runtime handle (the last
-		 * handle release calls NDIlib_destroy, which requires all senders
-		 * gone). */
+		/* C2 / thread contract (see IMultiviewOutputBackend::stop()): this runs
+		 * either on the graphics thread (MultiviewOutputManager::reconcile) or on
+		 * the main thread under the OBS graphics lock (apply_output_settings /
+		 * shutdown_graphics / this backend's destructor). The graphics lock is
+		 * held either way, so the network-blocking teardown must NOT run inline:
+		 * NDIlib_send_destroy blocks until all pending async frames flush, and on
+		 * a slow/congested receiver that can exceed a frame and stall the live
+		 * program render (the DeckLink backend defers its heavy teardown for the
+		 * same reason). Only the fast, local work runs here; the sender + runtime
+		 * handles are handed to a self-owning, this-free UI-thread closure.
+		 *
+		 * Audio capture is disconnected INLINE here, deliberately NOT in the
+		 * deferred closure. audio_output_disconnect is the only way to unhook the
+		 * on_audio callback, which is registered with `this` as its param.
+		 * Deferring it would leave a live callback registration pointing at a
+		 * backend that this stop() lets be destroyed immediately (teardown_locked /
+		 * reconcile reset() the backend right after stop() returns), so the audio
+		 * thread could dereference a freed `this` (UAF). disconnect_audio blocks on
+		 * libobs's audio input_mutex (obs-studio/libobs/media-io/audio-io.c), which
+		 * do_audio_output holds across the whole callback pass for that mix — every
+		 * registered consumer's resample + callback, not just our own single
+		 * on_audio; ours only memcpys + send_send_audio_v3 (a non-blocking NDI
+		 * enqueue). That wait is bounded and non-network (CPU-only mix work), so it
+		 * does not reintroduce the program-render stall C2 targets. It must run
+		 * before we take sender_mutex_ (on_audio takes that lock, so disconnecting
+		 * under it would deadlock). */
 		disconnect_audio();
 
+		NDIlib_send_instance_t sender = nullptr;
+		std::shared_ptr<NdiRuntime> runtime;
+		std::string name;
 		{
+			/* Move the sender + runtime out under the lock and null the members
+			 * so any subsequent on_audio (already disconnected above, but this
+			 * keeps the sender single-writer invariant explicit) sees empty and
+			 * returns without touching a handle the closure now owns. */
 			std::lock_guard<std::mutex> lock(sender_mutex_);
-			if (sender_ && runtime_) {
-				runtime_->lib()->send_destroy(sender_);
-				obs_log(LOG_INFO, "[multiview-output/ndi] sender released ('%s')",
-					current_name_.c_str());
-			}
+			sender = sender_;
 			sender_ = nullptr;
-			/* Drop the runtime ref under the lock too: the audio callback reads
-			 * runtime_ while holding sender_mutex_, so releasing it here avoids
-			 * a race (and keeps NDIlib_destroy after the sender is gone). */
-			runtime_.reset();
+			runtime = std::move(runtime_);
+			runtime_ = nullptr;
+			name = current_name_;
 		}
 
-		destroy_stages();
+		destroy_stages(); /* GPU staging surfaces: fast, stays on the graphics thread */
 
 		active_ = false;
 		current_name_.clear();
 		warned_map_failed_ = false;
 		warned_create_failed_ = false;
 		warned_stage_failed_ = false;
+
+		/* Defer the network-blocking teardown to the UI thread. The closure owns
+		 * the moved handles outright (captures no `this`), so this backend may be
+		 * destroyed the instant stop() returns. send_destroy runs before the
+		 * runtime handle is released, keeping NDIlib_destroy (fired when this is
+		 * the last runtime ref) strictly after the sender is gone.
+		 *
+		 * QMetaObject::invokeMethod with Qt::QueuedConnection ALWAYS posts a
+		 * QMetaCallEvent to qApp — it never runs inline, even when stop() is
+		 * already on the main thread — so the graphics lock is always released
+		 * before the closure runs (satisfying the non-blocking stop() contract on
+		 * every path, mid-session and teardown alike). It is posted (not a
+		 * QTimer/timer event) specifically so the OBS exit / module-unload path
+		 * can guarantee the closure still runs before qApp and the NDI runtime are
+		 * destroyed: drain_deferred_output_teardowns() (plugin-main.cpp) flushes
+		 * exactly these QEvent::MetaCall events with QCoreApplication::
+		 * sendPostedEvents after the cores are torn down. Without that flush a
+		 * dropped closure would leak the sender AND fire ~NdiRuntime ->
+		 * NDIlib_destroy while a sender is still alive (violating "all senders
+		 * destroyed before destroy"), which can hang the NDI worker at exit. */
+		if (sender || runtime) {
+			QMetaObject::invokeMethod(
+				qApp,
+				[sender, runtime = std::move(runtime), name]() mutable {
+					if (sender && runtime)
+						runtime->lib()->send_destroy(sender);
+					if (sender)
+						obs_log(LOG_INFO, "[multiview-output/ndi] sender released ('%s')",
+							name.c_str());
+					runtime.reset();
+				},
+				Qt::QueuedConnection);
+		}
 	}
 
 	bool is_active() const override { return active_; }

@@ -77,6 +77,12 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 	 * reconcile post after the cell loop (see reconcile_fallback_showing). */
 	bool any_fallback_reconcile = false;
 
+	/* C1: set true when a cell's PRIMARY scene/source was lazily re-resolved by
+	 * name this frame and needs its deferred inc_showing performed on the UI
+	 * thread; drives one coalesced reconcile post after the cell loop (see
+	 * reconcile_primary_showing). */
+	bool any_primary_show_reconcile = false;
+
 	for (int i = 0; i < (int)cells.size(); i++) {
 		const CellRect &cell = cells[i];
 		int cellX = cell.x + vpX;
@@ -173,8 +179,23 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 						cell_sources_[i].weak_ref = OBSGetWeakRef(resolved);
 						cell_sources_[i].audio_only = cs.type == "source" &&
 									      source_is_audio_only(resolved);
-						obs_source_inc_showing(resolved);
-						cell_sources_[i].showing = true;
+						/* C1: obs_source_inc_showing walks the source's
+						 * active tree (libobs scene locks) and fires
+						 * host-plugin show/hide callbacks, so it must NEVER
+						 * run here — the render thread holds the graphics
+						 * lock + source_mutex_. Mirror the Issue #5
+						 * fallback-showing deferral: cache the binding and
+						 * flag a deferred show; the actual inc_showing runs
+						 * on the core's UI thread in
+						 * reconcile_primary_showing(), outside both locks.
+						 * cs.showing stays false until then so the dec
+						 * pairing (which keys on cs.showing) never fires
+						 * against an inc we have not performed yet. The cell
+						 * still renders this frame through the strong
+						 * srcHolder ref below; inc_showing only gates
+						 * activation/decode, not renderability. */
+						cell_sources_[i].primary_show_pending = true;
+						any_primary_show_reconcile = true;
 						/* OBSSourceAutoRelease::operator=(T) ADOPTS the +1
 						 * from obs_get_source_by_name (no addref); the
 						 * srcHolder dtor releases it at scope end. Do NOT
@@ -1069,6 +1090,19 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 		QTimer::singleShot(0, this, [this]() {
 			fallback_showing_reconcile_pending_.store(false, std::memory_order_release);
 			reconcile_fallback_showing();
+		});
+	}
+
+	/* C1: one coalesced reconcile post for all cells whose primary scene/source
+	 * was lazily re-resolved this frame. The actual inc_showing runs on the UI
+	 * thread in reconcile_primary_showing() (off the render thread, outside
+	 * source_mutex_) so host-plugin show callbacks never fire while we hold the
+	 * graphics lock + source_mutex_. Same discipline as the fallback post above. */
+	if (any_primary_show_reconcile &&
+	    !primary_showing_reconcile_pending_.exchange(true, std::memory_order_acq_rel)) {
+		QTimer::singleShot(0, this, [this]() {
+			primary_showing_reconcile_pending_.store(false, std::memory_order_release);
+			reconcile_primary_showing();
 		});
 	}
 

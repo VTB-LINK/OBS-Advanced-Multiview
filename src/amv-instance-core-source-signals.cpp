@@ -335,6 +335,57 @@ void AmvInstanceCore::reconcile_fallback_showing()
 	}
 }
 
+void AmvInstanceCore::reconcile_primary_showing()
+{
+	/* C1: perform the deferred inc_showing for PRIMARY scene/source cells that
+	 * the render thread lazily re-resolved by name (undo/redo recovery). The
+	 * render thread cannot call obs_source_inc_showing itself — it holds the
+	 * graphics lock + source_mutex_, and inc_showing walks the source's active
+	 * tree (libobs scene locks) and fires host-plugin show callbacks — so it
+	 * only caches the weak ref, sets CellSource::primary_show_pending, and posts
+	 * this (coalesced). We run on the core's UI thread and do the inc OUTSIDE
+	 * source_mutex_, the same collect-under-lock / act-outside-lock discipline as
+	 * reconcile_fallback_showing().
+	 *
+	 * Pairing + idempotency: we inc only a cell that still holds a live,
+	 * non-removed binding and is not already showing, and we commit
+	 * cs.showing = true UNDER the lock (mirroring fallback_shown_ref) before
+	 * releasing it, so a later dec path (every primary dec runs on this same UI
+	 * thread) pairs our inc exactly once. Concurrent races resolve safely:
+	 *   - a source_remove (arbitrary thread) that nulls weak_ref / clears
+	 *     showing makes us skip (weak_ref null, or the source reports removed),
+	 *     matching the deliberate no-dec-on-remove contract;
+	 *   - an on_source_just_created inc (arbitrary thread) sets showing first,
+	 *     which likewise makes us skip — so show_refs is never double-counted. */
+	std::vector<OBSWeakSource> to_inc;
+
+	{
+		std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+		for (auto &cs : cell_sources_) {
+			if (!cs.primary_show_pending)
+				continue;
+			cs.primary_show_pending = false;
+			/* Only real scene/source cells carry a weak_ref-driven showing
+			 * ref; pgm/prvw/external providers never do. */
+			if (cs.type.empty() || cs.type == "pgm" || cs.type == "prvw")
+				continue;
+			if (cs.showing || !cs.weak_ref)
+				continue;
+			OBSSourceAutoRelease s = OBSGetStrongRef(cs.weak_ref);
+			if (!s || obs_source_removed(s))
+				continue;
+			cs.showing = true;
+			to_inc.push_back(cs.weak_ref);
+		}
+	}
+
+	for (auto &w : to_inc) {
+		OBSSourceAutoRelease s = OBSGetStrongRef(w);
+		if (s && !obs_source_removed(s))
+			obs_source_inc_showing(s);
+	}
+}
+
 void AmvInstanceCore::update_source_refs_lazy()
 {
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);

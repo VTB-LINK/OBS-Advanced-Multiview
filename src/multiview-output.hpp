@@ -84,8 +84,32 @@ public:
 		return false;
 	}
 
-	/* Release the sender and all GPU/OS resources. Called on the graphics
-	 * thread. Safe to call when never started. */
+	/* Release the sender and all GPU/OS resources. Safe to call when never
+	 * started.
+	 *
+	 * Thread contract (authoritative — every backend's stop() must obey this):
+	 * stop() may run EITHER on the graphics thread (MultiviewOutputManager::
+	 * reconcile(), every frame) OR on the main thread while the OBS graphics lock
+	 * is held (teardown_locked via apply_output_settings / shutdown_graphics, or
+	 * a backend destructor reached during that teardown). In BOTH cases the
+	 * graphics lock is held, so stop() must NEVER inline a blocking, joining, or
+	 * network-flushing teardown — e.g. NDIlib_send_destroy waiting on pending
+	 * async frames, obs_output_stop joining a capture thread, audio_output_disconnect
+	 * that could wait on an in-flight callback that itself blocks — because that
+	 * would stall the live program render. Only fast GPU/OS resource release
+	 * (staging surfaces, etc.) may run inline; defer the heavy teardown to the UI
+	 * thread via QMetaObject::invokeMethod(qApp, ..., Qt::QueuedConnection), moving
+	 * the handles it needs into a self-owning, this-free closure so the backend can
+	 * be destroyed the moment stop() returns (a queued invokeMethod always posts a
+	 * QMetaCallEvent, so the graphics lock is released before the closure runs, even
+	 * when stop() is already on the main thread).
+	 *
+	 * C2: post it as a queued meta-call (not a QTimer/timer event) so the OBS exit /
+	 * module-unload path can flush any still-pending teardown before qApp and the
+	 * NDI runtime are destroyed — drain_deferred_output_teardowns() (plugin-main.cpp)
+	 * runs QCoreApplication::sendPostedEvents(qApp, QEvent::MetaCall) after the cores
+	 * are torn down. A dropped closure would leak the NDI sender / DeckLink output
+	 * (and destroy the NDI runtime with a sender still alive). */
 	virtual void stop() = 0;
 
 	/* True once a sender is live and has transmitted at least one frame. */

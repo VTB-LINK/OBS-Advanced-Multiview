@@ -22,7 +22,7 @@ License: GPL-2.0-or-later
 #include <util/platform.h>
 
 #include <QCoreApplication>
-#include <QTimer>
+#include <QObject>
 
 #include <atomic>
 #include <cstdint>
@@ -455,18 +455,23 @@ public:
 
 		/* H1: heavy output teardown (obs_output_stop/release joins the capture
 		 * thread + Deactivates hardware, ~tens of ms) runs on the UI thread via
-		 * QTimer::singleShot rather than obs_queue_task(OBS_TASK_UI). This call
-		 * site is on the graphics thread (so obs_queue_task here would be async
-		 * anyway), but the same close must also be non-inline on the main-thread
-		 * teardown paths (stop(), below) — QTimer always enqueues, never runs
-		 * inline even when the caller is already on the target thread, so both
-		 * paths share one safe close dispatch. The create task is only ever reached
-		 * from the graphics thread, so its obs_queue_task stays a cross-thread
-		 * QueuedConnection. */
+		 * QMetaObject::invokeMethod(qApp, ..., Qt::QueuedConnection) rather than
+		 * obs_queue_task(OBS_TASK_UI). This call site is on the graphics thread (so
+		 * obs_queue_task here would be async anyway), but the same close must also
+		 * be non-inline on the main-thread teardown paths (stop(), below) — a queued
+		 * invokeMethod always posts a QMetaCallEvent, never runs inline even when the
+		 * caller is already on the target thread, so both paths share one safe close
+		 * dispatch. Posting a QMetaCallEvent (rather than a QTimer/timer event) also
+		 * lets the exit / module-unload path flush any still-pending close via
+		 * drain_deferred_output_teardowns() (plugin-main.cpp), so the OutputInstance
+		 * and its hardware are never leaked when the event loop stops early. The
+		 * create task is only ever reached from the graphics thread, so its
+		 * obs_queue_task stays a cross-thread QueuedConnection. */
 		if (toClose) {
 			OutputInstance *raw = toClose.release();
-			QTimer::singleShot(0, qApp,
-					   [raw]() { close_output_instance(std::unique_ptr<OutputInstance>(raw)); });
+			QMetaObject::invokeMethod(
+				qApp, [raw]() { close_output_instance(std::unique_ptr<OutputInstance>(raw)); },
+				Qt::QueuedConnection);
 		}
 		if (toCreate)
 			obs_queue_task(OBS_TASK_UI, &create_task, toCreate, false);
@@ -518,14 +523,21 @@ public:
 			sh_->active.store(false);
 		}
 		/* H1: dispatch the heavy teardown off the current stack, never inline.
-		 * stop() is reached on the main thread under obs_enter_graphics
-		 * (apply_output_settings / shutdown_graphics / destructor), so the close
-		 * must not run synchronously here — QTimer::singleShot always enqueues it
-		 * to run after the graphics lock is released. */
+		 * Per the IMultiviewOutputBackend::stop() thread contract, stop() may be
+		 * reached on the graphics thread (MultiviewOutputManager::reconcile) OR on
+		 * the main thread under the OBS graphics lock (apply_output_settings /
+		 * shutdown_graphics / destructor); the graphics lock is held either way, so
+		 * obs_output_stop/release (which join the capture thread + Deactivate the
+		 * hardware) must not run synchronously here — a queued QMetaObject::
+		 * invokeMethod always posts the close to run after the graphics lock is
+		 * released. On the exit / module-unload path the posted QMetaCallEvent is
+		 * flushed by drain_deferred_output_teardowns() (plugin-main.cpp) so the
+		 * OutputInstance is never leaked with its hardware left active. */
 		if (toClose) {
 			OutputInstance *raw = toClose.release();
-			QTimer::singleShot(0, qApp,
-					   [raw]() { close_output_instance(std::unique_ptr<OutputInstance>(raw)); });
+			QMetaObject::invokeMethod(
+				qApp, [raw]() { close_output_instance(std::unique_ptr<OutputInstance>(raw)); },
+				Qt::QueuedConnection);
 		}
 
 		warned_map_failed_ = false;
