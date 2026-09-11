@@ -22,7 +22,7 @@ OBS Advanced Multiview keeps the same basic idea as OBS Multiview, but removes s
 - OBS Multiview does not provide detailed per-cell signal-lost handling. This plugin can show **missing-source states, placeholder images, signal-lost images, fallback states, and reconnect controls**.
 - OBS Multiview is tied to one set of monitor views. This plugin lets you save **multiple multiview instances** with different layouts and settings, and open **several projector windows of the same instance at once**, all sharing one set of sources.
 - OBS Multiview does not create external monitoring feeds. This plugin creates external provider cells as private OBS sources where possible, so they do not need to be added to your normal scenes.
-- OBS Multiview cannot send its image anywhere. This plugin can **output the composed multiview as an NDI or Spout sender** (video, plus audio for NDI), without routing it through a scene.
+- OBS Multiview cannot send its anywhere. This plugin can **output the composed multiview as an NDI, Spout, or DeckLink signal** (video, plus audio where supported), without routing it through a scene filter output.
 
 ## Features
 
@@ -59,9 +59,11 @@ OBS Advanced Multiview keeps the same basic idea as OBS Multiview, but removes s
 
 - **NDI output of the composed multiview** (video + audio).
 - **Spout output of the composed multiview** (Windows, video only).
+- **DeckLink output of the composed multiview** to Blackmagic SDI/HDMI hardware (video + audio).
+- DeckLink settings include the device, hardware mode, keyer mode, Force SDR, and audio track selection.
 - Output audio source: follow the streaming track, a manual track, or none.
 - Output runs independently of scenes and keeps sending with no window open.
-- Selectable output resolution and frame rate.
+- Selectable output resolution and frame rate for NDI and Spout; DeckLink uses the selected hardware mode.
 
 ### Visual Settings
 
@@ -125,6 +127,7 @@ Performance work keeps the multiview from pressuring the program output during a
   - obs-spout2 for Spout cells
   - OBS VLC source support for VLC playlist cells
 - For **NDI output**, an NDI 5 or 6 runtime (NDI Tools or the NDI redistributable) installed. NDI output is built in and does not need DistroAV.
+- For **DeckLink output**, OBS must have its DeckLink output plugin available and a supported Blackmagic DeckLink device must be detected. The selected hardware mode must match the OBS canvas frame rate.
 
 macOS and Linux support is planned through the cross-platform build system, but current validation is Windows-first.
 
@@ -200,6 +203,10 @@ The built-in **NDI external output** (video + audio) builds out of the box on **
 
 At runtime the plugin loads the NDI runtime library dynamically (nothing is bundled), so end users need the [NDI runtime](http://ndi.link/NDIRedistV6) (or NDI Tools) installed. An NDI 5 or NDI 6 runtime both work.
 
+### DeckLink output
+
+The built-in **DeckLink external output** reuses OBS's registered `decklink_output` type and does not require a separate DeckLink SDK to build. At runtime, OBS must provide the DeckLink output plugin and detect a compatible Blackmagic device. Available modes are filtered to the OBS canvas frame rate; the output uses the selected hardware mode's native raster and can include SDI/HDMI audio.
+
 ## Documentation
 
 - [Development workflow](docs/DEVELOPMENT.md)
@@ -213,7 +220,7 @@ Design and implementation notes are kept under [docs](docs/). Project milestones
 
 ## Current Status
 
-The 1.0 release candidate focuses on Windows operation, custom multiview layouts, **multiple projector windows per instance**, internal OBS source monitoring, external media/NDI/Spout/VLC provider cells, **NDI/Spout external output**, signal-lost handling, visual customization, and bilingual English / Simplified Chinese UI.
+The 1.0 release candidate focuses on Windows operation, custom multiview layouts, **multiple projector windows per instance**, internal OBS source monitoring, external media/NDI/Spout/VLC provider cells, **NDI/Spout/DeckLink external output**, signal-lost handling, visual customization, and bilingual English / Simplified Chinese UI.
 
 ## License
 
