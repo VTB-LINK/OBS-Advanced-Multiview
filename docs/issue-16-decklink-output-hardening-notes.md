@@ -6,7 +6,7 @@
 
 **总评：初版存在 2 个发版阻断 HIGH，不可按现状发布。** 本轮修复 H1、H2（必修）+ M1、M2、M3（廉价且在播出信号上可见，一并修）；LOW 3 项记录接受。
 
-**修复后状态（经二次对抗审查，见 §D）：H1 / H2 / M1 / M3 = RESOLVED；M2 = PARTIAL（仅覆盖显式/启动失败 stop，静默拔线不自愈，非回归）；无遗留 HIGH；新引入 3 个 LOW（均非阻塞）。代码完整、可发布，待真机回归测试。**
+**修复后状态（经二次对抗审查，见 §D；真机回归已于 2026-09-13 通过）：H1 / H2 / M1 / M3 = RESOLVED；M2 = OK（真机验证拔线+插回自动恢复出画；仅设备热移除/驱动异常致 output 真正终止的罕见情形自愈休眠、未复现、非回归）；无遗留 HIGH；新引入 3 个 LOW（均非阻塞）。代码完整、可发布。**
 
 ---
 
@@ -87,7 +87,7 @@
 | H1 | **RESOLVED** | 重型 output teardown 全经 `QTimer::singleShot(0,qApp)` 异步化，确认永不内联、不在 `obs_enter_graphics` 锁下跑；`destroy_stages` 内联但仅廉价 GPU 释放。 |
 | H2 | **RESOLVED** | 通往 `obs_output_create("decklink_output")` 的所有路径（后端 create_task + 对话框 probe）均先按设备当前 fps 过滤模式表校验 modeId（0/负/拒绝启用全封闭）；该列表是 `outputModeIdMap` 严格子集，不可能命中 `FindOutputMode` 空指针。 |
 | M1 | **RESOLVED** | `compose_size()` Running 后以运行态光栅覆盖持久化快照、单锁无死锁；`from_obs_data` 对 decklink 强制 `resMode=Custom`。 |
-| M2 | **PARTIAL** | 机制竞态安全、无误报，对**显式 stop / 启动失败**能自愈；但静态审计 obs-studio 表明 `decklink_output` 在**拔线/失信/设备错误时不清 `obs_output_active`**（`ScheduledFrameCompleted` 仅重排下一帧、`obs_output_end_data_capture` 仅由显式 `decklink_output_stop` 调），故「静默拔 SDI 线」场景自愈**休眠**。非回归（严格优于修前）。 |
+| M2 | **OK（已真机验证）** | 机制竞态安全、无误报，对**显式 stop / 启动失败**能自愈。**真机（2026-09-13）拔 SDI 线 + 插回、期间不改配置 → 自动恢复出画**：拔线仅物理层断开，`decklink_output` 持续运行（`obs_output_active` 保持 true）、卡持续发送，插回即恢复，无需自愈——静态审计预测的「拔线不清 active」在此**是正确行为**。自愈休眠仅对**设备热移除/驱动异常致底层 output 真正终止**（active 卡 true）的罕见情形有意义，未复现、需手动禁用再启用。非回归。 |
 | M3 | **RESOLVED** | `voi.colorspace/range` 取自 `obs_output_get_video_conversion`，DEFAULT(0) 兜底 709/FULL，与输出转换目标一致，SDR/HDR 皆零逐帧转换。 |
 
 **底线：无遗留发布阻断 HIGH，代码完整可发布，待真机回归。**
@@ -97,7 +97,7 @@
 - **LOW-F2** `resMode=Custom` 对任何非空 `deckDeviceHash` 的 backend 强制生效（仅损坏配置把 hash 注入 spout/ndi 时才误伤，不崩溃）。**修法**：按 backend kind 门控（仅 decklink）。
 - **LOW-F3** headless/`qApp` 为空时 teardown 泄漏 = 既有 L3，非回归。
 
-### M2 的诚实结论与后续（务必真机验证）
-- 真机请**实拔 SDI 线**验证：`decklink_output` 是否会把 `obs_output_active` 置 false。静态结论是**不会**，即 M2 对静默拔线休眠。
-- 发布说明据此把 M2 宣称下调为「仅覆盖显式/启动失败 stop 的自愈」，注明静默 SDI 链路丢失在 OBS output 层不可见。
-- 若需真正拔线恢复：须在 `obs_output_active` 之外实现——监听 decklink 链路/参考信号，或把 `video_output_lock_frame` 持续 ring-full 停顿当作存活性信号触发 Idle+cooldown 重建。（后续增强，非本轮阻断。）
+### M2 的诚实结论与后续（已真机验证 2026-09-13）
+- **真机验证结果**：出流中**实拔 SDI 线 + 插回**、期间不改配置 → **自动恢复出画**。原因：拔线仅物理层断开，我们的 `decklink_output` 一直在跑（`obs_output_active` 保持 true）、卡一直在发；插回下游即刻收到，输出从未停止，无需自愈。静态审计「拔线不清 `obs_output_active`」的预测是对的，但对拔线场景「保持 active=true + 插回即恢复」恰恰是正确行为，不是缺陷。
+- 因此**发布说明不再声称「拔线不自愈」**（原措辞误导，已从 1.3.0 release note 删除）。真正需要自愈的只有**设备热移除 / 驱动异常**致底层 output 真正终止（`obs_output_active` 卡在 true）的罕见情形——此时自愈休眠、需手动禁用再启用；该情形未复现。
+- 若要覆盖该罕见情形：须在 `obs_output_active` 之外实现——监听 decklink 链路/参考信号，或把 `video_output_lock_frame` 持续 ring-full 停顿当作存活性信号触发 Idle+cooldown 重建。（后续增强，非本轮阻断。）
