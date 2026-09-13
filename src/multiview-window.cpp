@@ -93,11 +93,18 @@ MultiviewWindow::MultiviewWindow(ConfigManager *config, AmvInstanceCore *core, Q
 	 * construction; default to 1 until then). */
 	refresh_title();
 
-	/* Escape to close */
+	/* Escape: exit fullscreen first (back to the windowed projector), then close
+	 * on a second press when already windowed. Mirrors how a fullscreen projector
+	 * is expected to behave — the first Escape shouldn't tear the window down. */
 	QAction *escAction = new QAction(this);
 	escAction->setShortcut(Qt::Key_Escape);
 	addAction(escAction);
-	connect(escAction, &QAction::triggered, this, &QWidget::close);
+	connect(escAction, &QAction::triggered, this, [this]() {
+		if (isFullScreen())
+			on_toggle_fullscreen(); /* exit fullscreen (showNormal + restore geometry) */
+		else
+			close();
+	});
 
 	/* Create display when window becomes visible */
 	connect(windowHandle(), &QWindow::visibleChanged, this, [this](bool visible) {
