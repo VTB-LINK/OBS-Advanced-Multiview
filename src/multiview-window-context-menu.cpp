@@ -268,6 +268,18 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 			QScreen *target = cur.value(i);
 			if (!target)
 				return;
+			/* Clicking the monitor this window is already fullscreen on toggles
+			 * fullscreen back off (matches this item's checked state: click to
+			 * uncheck), reusing the same exit path as "Current Screen". Resolve
+			 * the live screen exactly as the checkmark above does. */
+			if (isFullScreen()) {
+				QWindow *wh = windowHandle();
+				QScreen *liveScreen = wh ? wh->screen() : screen();
+				if (liveScreen == target) {
+					on_toggle_fullscreen();
+					return;
+				}
+			}
 			/* Save the windowed geometry before the first fullscreen transition
 			 * so exiting restores the original window, not this monitor's full
 			 * rect (issue #19; mirrors OBSProjector::OpenFullScreenProjector). */
