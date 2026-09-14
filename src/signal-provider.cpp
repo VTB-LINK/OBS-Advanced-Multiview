@@ -131,6 +131,7 @@ void register_ffmpeg_provider();
 void register_ndi_provider();
 void register_spout_provider();
 void register_vlc_provider();
+void register_amvinstance_provider();
 void signal_provider_ndi_shutdown();
 void signal_provider_spout_shutdown();
 void signal_provider_vlc_shutdown();
@@ -152,6 +153,7 @@ void signal_provider_registry_init()
 	register_ndi_provider();
 	register_spout_provider();
 	register_vlc_provider();
+	register_amvinstance_provider();
 
 	obs_log(LOG_INFO, "[signal-provider] registry initialized with %zu provider(s)",
 		(size_t)reg.providers().size());

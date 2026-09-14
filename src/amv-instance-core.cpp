@@ -43,5 +43,9 @@ AmvInstanceCore::~AmvInstanceCore()
 	 * MultiviewWindow dtor; the caller has already removed any display draw
 	 * callback so no render is in flight. */
 	release_source_refs();
+	/* Issue #20 (P1): free the nested-source publish texrenders. Safe here: the
+	 * four-phase teardown already removed this core from the render driver, so no
+	 * compose is in flight (this enters the graphics context itself). */
+	release_consumer_targets();
 	output_.reset();
 }

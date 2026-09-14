@@ -482,6 +482,9 @@ enum class SignalProviderType {
 	Spout,
 	Vlc,
 	WebRtcReserved,
+	/* Issue #20: another AMV instance's composited picture, sampled per-cell as
+	 * a nested source. External (not internal), cross-platform. */
+	AmvInstance,
 };
 
 const char *signal_provider_to_string(SignalProviderType p);
@@ -545,6 +548,17 @@ constexpr int kFirstFrameTimeoutDefaultSec = 15;
 constexpr int kFirstFrameTimeoutMinSec = 5;
 constexpr int kFirstFrameTimeoutMaxSec = 120;
 } // namespace amv_media
+
+/* Issue #20: nested-AMV-source (AmvInstance provider) settings keys, stored in
+ * SignalConfig.providerSettings. The target is referenced by the instance UUID
+ * (stable across rename / clone). The picture-mode key is reserved for P3's
+ * full/grid switch; P2 always composes Full and ignores it if absent. The hidden
+ * source id is shared by the provider (create) and the source registration. */
+namespace amv_nested {
+constexpr const char *kSourceId = "amv_instance_source";
+constexpr const char *kTargetUuidKey = "amv_target_uuid";
+constexpr const char *kPictureModeKey = "amv_picture_mode"; /* "full" (default) | "grid" (P3) */
+} // namespace amv_nested
 
 struct SignalConfig {
 	SignalProviderType provider = SignalProviderType::Unknown;

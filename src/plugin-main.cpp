@@ -76,6 +76,23 @@ static std::recursive_mutex g_registry_mutex;
 static std::map<std::string, std::unique_ptr<AmvInstanceCore>> g_cores;
 static std::map<std::string, std::vector<MultiviewWindow *>> g_views;
 
+/* ---- Issue #20: nested-AMV-source pull keep-alive ----
+ *
+ * g_pull_refs marks which instances are referenced by at least one AmvInstance
+ * cell as a nested source. A present entry is a THIRD reason a core must stay
+ * alive (besides open windows and enabled output). It is rebuilt from config,
+ * only on the UI thread under g_registry_mutex, by multiview_reconcile_pull_hosts
+ * (which calls the UI-thread-only ensure_core); the value is unused (presence is
+ * the signal), kept as an int for a possible future count. Empty when no cell
+ * references another instance, so every keep-alive check below is then a no-op. */
+static std::map<std::string, int> g_pull_refs;
+
+static int pull_count_locked(const std::string &uuid)
+{
+	auto it = g_pull_refs.find(uuid);
+	return it != g_pull_refs.end() ? it->second : 0;
+}
+
 /* Create the core for `uuid` if absent (applying persisted layout + output);
  * returns the (now-existing) core, or nullptr if there is no such instance. */
 static AmvInstanceCore *ensure_core(const std::string &uuid)
@@ -130,6 +147,19 @@ static void refresh_view_numbers(const std::string &uuid)
  * g_cores is out of the driver before it is destroyed. */
 static bool g_main_render_registered = false;
 static std::vector<AmvInstanceCore *> g_output_hosts;
+/* Issue #20 (P1): graphics-thread snapshot of cores pulled as nested sources
+ * (pull count > 0). Rebuilt alongside g_output_hosts under the graphics lock; the
+ * render driver composes their published consumer frames each frame. Empty until
+ * P2 wires pull refs, so P1 leaves the driver behavior unchanged. */
+static std::vector<AmvInstanceCore *> g_consumer_hosts;
+/* Issue #20 (P2): graphics-thread-only snapshot resolving a pull target's UUID to
+ * its live core. Same set as g_consumer_hosts (cores with pull count > 0) but
+ * keyed by UUID so amv_instance_source::video_render / the AmvInstance provider's
+ * probe_health can resolve their target on the graphics thread WITHOUT taking
+ * g_registry_mutex (which would invert graphics->registry and deadlock). Rebuilt
+ * only under obs_enter_graphics in multiview_refresh_output_driver; read lock-free
+ * on the graphics thread. Empty whenever no instance is pulled. */
+static std::map<std::string, AmvInstanceCore *> g_pull_targets_graphics;
 
 /* S1 hardening: ceiling on the total number of concurrently armed output
  * backends the graphics thread drives each frame. kMaxInstances (config load)
@@ -152,6 +182,18 @@ static void on_main_rendered(void *)
 		core->tick_once_per_frame();
 		core->render_output_only();
 	}
+	/* Issue #20 (P1): drive consumer-frame composition for cores pulled as
+	 * nested sources — including headless pull hosts (no window, no output) that
+	 * would otherwise never be driven. tick_once_per_frame() is idempotent within
+	 * a frame (a core that also has a window/output already ticked), and
+	 * compose_consumer_frames() no-ops when the core has no demand. g_consumer_hosts
+	 * is empty until P2, so this loop is inert in P1. */
+	for (auto *core : g_consumer_hosts) {
+		if (!core)
+			continue;
+		core->tick_once_per_frame();
+		core->compose_consumer_frames();
+	}
 }
 
 void multiview_refresh_output_driver()
@@ -160,6 +202,8 @@ void multiview_refresh_output_driver()
 	std::lock_guard<std::recursive_mutex> lk(g_registry_mutex);
 	obs_enter_graphics();
 	g_output_hosts.clear();
+	g_consumer_hosts.clear();
+	g_pull_targets_graphics.clear();
 	size_t armedBackends = 0;
 	bool capHit = false;
 	for (auto &[id, core] : g_cores) {
@@ -187,7 +231,21 @@ void multiview_refresh_output_driver()
 		armedBackends += backends;
 		g_output_hosts.push_back(core.get());
 	}
-	const bool need = !g_output_hosts.empty();
+	/* Issue #20 (P1): collect cores kept alive as nested-source pull targets so
+	 * the driver composes their published frames each frame (a pull host may have
+	 * no window and no output). Empty until P2. */
+	for (auto &[id, core] : g_cores) {
+		if (core && pull_count_locked(id) > 0) {
+			g_consumer_hosts.push_back(core.get());
+			/* Issue #20 (P2): expose the same cores by UUID for the graphics-
+			 * thread sampler. Built here (under the graphics lock) so the
+			 * sampler never dereferences a core that is mid-destroy: a dying
+			 * core is removed from g_cores and this driver is rebuilt BEFORE
+			 * the core is released (four-phase teardown). */
+			g_pull_targets_graphics[id] = core.get();
+		}
+	}
+	const bool need = !g_output_hosts.empty() || !g_consumer_hosts.empty();
 	obs_leave_graphics();
 
 	/* Logged once per reconcile (outside the graphics lock), not per frame. */
@@ -228,11 +286,12 @@ static void on_window_closed(MultiviewWindow *view, const std::string &uuid)
 
 	const bool hasViews = g_views.count(uuid) != 0;
 	auto cit = g_cores.find(uuid);
-	if (cit != g_cores.end() && !hasViews && !cit->second->has_output()) {
-		/* Last view gone and no output: remove from the driver first (under
-		 * the graphics lock, so no in-flight frame holds it), then destroy
-		 * the core (releases sources on this main thread). The just-closed
-		 * view is pending deleteLater and never dereferences core_ again. */
+	if (cit != g_cores.end() && !hasViews && !cit->second->has_output() && pull_count_locked(uuid) == 0) {
+		/* Last view gone, no output, and no nested-source puller (issue #20):
+		 * remove from the driver first (under the graphics lock, so no in-flight
+		 * frame holds it), then destroy the core (releases sources on this main
+		 * thread). The just-closed view is pending deleteLater and never
+		 * dereferences core_ again. */
 		std::unique_ptr<AmvInstanceCore> dying = std::move(cit->second);
 		g_cores.erase(cit);
 		multiview_refresh_output_driver();
@@ -261,9 +320,10 @@ static void reconcile_output_host(const std::string &uuid)
 			core->apply_output_settings();
 	} else if (cit != g_cores.end()) {
 		cit->second->apply_output_settings(); /* tears output_ down */
-		if (!hasViews) {
-			/* No views and no output left — destroy the core (driver
-			 * rebuilt first so no in-flight frame holds it). */
+		if (!hasViews && pull_count_locked(uuid) == 0) {
+			/* No views, no output, and no nested-source puller (issue #20) —
+			 * destroy the core (driver rebuilt first so no in-flight frame
+			 * holds it). */
 			std::unique_ptr<AmvInstanceCore> dying = std::move(cit->second);
 			g_cores.erase(cit);
 			multiview_refresh_output_driver();
@@ -273,6 +333,92 @@ static void reconcile_output_host(const std::string &uuid)
 		}
 	}
 	multiview_refresh_output_driver();
+}
+
+/* ---- Issue #20: nested-AMV-source pull-target resolver + keep-alive reconcile ---- */
+
+AmvInstanceCore *multiview_pull_target_graphics(const std::string &uuid)
+{
+	/* GRAPHICS THREAD ONLY. Lock-free read of the graphics-lock-maintained
+	 * snapshot (see g_pull_targets_graphics). No g_registry_mutex, no
+	 * obs_enter_graphics — the caller is already inside the graphics lock, and
+	 * the snapshot is only mutated there. The returned pointer is valid for the
+	 * current graphics-thread call only. */
+	auto it = g_pull_targets_graphics.find(uuid);
+	return it != g_pull_targets_graphics.end() ? it->second : nullptr;
+}
+
+/* Read the AmvInstance target UUID out of a cell's SignalConfig, or "" if the cell
+ * is not an AmvInstance cell / carries no target. */
+static std::string amv_cell_pull_target(const CellAssignment &ca)
+{
+	if (ca.signalConfig.provider != SignalProviderType::AmvInstance || !ca.signalConfig.providerSettings)
+		return std::string();
+	const char *t = obs_data_get_string(ca.signalConfig.providerSettings, amv_nested::kTargetUuidKey);
+	return (t && *t) ? std::string(t) : std::string();
+}
+
+void multiview_reconcile_pull_hosts()
+{
+	/* UI THREAD ONLY. Recompute the pull keep-alive set from config and drive
+	 * g_pull_refs / g_cores to match. Set-based (idempotent) rather than the
+	 * P1 matched inc/dec model, so a missed event can never permanently leak a
+	 * headless core — the next reconcile self-heals. */
+	std::lock_guard<std::recursive_mutex> lk(g_registry_mutex);
+	if (!config_manager)
+		return;
+
+	/* Desired set: every UUID an AmvInstance cell references AND that still
+	 * names an existing instance. A reference to a deleted instance is dropped
+	 * here, so its core is not kept alive and the referencing cell falls to the
+	 * Lost path (design §2.7). */
+	std::set<std::string> desired;
+	for (const auto &inst : config_manager->instances()) {
+		for (const auto &ca : inst.cellAssignments) {
+			std::string target = amv_cell_pull_target(ca);
+			if (!target.empty() && config_manager->find_instance(target))
+				desired.insert(target);
+		}
+	}
+
+	/* Additions: newly-referenced targets get a headless core (which starts
+	 * publishing consumer frames once a consumer demands them). */
+	bool changed = false;
+	for (const auto &uuid : desired) {
+		if (g_pull_refs.find(uuid) == g_pull_refs.end()) {
+			g_pull_refs[uuid] = 1;
+			ensure_core(uuid);
+			changed = true;
+			obs_log(LOG_INFO, "[lifecycle] pull host referenced for instance %s", uuid.c_str());
+		}
+	}
+
+	/* Removals: targets no longer referenced release their pull ref, and any
+	 * core with no window and no output is destroyed (four-phase: collect the
+	 * dying cores, rebuild the driver once so no in-flight frame holds them,
+	 * then release them here on the UI thread). */
+	std::vector<std::unique_ptr<AmvInstanceCore>> dying;
+	std::vector<std::string> to_drop;
+	for (const auto &kv : g_pull_refs) {
+		if (desired.find(kv.first) == desired.end())
+			to_drop.push_back(kv.first);
+	}
+	for (const auto &uuid : to_drop) {
+		g_pull_refs.erase(uuid);
+		changed = true;
+		const bool hasViews = g_views.count(uuid) != 0;
+		auto cit = g_cores.find(uuid);
+		if (cit != g_cores.end() && !hasViews && !cit->second->has_output()) {
+			dying.push_back(std::move(cit->second));
+			g_cores.erase(cit);
+			obs_log(LOG_INFO, "[lifecycle] pull host released for instance %s (no window/output)",
+				uuid.c_str());
+		}
+	}
+
+	if (changed)
+		multiview_refresh_output_driver();
+	dying.clear();
 }
 
 static bool init_config_path()
@@ -540,6 +686,18 @@ static void close_all_multiview_windows()
 		g_main_render_registered = false;
 	}
 	g_output_hosts.clear();
+	/* Issue #20 (P1/P2): drop the consumer-host snapshot + the graphics-thread
+	 * pull-target map UNDER the graphics lock. Windows are still open here (their
+	 * views are deleted below), so a display render on the graphics thread can
+	 * still read g_pull_targets_graphics via multiview_pull_target_graphics; that
+	 * map is only ever mutated under the graphics lock, so clearing it without one
+	 * would race a concurrent find(). g_pull_refs is UI-thread-only (read under
+	 * g_registry_mutex), so it needs no graphics lock. */
+	obs_enter_graphics();
+	g_consumer_hosts.clear();
+	g_pull_targets_graphics.clear();
+	obs_leave_graphics();
+	g_pull_refs.clear();
 
 	/* Delete all views first (each removes its display callback), then destroy
 	 * all cores (releases their sources). */
@@ -769,6 +927,9 @@ static void apply_scene_collection_reload()
 		close_multiview_window(id);
 
 	notify_multiview_output_settings_changed();
+	/* Issue #20: reconcile nested-source keep-alive against the reloaded config
+	 * (instances / cell assignments may have changed wholesale). */
+	multiview_reconcile_pull_hosts();
 }
 
 /* issue #14: pending "this scene collection looks duplicated" snapshot. Held
@@ -849,6 +1010,9 @@ static void on_frontend_event(enum obs_frontend_event event, void *)
 		if (config_manager)
 			config_manager->refresh_known_collections();
 		notify_multiview_output_settings_changed();
+		/* Issue #20: bring up headless pull hosts for any instance referenced
+		 * as a nested source in the loaded config (keep-alive default on). */
+		multiview_reconcile_pull_hosts();
 	}
 
 	if (event == OBS_FRONTEND_EVENT_EXIT) {
@@ -892,6 +1056,11 @@ bool obs_module_load(void)
 	 * themselves from their own translation units; the registry stays
 	 * usable with only the internal adapters until those land. */
 	signal_provider_registry_init();
+
+	/* Issue #20: register the hidden nested-source obs type BEFORE any UI /
+	 * provider path can create it. CAP_DISABLED keeps it out of OBS's Add
+	 * Source list; only the AmvInstance provider creates it programmatically. */
+	register_amv_instance_source();
 
 	obs_frontend_add_tools_menu_item(obs_module_text("OBSAdvancedMultiview"), on_tools_menu_clicked, nullptr);
 

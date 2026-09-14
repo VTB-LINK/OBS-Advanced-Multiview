@@ -749,7 +749,7 @@ void MultiviewWindow::show_context_menu(const QPoint &pos, int cellIndex)
 
 void MultiviewWindow::on_add_source(int cellIndex)
 {
-	SourcePicker picker(this);
+	SourcePicker picker(config_, uuid_, this);
 	if (picker.exec() != QDialog::Accepted)
 		return;
 
@@ -790,6 +790,12 @@ void MultiviewWindow::on_add_source(int cellIndex)
 
 	inst->signalDirty = true;
 	config_->save();
+
+	/* Issue #20: this cell may now reference (or stop referencing) another
+	 * instance as a nested source — reconcile the pull keep-alive set before
+	 * the cell's private source is (re)built so the target core is already
+	 * publishing. UI thread, outside any render/lock context. */
+	multiview_reconcile_pull_hosts();
 
 	/* Phase 3 / M6.1+ task 9.1.A: try the single-cell incremental path
 	 * first so other cells in the same window keep their external
@@ -867,6 +873,9 @@ void MultiviewWindow::on_edit_source(int cellIndex)
 	inst->signalDirty = true;
 	config_->save();
 
+	/* Issue #20: an edit could change (or clear) a nested-source target. */
+	multiview_reconcile_pull_hosts();
+
 	if (!refresh_cell(r, c))
 		refresh_sources();
 }
@@ -899,6 +908,10 @@ void MultiviewWindow::on_clear_cell(int cellIndex)
 
 	inst->signalDirty = true;
 	config_->save();
+
+	/* Issue #20: clearing may drop this window's last reference to a nested
+	 * target — reconcile so an unreferenced headless pull host is released. */
+	multiview_reconcile_pull_hosts();
 
 	/* Phase 3 / M6.1+ task 9.1.A: incremental path — the cleared cell's
 	 * private source is released, the rest of the window untouched. */

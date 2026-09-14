@@ -1267,6 +1267,10 @@ void ManagerDialog::on_delete_instance()
 	}
 
 	config_->save();
+	/* Issue #20: a deleted instance may have BEEN a nested-source target (its
+	 * pull host must be released) or may have REFERENCED others (their pull refs
+	 * drop). Reconcile against the now-updated config. */
+	multiview_reconcile_pull_hosts();
 	refresh_instance_list();
 	current_detail_uuid_.clear();
 	right_stack_->setCurrentIndex(PAGE_EMPTY);
@@ -1439,6 +1443,11 @@ void ManagerDialog::auto_save_layout()
 	inst->prune_cells_to_grid();
 	inst->layoutDirty = true;
 	config_->save();
+	/* Issue #20: a shrink may have pruned an AmvInstance cell (prune_cells_to_grid
+	 * above), dropping this instance's last reference to a nested target. Reconcile
+	 * the pull keep-alive set so an unreferenced headless pull host is released,
+	 * matching the context-menu add/change/edit/clear paths. */
+	multiview_reconcile_pull_hosts();
 	notify_multiview_layout_changed(current_detail_uuid_);
 }
 

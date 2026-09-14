@@ -38,6 +38,7 @@ License: GPL-2.0-or-later
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -106,12 +107,65 @@ public:
 	 * rest no-op. */
 	void tick_once_per_frame();
 
+	/* ---- Nested AMV source consumer service (issue #20 P1) ----
+	 *
+	 * A core can publish its own composited picture as a GPU texture that other
+	 * instances sample as a per-cell source. Publish targets are keyed by
+	 * (width, height, picture mode) and double-buffered (front is read while back
+	 * is composed), so a consumer — including an instance that references ITSELF —
+	 * always reads a complete, previous-frame front while the current frame is
+	 * composed into back. This is the "read the last published frame" model that
+	 * makes cycles / self-reference / deep chains safe by construction.
+	 *
+	 * Threading (AGENTS §2): note_consumer_demand / compose_consumer_frames /
+	 * get_consumer_front run ONLY on the OBS graphics thread and are the sole
+	 * accessors of consumer_targets_, so that map takes NO source_mutex_ (a
+	 * consumer's sample must never nest a second core's source_mutex_). draw_cells,
+	 * invoked by compose_consumer_frames(), still takes THIS core's own
+	 * source_mutex_ internally (the legal graphics-lock -> source_mutex_ nesting). */
+	enum class ConsumerPictureMode {
+		Full,     /* full draw_cells: labels / VU / highlight / overlay / safe-area */
+		GridOnly, /* only the per-cell source pictures; skip the overlay chrome */
+	};
+
+	/* A published front texture for one (w, h, mode) key. `texture` is null when
+	 * the key has no completed frame yet (the consumer falls back to Lost). The
+	 * handle is valid only for the current graphics-thread call — never cache it. */
+	struct ConsumerFrame {
+		gs_texture_t *texture = nullptr;
+		uint32_t width = 0;
+		uint32_t height = 0;
+	};
+
+	/* Upper bound on a published consumer-picture dimension (applied in
+	 * make_consumer_key). The nested source clamps its advertised get_width/
+	 * get_height to this so its letterbox math matches the clamped published
+	 * texture on a canvas larger than the cap (issue #20). */
+	static constexpr uint32_t kConsumerMaxDim = 7680;
+
+	/* Mark that a (w, h, mode) picture is wanted this frame (graphics thread,
+	 * cheap: records demand only). Creates the target entry on first request; the
+	 * actual composition happens in compose_consumer_frames(). */
+	void note_consumer_demand(uint32_t w, uint32_t h, ConsumerPictureMode mode);
+
+	/* Compose every recently-demanded target into its back buffer and swap to
+	 * front; GC targets not demanded within the TTL. Driven once per frame on the
+	 * graphics thread by plugin-main's render driver. No demand -> no-op. */
+	void compose_consumer_frames();
+
+	/* Return the front texture for (w, h, mode), or an empty frame when the key
+	 * has no completed frame yet. Graphics thread; takes no source_mutex_. */
+	ConsumerFrame get_consumer_front(uint32_t w, uint32_t h, ConsumerPictureMode mode);
+
 	/* Paint the multiview composition for a caller-computed cell layout into the
 	 * current render target's viewport. Acquires source_mutex_. (The per-cell
 	 * half of the old MultiviewWindow::draw_grid.) `diag` enables the per-cell
 	 * detailed-log diagnostics; only the display pass sets it, so the output
-	 * pass (different cell sizes) doesn't thrash the once-per-tuple [fill] log. */
-	void draw_cells(const std::vector<CellRect> &cells, int vpX, int vpY, int vpW, int vpH, bool diag = true);
+	 * pass (different cell sizes) doesn't thrash the once-per-tuple [fill] log.
+	 * `mode` selects the full overlay set (default; byte-identical to before) or
+	 * the grid-only picture for a consumer compose. */
+	void draw_cells(const std::vector<CellRect> &cells, int vpX, int vpY, int vpW, int vpH, bool diag = true,
+			ConsumerPictureMode mode = ConsumerPictureMode::Full);
 
 	/* Offscreen output pass (no display); uses the core's own output engine. */
 	void render_output_only();
@@ -513,4 +567,49 @@ private:
 
 	/* once-per-frame tick de-dup token (graphics thread, under source_mutex_). */
 	uint64_t last_tick_token_ = 0;
+
+	/* ---- Nested AMV source consumer service state (issue #20 P1) ----
+	 * Graphics-thread-only (see the public API's threading note); NOT guarded by
+	 * source_mutex_. Implemented in amv-instance-core-pull.cpp. */
+	struct ConsumerKey {
+		uint32_t w = 0;
+		uint32_t h = 0;
+		ConsumerPictureMode mode = ConsumerPictureMode::Full;
+		bool operator<(const ConsumerKey &o) const
+		{
+			if (w != o.w)
+				return w < o.w;
+			if (h != o.h)
+				return h < o.h;
+			return (int)mode < (int)o.mode;
+		}
+	};
+	struct ConsumerTarget {
+		/* Double buffer: front is the last completed frame (read by consumers),
+		 * back is composed this frame then swapped to front. front is reset only
+		 * at its own swap point, so a mid-frame consumer read never races a write. */
+		gs_texrender_t *front = nullptr;
+		gs_texrender_t *back = nullptr;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		bool front_valid = false;
+		uint64_t last_demand_ns = 0;
+	};
+	std::map<ConsumerKey, ConsumerTarget> consumer_targets_;
+	/* Layout engine for consumer composition (recomputed per target per frame
+	 * from layout_; distinct from output_engine_ so an output pass and a consumer
+	 * compose at different sizes don't thrash one cache). */
+	LayoutEngine consumer_engine_;
+	ConsumerKey make_consumer_key(uint32_t w, uint32_t h, ConsumerPictureMode mode) const;
+	void compose_one_consumer_target(const ConsumerKey &key, ConsumerTarget &tgt);
+	void release_consumer_targets();
+	/* A target is composed while demanded within the compose window, kept warm
+	 * (idle) until the GC TTL, then its texrenders are freed. Time-based (not a
+	 * frame counter) so it is robust to intra-frame call ordering and frame rate. */
+	static constexpr uint64_t kConsumerComposeWindowNs = 100'000'000ULL; /* 100 ms */
+	static constexpr uint64_t kConsumerGcTtlNs = 500'000'000ULL;         /* 500 ms */
+	/* Defensive ceiling on live publish targets per core (mirrors the output
+	 * backend cap): a misbehaving consumer can never make one core allocate
+	 * unbounded VRAM. */
+	static constexpr size_t kMaxConsumerTargets = 8;
 };

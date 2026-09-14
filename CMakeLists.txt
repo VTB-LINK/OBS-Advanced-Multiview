@@ -76,6 +76,8 @@ target_sources(
     src/amv-instance-core-status.cpp
     src/amv-instance-core-lost-image.cpp
     src/amv-instance-core-health.cpp
+    src/amv-instance-core-pull.cpp
+    src/amv-instance-source.cpp
     src/multiview-window.hpp
     src/multiview-window.cpp
     src/multiview-window-context-menu.cpp
@@ -97,6 +99,7 @@ target_sources(
     src/signal-provider-ndi.cpp
     src/signal-provider-spout.cpp
     src/signal-provider-vlc.cpp
+    src/signal-provider-amvinstance.cpp
     src/provider-settings-forms.hpp
     src/provider-settings-forms.cpp
     src/provider-settings-forms-common.hpp

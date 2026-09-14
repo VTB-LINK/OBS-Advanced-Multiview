@@ -180,6 +180,40 @@ void notify_multiview_output_settings_changed(const std::string &uuid = "");
  * window's output_ state (issue #11 Phase 2). */
 void multiview_refresh_output_driver();
 
+/* Issue #20 (P2): GRAPHICS-THREAD-ONLY by-uuid resolver for the nested-source
+ * sampler (amv_instance_source::video_render + the AmvInstance provider's
+ * probe_health). It reads a snapshot map (uuid -> core) that is rebuilt only
+ * under obs_enter_graphics inside multiview_refresh_output_driver, and holds
+ * exactly the cores kept alive as pull targets. Reading it with NO lock is safe
+ * ONLY on the graphics thread (the same discipline as g_output_hosts /
+ * g_consumer_hosts): the UI thread mutates it while holding the graphics lock, so
+ * it never changes under an in-flight frame. It deliberately does NOT take
+ * g_registry_mutex: the registry mutex is the outermost lock and every UI-thread
+ * path takes it BEFORE obs_enter_graphics (registry -> graphics), so a graphics-
+ * thread registry acquire would be a graphics -> registry lock-order inversion.
+ * Returns a pointer valid for the current graphics-thread call only; never cache
+ * it. */
+AmvInstanceCore *multiview_pull_target_graphics(const std::string &uuid);
+
+/* Issue #20 (P2): UI-THREAD-ONLY reconcile of the pull keep-alive set against the
+ * current config. Scans every instance's cellAssignments, collects the set of
+ * UUIDs referenced by AmvInstance cells (that also name an existing instance),
+ * and ensures exactly those cores exist as headless pull hosts — creating cores
+ * that gained a reference and destroying view-less / output-less cores that lost
+ * their last reference (four-phase teardown). Idempotent; call after any cell-
+ * assignment mutation, scene-collection reload, config load, or instance delete.
+ * Calls ensure_core (heavy: scene-tree walks, possible inc/dec_active + third-
+ * party callbacks) so it must NEVER run on the graphics thread or under
+ * source_mutex_ (AGENTS §2). */
+void multiview_reconcile_pull_hosts();
+
+/* Issue #20 (P2): register the hidden `amv_instance_source` obs_source type
+ * (OBS_SOURCE_CAP_DISABLED, so it is invisible in OBS's "Add Source" list but can
+ * still be created programmatically by the AmvInstance provider). Call once from
+ * obs_module_load, before the provider registry is queried. Defined in
+ * amv-instance-source.cpp. */
+void register_amv_instance_source();
+
 /* Issue #10 perf: global multiview-window compose-rate divisor (1=Full, 2=Half),
  * read on the graphics thread by MultiviewWindow::render(). Push from the config
  * load + the Settings tab via the setter (a relaxed atomic — a one-frame-stale

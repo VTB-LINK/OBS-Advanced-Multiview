@@ -53,13 +53,21 @@ static inline void endRegion()
 	gs_projection_pop();
 }
 
-void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, int vpY, int vpW, int vpH, bool diag)
+void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, int vpY, int vpW, int vpH, bool diag,
+				 ConsumerPictureMode mode)
 {
 	/* Acquires source_mutex_: called on the graphics thread by each VIEW's
-	 * display render() (with the cells that view computed for its own size) and
-	 * by the output pass. source_mutex_ is recursive, so a nested lock is
-	 * cheap. The caller owns layout computation; we only paint `cells`. */
+	 * display render() (with the cells that view computed for its own size), by
+	 * the output pass, and by the nested-source consumer compose. source_mutex_
+	 * is recursive, so a nested lock is cheap. The caller owns layout
+	 * computation; we only paint `cells`. */
 	std::lock_guard<std::recursive_mutex> lock(source_mutex_);
+
+	/* Issue #20 (P1): grid-only consumer mode paints just the per-cell source
+	 * pictures and skips the overlay chrome (label / VU / highlight / overlay /
+	 * safe-area, plus the status band and PRVW indicator). Full mode (the default
+	 * for every existing view/output caller) is byte-identical to before. */
+	const bool gridOnly = (mode == ConsumerPictureMode::GridOnly);
 
 	/* Draw each cell (offset by vpX, vpY for centering) */
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
@@ -887,7 +895,7 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 			endRegion();
 
 			/* Draw PRVW fallback indicator (yellow bar at bottom) */
-			if (isPrvwFallback) {
+			if (isPrvwFallback && !gridOnly) {
 				int barH = (std::max)(2, cell.h / 20);
 				startRegion(cellX, cellY + cell.h - barH, cell.w, barH, 0.0f, (float)cell.w, 0.0f,
 					    (float)barH);
@@ -957,8 +965,9 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 
 		/* Render safe area guides after video, before overlay. Anchor is
 		 * configurable per resolved SafeAreaSettings (Cell or Signal). */
-		render_safe_area(i, cellX, cellY, cell.w, cell.h, hasSignalRect ? vrX : 0, hasSignalRect ? vrY : 0,
-				 hasSignalRect ? vrW : 0, hasSignalRect ? vrH : 0);
+		if (!gridOnly)
+			render_safe_area(i, cellX, cellY, cell.w, cell.h, hasSignalRect ? vrX : 0,
+					 hasSignalRect ? vrY : 0, hasSignalRect ? vrW : 0, hasSignalRect ? vrH : 0);
 
 		/* (PGM/PRVW highlight borders are rendered in two post-loop passes
 		 * below so PGM (red) always paints on top of PRVW (green) even when
@@ -967,7 +976,7 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 		 * gutter == 0 layouts where the border is drawn INSIDE the cell.) */
 
 		/* Render foreground overlay image if available */
-		if (i < (int)overlay_images_.size() && overlay_images_[i].texture) {
+		if (!gridOnly && i < (int)overlay_images_.size() && overlay_images_[i].texture) {
 			const OverlaySettings *ovl = nullptr;
 			if (i < (int)effective_visuals_.size())
 				ovl = &effective_visuals_[i].overlay;
@@ -1046,7 +1055,7 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 		}
 
 		/* Fill label region background (Below mode only, when labelRegionFill enabled) */
-		if (i < (int)effective_visuals_.size() &&
+		if (!gridOnly && i < (int)effective_visuals_.size() &&
 		    effective_visuals_[i].label.displayMode == LabelDisplayMode::Below &&
 		    effective_visuals_[i].label.labelRegionFill) {
 			int labelRegionH = cell.h / 6;
@@ -1068,15 +1077,18 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 		}
 
 		/* Render label overlay */
-		render_label(i, cell, vpX, vpY);
+		if (!gridOnly)
+			render_label(i, cell, vpX, vpY);
 
 		/* Phase 3 / M5: status overlay (Missing Source for now). Rendered
 		 * after label so a Below-mode label area never gets covered, and
 		 * before VU meter / highlight which are intentionally on top. */
-		render_status_overlay(i, cellX, cellY, cell.w, cell.h);
+		if (!gridOnly)
+			render_status_overlay(i, cellX, cellY, cell.w, cell.h);
 
 		/* Render VU meter bars */
-		render_vu_meter(i, cell, vpX, vpY, vrX, vrY, vrW, vrH);
+		if (!gridOnly)
+			render_vu_meter(i, cell, vpX, vpY, vrX, vrY, vrW, vrH);
 	}
 
 	/* Issue #5 stage B: one coalesced reconcile post for all cells'
@@ -1105,6 +1117,13 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 			reconcile_primary_showing();
 		});
 	}
+
+	/* Issue #20 (P1): grid-only consumer picture skips PGM/PRVW highlight borders
+	 * (overlay chrome). The reconcile posts above still run so source activation
+	 * stays correct; only the highlight draw — the last thing in the frame — is
+	 * omitted. */
+	if (gridOnly)
+		return;
 
 	/* ---- PGM / PRVW highlight pass (post-cell, two layers) ----
 	 *

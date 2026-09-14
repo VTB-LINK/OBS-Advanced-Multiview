@@ -331,6 +331,8 @@ const char *signal_provider_to_string(SignalProviderType p)
 		return "vlc";
 	case SignalProviderType::WebRtcReserved:
 		return "webrtc_reserved";
+	case SignalProviderType::AmvInstance:
+		return "amv_instance";
 	case SignalProviderType::Unknown:
 	default:
 		return "unknown";
@@ -359,6 +361,8 @@ SignalProviderType signal_provider_from_string(const char *s)
 		return SignalProviderType::Vlc;
 	if (strcmp(s, "webrtc_reserved") == 0)
 		return SignalProviderType::WebRtcReserved;
+	if (strcmp(s, "amv_instance") == 0)
+		return SignalProviderType::AmvInstance;
 	return SignalProviderType::Unknown;
 }
 

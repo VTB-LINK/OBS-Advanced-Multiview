@@ -28,13 +28,20 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTabWidget>
 #include <QWidget>
 
+#include <string>
+
 class ProviderSettingsForm;
+class ConfigManager;
 
 class SourcePicker : public QDialog {
 	Q_OBJECT
 
 public:
-	explicit SourcePicker(QWidget *parent = nullptr);
+	/* Issue #20: `config` + `self_uuid` let the picker enumerate the OTHER AMV
+	 * instances for the nested-source tab (config may be null in contexts that
+	 * never open that tab; the tab then shows an empty-list hint). */
+	explicit SourcePicker(ConfigManager *config = nullptr, const std::string &self_uuid = std::string(),
+			      QWidget *parent = nullptr);
 
 	CellAssignment result_assignment() const { return result_; }
 
@@ -79,11 +86,20 @@ private:
 	 * CellAssignment with provider=Vlc. */
 	QWidget *build_vlc_tab();
 
+	/* Issue #20 (P2): AMV Instance tab — a flat list of the OTHER AMV instances
+	 * (name shown, UUID stored). Selecting one returns a CellAssignment with
+	 * provider=AmvInstance and the target UUID in providerSettings. Minimal by
+	 * design: three-tier resolution / full-grid switch / current-instance marker
+	 * / audio placeholder are P3. */
+	QWidget *build_amv_instance_tab();
+	void populate_amv_instances();
+
 	QTabWidget *tabs_;
 	QLineEdit *filter_edit_;
 	QListWidget *special_list_;
 	QListWidget *scene_list_;
 	QListWidget *source_list_;
+	QListWidget *amv_instance_list_ = nullptr;
 
 	/* Phase 3 / M6: external provider placeholder tabs. Stored so the
 	 * tab index lookup in on_accept() can recognize them and reject
@@ -93,6 +109,7 @@ private:
 	QWidget *spout_tab_ = nullptr;
 	QWidget *vlc_tab_ = nullptr;
 	QWidget *webrtc_tab_ = nullptr;
+	QWidget *amv_instance_tab_ = nullptr;
 
 	/* Phase 3 / M6.1: Media tab URL line edit (kept as a member so
 	 * on_accept can read its value). Null until build_media_tab runs. */
@@ -115,6 +132,10 @@ private:
 
 	/* Phase 3 / M6.4: VLC form (VLC tab). */
 	ProviderSettingsForm *vlc_form_ = nullptr;
+
+	/* Issue #20: instance enumeration source for the AMV Instance tab. */
+	ConfigManager *config_ = nullptr;
+	std::string self_uuid_;
 
 	CellAssignment result_;
 };

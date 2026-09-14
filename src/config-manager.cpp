@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QUuid>
 
 #include <algorithm>
+#include <map>
 #include <cstddef>
 #include <cstdio>
 
@@ -428,10 +429,37 @@ void ConfigManager::seed_current_from_snapshot(const SceneCollectionChange &snap
 		count = kMaxInstances;
 	}
 	instances_.reserve(count);
+	/* Issue #20: the copied instances get fresh uuids below, but any AmvInstance
+	 * cell's amv_target_uuid still names the OLD (source-collection) uuid. Record
+	 * old->new so nested-source targets can be remapped after the copy; without it
+	 * every cross- and self-reference would resolve to nothing and fall to Lost. */
+	std::map<std::string, std::string> uuidRemap;
 	for (size_t i = 0; i < count; i++) {
 		MultiviewInstance copy = snapshot.sourceInstances[i];
+		std::string oldUuid = copy.uuid;
 		copy.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+		uuidRemap[oldUuid] = copy.uuid;
 		instances_.push_back(std::move(copy));
+	}
+	/* Rewrite each AmvInstance cell's target through old->new. A target inside the
+	 * snapshot (including a self-reference) maps to its new uuid; a target outside
+	 * the copied set is cleared so the cell honestly falls to Lost rather than
+	 * pointing at a foreign collection's instance. Safe to mutate providerSettings
+	 * in place: SignalConfig's copy ctor deep-copies it (clone_obs_data), so these
+	 * are the new collection's own obs_data, independent of the snapshot. */
+	for (auto &inst : instances_) {
+		for (auto &ca : inst.cellAssignments) {
+			if (ca.signalConfig.provider != SignalProviderType::AmvInstance ||
+			    !ca.signalConfig.providerSettings)
+				continue;
+			const char *oldTarget =
+				obs_data_get_string(ca.signalConfig.providerSettings, amv_nested::kTargetUuidKey);
+			if (!oldTarget || !*oldTarget)
+				continue;
+			auto it = uuidRemap.find(oldTarget);
+			obs_data_set_string(ca.signalConfig.providerSettings, amv_nested::kTargetUuidKey,
+					    it != uuidRemap.end() ? it->second.c_str() : "");
+		}
 	}
 	/* Mirror the persisted detailed-logs flag into the runtime atomic, matching
 	 * load_from_file. */

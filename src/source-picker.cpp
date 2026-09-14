@@ -18,10 +18,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "source-picker.hpp"
 #include "amv-i18n.hpp"
+#include "config-manager.hpp"
 #include "provider-settings-forms.hpp"
 #include "signal-provider.hpp"
 
 #include <obs.h>
+#include <obs-data.h>
 #include <obs-frontend-api.h>
 
 #include <QDialogButtonBox>
@@ -32,7 +34,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-SourcePicker::SourcePicker(QWidget *parent) : QDialog(parent)
+SourcePicker::SourcePicker(ConfigManager *config, const std::string &self_uuid, QWidget *parent)
+	: QDialog(parent),
+	  config_(config),
+	  self_uuid_(self_uuid)
 {
 	setWindowTitle(amv::text("AMVPlugin.SourcePicker.Title"));
 	setMinimumSize(480, 540);
@@ -85,6 +90,10 @@ SourcePicker::SourcePicker(QWidget *parent) : QDialog(parent)
 						 amv::text("AMVPlugin.SourcePicker.WebRTC.Milestone"),
 						 amv::text("AMVPlugin.SourcePicker.WebRTC.Description"));
 	tabs_->addTab(webrtc_tab_, amv::text("AMVPlugin.SourcePicker.Tab.WebRTC"));
+
+	/* Issue #20 (P2): AMV Instance tab (nested source). */
+	amv_instance_tab_ = build_amv_instance_tab();
+	tabs_->addTab(amv_instance_tab_, amv::text("AMVPlugin.SourcePicker.Tab.AmvInstance"));
 
 	/* Buttons */
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -179,6 +188,8 @@ void SourcePicker::on_filter_changed(const QString &text)
 	filter_list(special_list_);
 	filter_list(scene_list_);
 	filter_list(source_list_);
+	if (amv_instance_list_)
+		filter_list(amv_instance_list_);
 }
 
 void SourcePicker::on_item_double_clicked(QListWidgetItem *item)
@@ -197,7 +208,30 @@ void SourcePicker::on_accept()
 		activeList = scene_list_;
 	else if (idx == 2)
 		activeList = source_list_;
-	else {
+	else if (tabs_->widget(idx) == amv_instance_tab_) {
+		/* Issue #20 (P2): AMV Instance (nested source). Build a CellAssignment
+		 * whose signalConfig names the selected instance's UUID. No
+		 * ProviderSettingsForm — the selection is a single list item. */
+		QListWidgetItem *cur = amv_instance_list_ ? amv_instance_list_->currentItem() : nullptr;
+		if (!cur) {
+			QMessageBox::information(this, amv::text("AMVPlugin.SourcePicker.AmvInstance.Heading"),
+						 amv::text("AMVPlugin.SourcePicker.AmvInstance.SelectHint"));
+			return;
+		}
+		const std::string target_uuid = cur->data(Qt::UserRole).toString().toStdString();
+		SignalConfig cfg;
+		cfg.provider = SignalProviderType::AmvInstance;
+		cfg.displayName = cur->text().toStdString();
+		cfg.providerSettings = obs_data_create();
+		obs_data_set_string(cfg.providerSettings, amv_nested::kTargetUuidKey, target_uuid.c_str());
+		/* P2: full composition only; the grid switch is P3. Persist "full"
+		 * explicitly so a P3 build reads a well-formed value. */
+		obs_data_set_string(cfg.providerSettings, amv_nested::kPictureModeKey, "full");
+		result_ = CellAssignment{};
+		result_.signalConfig = std::move(cfg);
+		accept();
+		return;
+	} else {
 		/* External provider tabs. The tab -> settings-form wiring below
 		 * is the only per-provider knowledge left here; validation and
 		 * read-back are uniform through ProviderSettingsForm. `form` is
@@ -511,4 +545,59 @@ QWidget *SourcePicker::build_vlc_tab()
 	layout->addWidget(availLabel);
 
 	return page;
+}
+
+QWidget *SourcePicker::build_amv_instance_tab()
+{
+	auto *page = new QWidget(this);
+	auto *layout = new QVBoxLayout(page);
+	layout->setContentsMargins(12, 12, 12, 12);
+	layout->setSpacing(10);
+
+	auto *heading = new QLabel(amv::text("AMVPlugin.SourcePicker.AmvInstance.Heading"), page);
+	{
+		QFont f = heading->font();
+		f.setBold(true);
+		heading->setFont(f);
+	}
+	layout->addWidget(heading);
+
+	auto *body = new QLabel(amv::text("AMVPlugin.SourcePicker.AmvInstance.Description"), page);
+	body->setWordWrap(true);
+	layout->addWidget(body);
+
+	amv_instance_list_ = new QListWidget(page);
+	layout->addWidget(amv_instance_list_, 1);
+	connect(amv_instance_list_, &QListWidget::itemDoubleClicked, this, &SourcePicker::on_item_double_clicked);
+
+	populate_amv_instances();
+	return page;
+}
+
+void SourcePicker::populate_amv_instances()
+{
+	if (!amv_instance_list_)
+		return;
+	amv_instance_list_->clear();
+
+	/* List every AMV instance (name shown, UUID stored). Self is included: a
+	 * self-reference is a safe feedback picture in the published-frame model
+	 * (design §2.8). Marking the current instance is a P3 refinement. */
+	int count = 0;
+	if (config_) {
+		for (const auto &inst : config_->instances()) {
+			auto *item = new QListWidgetItem(QString::fromStdString(inst.name));
+			item->setData(Qt::UserRole, QString::fromStdString(inst.uuid));
+			amv_instance_list_->addItem(item);
+			count++;
+		}
+	}
+
+	if (count == 0) {
+		/* No instances to pick — a disabled hint item keeps the tab
+		 * self-explanatory (accept() also guards on currentItem). */
+		auto *empty = new QListWidgetItem(amv::text("AMVPlugin.SourcePicker.AmvInstance.Empty"));
+		empty->setFlags(Qt::NoItemFlags);
+		amv_instance_list_->addItem(empty);
+	}
 }
