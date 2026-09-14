@@ -89,6 +89,8 @@ target_sources(
     src/multiview-ndi-runtime.cpp
     src/multiview-output-decklink.hpp
     src/multiview-output-decklink.cpp
+    src/multiview-output-aja.hpp
+    src/multiview-output-aja.cpp
     src/signal-provider.hpp
     src/signal-provider.cpp
     src/signal-provider-ffmpeg.cpp
@@ -160,6 +162,18 @@ option(ENABLE_DECKLINK_OUTPUT "Build multiview DeckLink output (reuses OBS deckl
 
 if(ENABLE_DECKLINK_OUTPUT)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AMV_ENABLE_DECKLINK_OUTPUT)
+endif()
+
+# AJA output (issue #18). Like DeckLink, no SDK dependency: the backend reuses
+# OBS's already-registered "aja_output" type via obs_output_create + a self-owned
+# video_t, so there is nothing to find or link (no NTV2 SDK). Availability is
+# probed at runtime (obs_get_output_flags); OBS's AJA plugin only registers when a
+# card is present, so the feature is inherently hardware-gated + safely greyed out
+# on machines without one.
+option(ENABLE_AJA_OUTPUT "Build multiview AJA output (reuses OBS aja_output)" ON)
+
+if(ENABLE_AJA_OUTPUT)
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AMV_ENABLE_AJA_OUTPUT)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

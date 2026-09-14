@@ -78,6 +78,15 @@ public:
 	 * fields already cached). */
 	virtual void configure_decklink(const DeckLinkBackendSettings &hw) { (void)hw; }
 
+	/* Issue #18 / A3: receive AJA hardware settings (device/io/videoFormat/
+	 * pixelFormat/SDI transports). Only the AJA backend overrides it. Kept separate
+	 * from configure_audio (like configure_decklink) so the shared
+	 * OutputBackendSettings carries no per-hardware fields. Called on the graphics
+	 * thread during reconcile, BEFORE configure_audio (the AJA backend drives its
+	 * create/restart decision from configure_audio and must see the hardware fields
+	 * already cached). */
+	virtual void configure_aja(const AjaBackendSettings &hw) { (void)hw; }
+
 	/* Issue #10: toggle GPU->CPU readback double-buffering. Called on the
 	 * graphics thread during reconcile with the user's global setting. Only the
 	 * NDI backend implements it (Spout has no readback). */
@@ -205,6 +214,14 @@ public:
 	 * (obs_get_output_flags != 0; the OBS DeckLink plugin is present). Used by
 	 * the settings UI to enable/disable the DeckLink tab. */
 	static bool decklink_supported();
+
+	/* Whether AJA output is possible here: the plugin was built with AJA support
+	 * AND OBS's "aja_output" type is registered (obs_get_output_flags != 0). Because
+	 * OBS's aja module refuses to load when no AJA card is present at startup
+	 * (plugins/aja/main.cpp), a registered "aja_output" also implies a card is
+	 * physically present — so this gate is inherently hardware-aware. Used by the
+	 * settings UI to enable/disable the AJA tab. */
+	static bool aja_supported();
 
 private:
 	/* One backend slot. `kind` names which registry descriptor built it (fixed

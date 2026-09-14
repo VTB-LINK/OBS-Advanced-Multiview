@@ -684,7 +684,7 @@ enum class OutputAudioMode { FollowStreaming, ManualTrack, None };
  * because InstanceOutputSettings keys its per-backend container on it while
  * multiview-output.hpp already includes this header — the dependency only goes
  * one way. */
-enum class OutputBackendKind { Spout, Ndi, Decklink };
+enum class OutputBackendKind { Spout, Ndi, Decklink, Aja };
 
 /* Fields common to every output backend. DeckLink's hardware-specific fields live
  * in DeckLinkBackendSettings, not here, so Spout/NDI don't persist or validate
@@ -722,6 +722,39 @@ struct DeckLinkBackendSettings {
 	static DeckLinkBackendSettings from_obs_data(obs_data_t *data);
 };
 
+/* AJA enum sentinels replicated here so the settings/serialize/dialog code never
+ * has to #include an NTV2 SDK header (the reused OBS "aja_output" carries the SDK
+ * dependency; this plugin stays SDK-free — issue #18 §2/§6). Values are the stable
+ * SDK/enum constants used by OBS's aja plugin:
+ *   IOSelection::Invalid == 22  (obs-studio/plugins/aja/aja-enums.hpp:46)
+ *   NTV2_FORMAT_UNKNOWN  == 0   (NTV2 SDK)
+ * NTV2_FBF_INVALID has no stable small-integer guarantee, so pixelFormat validity
+ * is decided by membership in the dialog/aja_output-enumerated list, never a
+ * hard-coded value. */
+inline constexpr long long kAjaIoSelectionInvalid = 22;
+inline constexpr long long kAjaVideoFormatUnknown = 0;
+
+/* AJA-only hardware settings (issue #18). Like DeckLinkBackendSettings, kept out
+ * of the shared OutputBackendSettings so Spout/NDI carry no per-hardware fields.
+ * Unlike DeckLink, AJA composes at the CANVAS size (its SDI raster is not knowable
+ * before the output is created), so there is no mode->raster lock here and resMode
+ * stays CanvasBase. Every AJA enum is stored verbatim as the long long that
+ * obs_data_get_int yields for the corresponding "aja_output" property; the backend
+ * passes them straight back into a scratch obs_data at create (zero SDK). outputID
+ * (the CardManager channel-owner string) is NOT persisted — it is generated fresh
+ * and uniquely per create so two outputs can never collide on one channel (§6). */
+struct AjaBackendSettings {
+	std::string cardID;                             /* kUIPropDevice ("<deviceID>_<serial>") */
+	long long ioSelect = kAjaIoSelectionInvalid;    /* kUIPropOutput (IOSelection; 22 = Invalid) */
+	long long videoFormat = kAjaVideoFormatUnknown; /* kUIPropVideoFormatSelect (NTV2VideoFormat; 0 = UNKNOWN) */
+	long long pixelFormat = 0;                      /* kUIPropPixelFormatSelect (NTV2PixelFormat) */
+	long long sdiTransport = 0;                     /* kUIPropSDITransport (SDITransport; SingleLink = 0) */
+	long long sdi4kTransport = 1;                   /* kUIPropSDITransport4K (SDITransport4K; 2SI = 1) */
+
+	obs_data_t *to_obs_data() const;
+	static AjaBackendSettings from_obs_data(obs_data_t *data);
+};
+
 struct InstanceOutputSettings {
 	/* One common-settings entry per registered backend kind, keyed by kind.
 	 * Populated by from_obs_data (iterating output_backend_registry()) and by
@@ -733,6 +766,13 @@ struct InstanceOutputSettings {
 	 * hardware config round-trips losslessly even on a build without the DeckLink
 	 * backend. */
 	DeckLinkBackendSettings decklink;
+
+	/* AJA hardware settings (device/io/videoFormat/pixelFormat/SDI transports).
+	 * Always present (a plain member, independent of AMV_ENABLE_AJA_OUTPUT) so the
+	 * AJA hardware config round-trips losslessly even on a build without the AJA
+	 * backend — the same "never discard config you don't understand" guarantee as
+	 * DeckLink. Serialized under the "ajaHw" key (§5). */
+	AjaBackendSettings aja;
 
 	/* Verbatim (JSON) copies of any persisted backend sub-object whose kind is
 	 * NOT in this build's registry — e.g. a Windows-authored Spout config opened

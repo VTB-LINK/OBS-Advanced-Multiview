@@ -208,6 +208,54 @@ DeckLinkBackendSettings DeckLinkBackendSettings::from_obs_data(obs_data_t *data)
 	return s;
 }
 
+obs_data_t *AjaBackendSettings::to_obs_data() const
+{
+	obs_data_t *data = obs_data_create();
+	obs_data_set_string(data, "cardID", cardID.c_str());
+	obs_data_set_int(data, "ioSelect", ioSelect);
+	obs_data_set_int(data, "videoFormat", videoFormat);
+	obs_data_set_int(data, "pixelFormat", pixelFormat);
+	obs_data_set_int(data, "sdiTransport", sdiTransport);
+	obs_data_set_int(data, "sdi4kTransport", sdi4kTransport);
+	return data;
+}
+
+AjaBackendSettings AjaBackendSettings::from_obs_data(obs_data_t *data)
+{
+	AjaBackendSettings s;
+	if (!data)
+		return s;
+	if (obs_data_has_user_value(data, "cardID"))
+		s.cardID = obs_data_get_string(data, "cardID");
+	if (obs_data_has_user_value(data, "ioSelect"))
+		s.ioSelect = obs_data_get_int(data, "ioSelect");
+	if (obs_data_has_user_value(data, "videoFormat"))
+		s.videoFormat = obs_data_get_int(data, "videoFormat");
+	if (obs_data_has_user_value(data, "pixelFormat"))
+		s.pixelFormat = obs_data_get_int(data, "pixelFormat");
+	if (obs_data_has_user_value(data, "sdiTransport"))
+		s.sdiTransport = obs_data_get_int(data, "sdiTransport");
+	if (obs_data_has_user_value(data, "sdi4kTransport"))
+		s.sdi4kTransport = obs_data_get_int(data, "sdi4kTransport");
+	/* A hand-edited / corrupt config could carry a negative garbage integer.
+	 * AJA's aja_output_create safely returns nullptr on any invalid value (unlike
+	 * DeckLink's crash), so this clamp is only about not stashing nonsense: pin a
+	 * negative back to the field's "unset" sentinel / default. The authoritative
+	 * validity check (membership in the enumerated lists) happens in the backend
+	 * create task, not here. */
+	if (s.ioSelect < 0)
+		s.ioSelect = kAjaIoSelectionInvalid;
+	if (s.videoFormat < 0)
+		s.videoFormat = kAjaVideoFormatUnknown;
+	if (s.pixelFormat < 0)
+		s.pixelFormat = 0;
+	if (s.sdiTransport < 0)
+		s.sdiTransport = 0;
+	if (s.sdi4kTransport < 0)
+		s.sdi4kTransport = 1;
+	return s;
+}
+
 const OutputBackendSettings &InstanceOutputSettings::at(OutputBackendKind kind) const
 {
 	auto it = backends.find(kind);
@@ -236,10 +284,16 @@ obs_data_t *InstanceOutputSettings::to_obs_data() const
 	obs_data_t *dh = decklink.to_obs_data();
 	obs_data_set_obj(data, "decklinkHw", dh);
 	obs_data_release(dh);
+	/* AJA hardware settings, nested separately (same rationale as decklinkHw).
+	 * Always written; harmless on a build without the AJA backend. */
+	obs_data_t *ah = aja.to_obs_data();
+	obs_data_set_obj(data, "ajaHw", ah);
+	obs_data_release(ah);
 	/* Re-emit any sub-object for a kind not in this build's registry, verbatim,
 	 * so a narrower build never drops a wider build's settings (see the member's
-	 * declaration). These keys never collide with the registry ids or
-	 * "decklinkHw" above (from_obs_data only captured keys that matched none). */
+	 * declaration). These keys never collide with the registry ids or the
+	 * "decklinkHw"/"ajaHw" keys above (from_obs_data only captured keys that
+	 * matched none). */
 	for (const auto &kv : unknownBackends) {
 		obs_data_t *sub = obs_data_create_from_json(kv.second.c_str());
 		if (sub) {
@@ -265,6 +319,9 @@ InstanceOutputSettings InstanceOutputSettings::from_obs_data(obs_data_t *data)
 	obs_data_t *dh = obs_data_get_obj(data, "decklinkHw");
 	s.decklink = DeckLinkBackendSettings::from_obs_data(dh);
 	obs_data_release(dh);
+	obs_data_t *ah = obs_data_get_obj(data, "ajaHw");
+	s.aja = AjaBackendSettings::from_obs_data(ah);
+	obs_data_release(ah);
 	/* M1: a DeckLink config (a device is selected) locks the compose size to the
 	 * mode raster carried in the DeckLink backend's customWidth/customHeight with
 	 * resMode Custom. Force Custom so a hand-edited/corrupt resMode can't make the
@@ -282,12 +339,14 @@ InstanceOutputSettings InstanceOutputSettings::from_obs_data(obs_data_t *data)
 	/* Retain, verbatim, any persisted backend sub-object whose kind this build's
 	 * registry doesn't know (e.g. "spout" on a macOS build) so to_obs_data can
 	 * write it back unchanged instead of silently dropping it. The consumed keys
-	 * are the registry ids (read above) plus "decklinkHw" (always read); every
-	 * other object-typed top-level key is an out-of-build backend to preserve. */
+	 * are the registry ids (read above) plus "decklinkHw"/"ajaHw" (always read);
+	 * every other object-typed top-level key is an out-of-build backend to
+	 * preserve. */
 	std::set<std::string> consumed;
 	for (const auto &desc : output_backend_registry())
 		consumed.insert(desc.id);
 	consumed.insert("decklinkHw");
+	consumed.insert("ajaHw");
 	for (obs_data_item_t *item = obs_data_first(data); item; obs_data_item_next(&item)) {
 		const char *key = obs_data_item_get_name(item);
 		if (!key || obs_data_item_gettype(item) != OBS_DATA_OBJECT || consumed.count(key))

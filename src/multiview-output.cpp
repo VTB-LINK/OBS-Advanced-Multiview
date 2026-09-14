@@ -29,6 +29,10 @@ License: GPL-2.0-or-later
 #include "multiview-output-decklink.hpp"
 #endif
 
+#ifdef AMV_ENABLE_AJA_OUTPUT
+#include "multiview-output-aja.hpp"
+#endif
+
 MultiviewOutputManager::MultiviewOutputManager()
 {
 	/* One live slot per built backend, in registry order. Every reconcile/
@@ -82,6 +86,19 @@ bool MultiviewOutputManager::decklink_supported()
 #endif
 }
 
+bool MultiviewOutputManager::aja_supported()
+{
+#ifdef AMV_ENABLE_AJA_OUTPUT
+	/* Non-zero output flags => OBS's aja module loaded and registered
+	 * "aja_output". That module refuses to load without an AJA card present at
+	 * startup (plugins/aja/main.cpp), so this is also a de-facto "card present"
+	 * gate. */
+	return obs_get_output_flags("aja_output") != 0;
+#else
+	return false;
+#endif
+}
+
 const std::vector<OutputBackendDesc> &output_backend_registry()
 {
 	/* Program-lifetime static table. Each descriptor's available/create point at
@@ -104,6 +121,10 @@ const std::vector<OutputBackendDesc> &output_backend_registry()
 		r.push_back({OutputBackendKind::Decklink, "decklink", "DeckLink",
 			     &MultiviewOutputManager::decklink_supported, &create_decklink_output_backend,
 			     /*supportsAudio=*/true});
+#endif
+#ifdef AMV_ENABLE_AJA_OUTPUT
+		r.push_back({OutputBackendKind::Aja, "aja", "AJA", &MultiviewOutputManager::aja_supported,
+			     &create_aja_output_backend, /*supportsAudio=*/true});
 #endif
 		return r;
 	}();
@@ -166,6 +187,12 @@ void MultiviewOutputManager::reconcile(BackendEntry &e, const InstanceOutputSett
 		 * backend (no manager-side kind switch); non-DeckLink backends default it
 		 * to a no-op, matching the set_double_buffer pattern. */
 		e.backend->configure_decklink(cfg.decklink);
+		/* Push the AJA hardware settings BEFORE configure_audio, for the same
+		 * reason as configure_decklink: the AJA backend caches these into its
+		 * desired config and drives its create/restart decision from
+		 * configure_audio. Unconditional on every backend; non-AJA backends default
+		 * it to a no-op. */
+		e.backend->configure_aja(cfg.aja);
 		/* (Re)connect audio capture to the selected track (NDI only). */
 		e.backend->configure_audio(s);
 	}

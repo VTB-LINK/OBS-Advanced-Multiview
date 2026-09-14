@@ -17,6 +17,7 @@ License: GPL-2.0-or-later
 
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QSpinBox;
 class QWidget;
 
@@ -48,6 +49,16 @@ private:
 		QComboBox *deckMode = nullptr;   /* data = mode_id (qlonglong) */
 		QComboBox *deckKeyer = nullptr;  /* data = 0/1/2 */
 		QCheckBox *deckForceSdr = nullptr;
+
+		/* AJA-only (issue #18). Every combo's data holds the raw long long that
+		 * OBS's aja_output property yields for that item (device = cardID string). */
+		QComboBox *ajaDevice = nullptr;         /* data = cardID (QString) */
+		QComboBox *ajaIo = nullptr;             /* data = IOSelection (qlonglong) */
+		QComboBox *ajaVideoFormat = nullptr;    /* data = NTV2VideoFormat (qlonglong) */
+		QComboBox *ajaPixelFormat = nullptr;    /* data = NTV2PixelFormat (qlonglong) */
+		QComboBox *ajaSdiTransport = nullptr;   /* data = SDITransport (qlonglong) */
+		QComboBox *ajaSdi4kTransport = nullptr; /* data = SDITransport4K (qlonglong) */
+		QFormLayout *ajaForm = nullptr;         /* for setRowVisible on the SDI rows */
 	};
 
 	void setup_ui();
@@ -72,9 +83,24 @@ private:
 				  const DeckLinkBackendSettings &hw);
 	static void read_decklink(const BackendWidgets &w, OutputBackendSettings &common, DeckLinkBackendSettings &hw);
 
+	/* Builds the AJA tab (device / IOSelection / videoFormat / pixelFormat /
+	 * SDITransport / SDITransport4K + audio; no resMode/custom/fps — AJA composes
+	 * at the canvas). All six knobs are exposed ("full control"). */
+	QWidget *build_aja_tab(BackendWidgets &w, bool available, const QString &unavailableReason);
+	/* Repopulate the io / videoFormat / pixelFormat / SDI transport lists for the
+	 * selected device by driving OBS's aja_output property callbacks (zero SDK). */
+	static void populate_aja_lists(const BackendWidgets &w, const QString &cardID);
+	/* Mirror OBS's SDITransport / SDITransport4K visibility (computed by the aja
+	 * property callbacks from the current io + videoFormat) onto the Qt rows. */
+	static void refresh_aja_sdi_visibility(const BackendWidgets &w);
+	static void load_aja(const BackendWidgets &w, const OutputBackendSettings &common,
+			     const AjaBackendSettings &hw);
+	static void read_aja(const BackendWidgets &w, OutputBackendSettings &common, AjaBackendSettings &hw);
+
 	BackendWidgets spout_;
 	BackendWidgets ndi_;
 	BackendWidgets decklink_;
+	BackendWidgets aja_;
 
 	/* Out-of-build backend sub-objects the dialog can't edit (e.g. a Spout config
 	 * loaded on a macOS build). Captured from set_settings and copied back into
