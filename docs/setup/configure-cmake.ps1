@@ -1,5 +1,6 @@
-# 在 Developer PowerShell for VS 2022 中运行 CMake 配置
-# 此脚本确保使用正确的 Visual Studio 2022 环境
+# 在对应版本的 Developer PowerShell for VS 中运行 CMake 配置
+# （提交默认预设为 VS 2022；本地若覆盖 CMakePresets 为 VS 2026，则用 VS 2026 的 Developer PowerShell）
+# 此脚本确保使用正确的 Visual Studio 环境
 # 注意：此脚本位于 docs/setup/ 目录，会自动定位到项目根目录
 
 Write-Host "=== OBS Advanced Multiview - CMake 配置 ===" -ForegroundColor Cyan
@@ -22,7 +23,7 @@ if ($env:VSINSTALLDIR) {
     Write-Host "✓ 检测到 Visual Studio 环境: $env:VSINSTALLDIR" -ForegroundColor Green
 } else {
     Write-Host "⚠ 警告: 未检测到 Visual Studio Developer 环境" -ForegroundColor Yellow
-    Write-Host "  建议在 'Developer PowerShell for VS 2022' 中运行此脚本" -ForegroundColor Yellow
+    Write-Host "  建议在对应版本的 'Developer PowerShell for VS' 中运行此脚本（默认 VS 2022；本地 VS 2026 覆盖则用 VS 2026 的）" -ForegroundColor Yellow
 }
 
 Write-Host ""
@@ -54,7 +55,7 @@ try {
         Write-Host "✗ CMake 配置失败 (退出码: $LASTEXITCODE)" -ForegroundColor Red
         Write-Host ""
         Write-Host "请确认:" -ForegroundColor Yellow
-        Write-Host "1. 在 'Developer PowerShell for VS 2022' 中运行" -ForegroundColor White
+        Write-Host "1. 在对应版本的 'Developer PowerShell for VS' 中运行（默认 VS 2022 / 本地 VS 2026）" -ForegroundColor White
         Write-Host "2. Visual Studio 2022 已安装 'MSVC v143' 组件" -ForegroundColor White
         Write-Host "3. Windows 11 SDK (10.0.22621.0) 已安装" -ForegroundColor White
     }

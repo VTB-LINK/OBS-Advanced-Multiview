@@ -61,17 +61,19 @@ CMake 报错：`无法找到 Visual Studio 2022 的生成工具（平台工具�
 
 ### 方案三：清理并重新配置
 
-如果之前的配置失败留下了错误的缓存：
+如果之前的配置失败、或某次构建是在临时 git worktree 里做的，会在**依赖缓存**里留下错误的绝对路径。典型症状：重配置时在 `_setup_obs_studio` / `cmake/common/buildspec_common.cmake` 处报
+`The current CMakeCache.txt directory ... is different than the directory ... where CMakeCache.txt was created`。
+此时只清 `build_x64` 不够——污染在**从源码构建的 obs 依赖**缓存里，必须一并清：
 
 ```powershell
-# 在 Developer PowerShell for VS 2022 中运行：
-Remove-Item build_x64 -Recurse -Force
+# 在对应版本的 Developer PowerShell for VS 中运行
+# （提交默认预设为 VS 2022；本地若覆盖为 VS 2026，则用 VS 2026 的 Developer PowerShell）：
+Remove-Item .deps\obs-studio-31.1.1\build_x64 -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item build_x64 -Recurse -Force -ErrorAction SilentlyContinue
 .\docs\setup\configure-cmake.ps1
-```**：
-- 设置了完整的 Visual Studio 环境变量
-- 包括 VSINSTALLDIR、VCToolsVersion 等
-- 确保 CMake 能正确检测到对应版本的工具链
-- VS 2022 对应 v143 工具集，VS 2026 对应 v180+ 工具集
+```
+
+obs 源码已在本地（`.deps/obs-studio-31.1.1/`），不会重新下载，只会重配置 + 重编 obs 依赖（约 10-15 分钟）。
 
 ## 验证环境
 
