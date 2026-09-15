@@ -155,41 +155,73 @@ void AmvInstanceCore::compose_consumer_frames()
 
 AmvInstanceCore::ConsumerFrame AmvInstanceCore::get_consumer_front(uint32_t w, uint32_t h, ConsumerPictureMode mode)
 {
-	/* Graphics thread only; deliberately takes no lock (see file header). Returns
-	 * the completed front texture for (w, h, mode), or an empty frame when the
-	 * key has no completed frame yet (the consumer then falls back to Lost). */
+	/* Graphics thread only; deliberately takes no lock (see file header).
+	 *
+	 * Broadcast-grade "never falsely Lost": prefer the exact (w, h, mode) front,
+	 * but on an exact miss fall back to the largest completed front of the SAME
+	 * picture mode (any size). A consumer's requested size drifts for a frame or
+	 * two during churn — a freshly (re)created source before its first render-
+	 * target hand-off (canvas fallback), a window resize crossing the follow-
+	 * window quantum, the consumer_targets_ cap dropping a just-requested key, or
+	 * a Full<->Grid switch — and the exact key composes within a frame and takes
+	 * over. All of this core's fronts share the canvas aspect and the consumer
+	 * stretches whatever size it gets to fill its advertised size R (a clean
+	 * resample, not a distortion), so returning a same-mode front keeps the nested
+	 * cell showing the picture through that churn instead of flashing SIGNAL LOST.
+	 * Only when this core publishes NO completed front for the mode at all does the
+	 * consumer fall through to Lost. */
 	ConsumerFrame out;
 	if (w == 0 || h == 0)
 		return out;
+
 	const ConsumerKey key = make_consumer_key(w, h, mode);
 	auto it = consumer_targets_.find(key);
-	if (it == consumer_targets_.end() || !it->second.front_valid || !it->second.front) {
-		/* Detailed-logs diagnostic (gated): a consumer requested a picture this
-		 * core has not published. Log the requested (w, h, mode) against every key
-		 * this core currently holds so a nested-source SIGNAL LOST can be traced to
-		 * a resolution/mode key mismatch (foundKey=1 means the size+mode key exists
-		 * but has no completed front yet). Throttled to one line per 500 ms so a
-		 * per-frame miss cannot flood the log. */
-		static uint64_t s_diag_ns = 0;
-		const uint64_t now = os_gettime_ns();
-		if (now - s_diag_ns > 500'000'000ULL) {
-			s_diag_ns = now;
-			std::string keys;
-			for (auto &kv : consumer_targets_)
-				keys += "(" + std::to_string(kv.first.w) + "x" + std::to_string(kv.first.h) + "," +
-					(kv.first.mode == ConsumerPictureMode::GridOnly ? "grid" : "full") +
-					",fv=" + (kv.second.front_valid ? "1" : "0") + ") ";
-			amv_log_detailed(LOG_INFO,
-					 "[consumer] %s get_consumer_front MISS want=(%ux%u,%s) foundKey=%d keys=[%s]",
-					 log_prefix().c_str(), w, h,
-					 mode == ConsumerPictureMode::GridOnly ? "grid" : "full",
-					 it != consumer_targets_.end() ? 1 : 0, keys.c_str());
-		}
+	if (it != consumer_targets_.end() && it->second.front_valid && it->second.front) {
+		out.texture = gs_texrender_get_texture(it->second.front);
+		out.width = it->second.width;
+		out.height = it->second.height;
 		return out;
 	}
-	out.texture = gs_texrender_get_texture(it->second.front);
-	out.width = it->second.width;
-	out.height = it->second.height;
+
+	/* Exact miss: the largest completed front of the same mode (most detail when
+	 * scaled into the cell). Read-only scan of a map of at most kMaxConsumerTargets
+	 * entries; never composes, never touches back buffers. */
+	const ConsumerTarget *best = nullptr;
+	uint64_t best_area = 0;
+	for (auto &kv : consumer_targets_) {
+		if (kv.first.mode != mode || !kv.second.front_valid || !kv.second.front)
+			continue;
+		const uint64_t area = (uint64_t)kv.second.width * (uint64_t)kv.second.height;
+		if (!best || area > best_area) {
+			best = &kv.second;
+			best_area = area;
+		}
+	}
+	if (best) {
+		out.texture = gs_texrender_get_texture(best->front);
+		out.width = best->width;
+		out.height = best->height;
+		return out;
+	}
+
+	/* True miss: this core has no completed front for `mode` at all (target not
+	 * composing this mode yet, or just deleted) -> the consumer falls through to
+	 * Lost. Detailed-logs diagnostic (gated): log the requested (w, h, mode)
+	 * against every key held so the Lost can be traced. Throttled to one line per
+	 * 500 ms so a per-frame miss cannot flood the log. */
+	static uint64_t s_diag_ns = 0;
+	const uint64_t now = os_gettime_ns();
+	if (now - s_diag_ns > 500'000'000ULL) {
+		s_diag_ns = now;
+		std::string keys;
+		for (auto &kv : consumer_targets_)
+			keys += "(" + std::to_string(kv.first.w) + "x" + std::to_string(kv.first.h) + "," +
+				(kv.first.mode == ConsumerPictureMode::GridOnly ? "grid" : "full") +
+				",fv=" + (kv.second.front_valid ? "1" : "0") + ") ";
+		amv_log_detailed(LOG_INFO, "[consumer] %s get_consumer_front MISS want=(%ux%u,%s) keys=[%s]",
+				 log_prefix().c_str(), w, h, mode == ConsumerPictureMode::GridOnly ? "grid" : "full",
+				 keys.c_str());
+	}
 	return out;
 }
 

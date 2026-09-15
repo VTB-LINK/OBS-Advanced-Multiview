@@ -253,14 +253,20 @@ void amv_src_video_render(void *data, gs_effect_t *effect)
 	if (!front.texture)
 		return; /* no completed frame yet -> nothing to draw this frame */
 
-	/* Blit the FRONT into the source's [0,width]x[0,height] space (draw_cells
-	 * has already set up the ortho/viewport mapping that into the cell's video
-	 * rect). Same default-effect sprite idiom as the window compose blit. */
+	/* Blit the FRONT into the source's [0,w]x[0,h] space (draw_cells has already
+	 * set up the ortho/viewport mapping that into the cell's video rect, sized at
+	 * our advertised get_width/get_height = w x h). Draw the sprite at w x h, NOT
+	 * the front's own pixel size: on an exact-size hit they are equal, but
+	 * get_consumer_front may return a same-mode front of a DIFFERENT size during
+	 * resolution churn (see its contract), and a w x h sprite stretches that front
+	 * to fill R. All of a core's fronts share the canvas aspect, so this is a clean
+	 * resample, not a distortion. Same default-effect sprite idiom as the window
+	 * compose blit. */
 	gs_effect_t *def = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	gs_eparam_t *image = gs_effect_get_param_by_name(def, "image");
 	gs_effect_set_texture(image, front.texture);
 	while (gs_effect_loop(def, "Draw"))
-		gs_draw_sprite(front.texture, 0, front.width, front.height);
+		gs_draw_sprite(front.texture, 0, w, h);
 }
 
 void amv_src_get_defaults(obs_data_t *settings)

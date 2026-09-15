@@ -153,8 +153,11 @@ public:
 	 * graphics thread by plugin-main's render driver. No demand -> no-op. */
 	void compose_consumer_frames();
 
-	/* Return the front texture for (w, h, mode), or an empty frame when the key
-	 * has no completed frame yet. Graphics thread; takes no source_mutex_. */
+	/* Return the completed front texture for (w, h, mode). On an exact miss, return
+	 * the largest completed front of the SAME mode so a nested consumer keeps
+	 * showing the picture through resolution churn instead of flashing Lost; return
+	 * an empty frame only when this core has no completed front of that mode at all.
+	 * Graphics thread; takes no source_mutex_. */
 	ConsumerFrame get_consumer_front(uint32_t w, uint32_t h, ConsumerPictureMode mode);
 
 	/* Paint the multiview composition for a caller-computed cell layout into the
