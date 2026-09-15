@@ -93,6 +93,41 @@ static int pull_count_locked(const std::string &uuid)
 	return it != g_pull_refs.end() ? it->second : 0;
 }
 
+/* ---- Issue #20 (P3): primary-screen size mirror ----
+ *
+ * A "follow screen" nested source needs a screen resolution, which is a Qt/UI
+ * concept the graphics-thread sampler cannot query. Mirror the PRIMARY display's
+ * pixel size into a pair of relaxed atomics from the Qt GUI thread (module load +
+ * every pull-host reconcile) and let the sampler read it lock-free. A one-frame-
+ * stale value is harmless. HANDED BACK: this tracks the primary screen, not the
+ * specific window's screen, and only refreshes on reconcile (not on a live
+ * monitor change) — see the P3 report. */
+static std::atomic<uint32_t> g_primary_screen_w{0};
+static std::atomic<uint32_t> g_primary_screen_h{0};
+
+void amv_ui_refresh_primary_screen_size()
+{
+	/* Qt GUI thread only (QScreen access). */
+	QScreen *screen = QGuiApplication::primaryScreen();
+	if (!screen)
+		return;
+	const QRect geo = screen->geometry();
+	const qreal dpr = screen->devicePixelRatio();
+	const uint32_t w = (uint32_t)((double)geo.width() * dpr + 0.5);
+	const uint32_t h = (uint32_t)((double)geo.height() * dpr + 0.5);
+	if (w > 0 && h > 0) {
+		g_primary_screen_w.store(w, std::memory_order_relaxed);
+		g_primary_screen_h.store(h, std::memory_order_relaxed);
+	}
+}
+
+bool amv_primary_screen_size(uint32_t &w, uint32_t &h)
+{
+	w = g_primary_screen_w.load(std::memory_order_relaxed);
+	h = g_primary_screen_h.load(std::memory_order_relaxed);
+	return w > 0 && h > 0;
+}
+
 /* Create the core for `uuid` if absent (applying persisted layout + output);
  * returns the (now-existing) core, or nullptr if there is no such instance. */
 static AmvInstanceCore *ensure_core(const std::string &uuid)
@@ -367,6 +402,10 @@ void multiview_reconcile_pull_hosts()
 	std::lock_guard<std::recursive_mutex> lk(g_registry_mutex);
 	if (!config_manager)
 		return;
+
+	/* Issue #20 (P3): refresh the follow-screen primary-display mirror on the UI
+	 * thread while we are here (this runs on every cell-assignment change). */
+	amv_ui_refresh_primary_screen_size();
 
 	/* Desired set: every UUID an AmvInstance cell references AND that still
 	 * names an existing instance. A reference to a deleted instance is dropped
@@ -1061,6 +1100,9 @@ bool obs_module_load(void)
 	 * provider path can create it. CAP_DISABLED keeps it out of OBS's Add
 	 * Source list; only the AmvInstance provider creates it programmatically. */
 	register_amv_instance_source();
+
+	/* Issue #20 (P3): seed the follow-screen primary-display mirror (UI thread). */
+	amv_ui_refresh_primary_screen_size();
 
 	obs_frontend_add_tools_menu_item(obs_module_text("OBSAdvancedMultiview"), on_tools_menu_clicked, nullptr);
 

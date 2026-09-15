@@ -214,6 +214,37 @@ void multiview_reconcile_pull_hosts();
  * amv-instance-source.cpp. */
 void register_amv_instance_source();
 
+/* Issue #20 (P3): GRAPHICS-THREAD-ONLY. draw_cells calls this for a cell backed
+ * by the nested `amv_instance_source` just before it reads the source's
+ * get_width/get_height, handing the source the pixel size of the render target
+ * this pass draws into (the pulling window's display size, the output raster, or
+ * the outer nested compose R). A "follow window" source then composes the target
+ * at that real size and aspect; other resolution modes ignore it. It is a no-op
+ * for any source that is not our type (the id is re-checked inside), so it is
+ * safe to call on a fallback source substituted for a lost target. No
+ * obs_source_update (never on the graphics thread) — a plain relaxed-atomic
+ * field write. Defined in amv-instance-source.cpp. */
+void amv_instance_source_note_render_target(obs_source_t *src, uint32_t w, uint32_t h);
+
+/* Issue #20 (P3): resolve the composition resolution R the given nested source
+ * would use this frame (its resolution mode applied: follow-window render-target
+ * size / follow-screen primary-screen size / manual preset), clamped to the
+ * consumer ceiling. Returns false if `src` is not an amv_instance_source or R is
+ * unresolvable. Used by the AmvInstance provider's probe_health so its health
+ * verdict samples the SAME (R, mode) the source's video_render demands. Graphics
+ * thread. Defined in amv-instance-source.cpp. */
+bool amv_instance_source_resolve_dims(obs_source_t *src, uint32_t &w, uint32_t &h);
+
+/* Issue #20 (P3): the primary display's pixel size, mirrored from the Qt UI
+ * thread so the graphics-thread nested-source sampler can read a screen
+ * resolution without touching Qt. amv_ui_refresh_primary_screen_size() must run
+ * on the Qt GUI thread (module load + every pull-host reconcile); the getter is
+ * lock-free and returns false until the first refresh. NOTE (handed back): this
+ * is the PRIMARY screen, not necessarily the specific window's screen — see the
+ * P3 report. Defined in plugin-main.cpp. */
+void amv_ui_refresh_primary_screen_size();
+bool amv_primary_screen_size(uint32_t &w, uint32_t &h);
+
 /* Issue #10 perf: global multiview-window compose-rate divisor (1=Full, 2=Half),
  * read on the graphics thread by MultiviewWindow::render(). Push from the config
  * load + the Settings tab via the setter (a relaxed atomic — a one-frame-stale

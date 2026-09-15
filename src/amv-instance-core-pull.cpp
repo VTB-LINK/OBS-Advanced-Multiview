@@ -24,6 +24,7 @@ License: GPL-2.0-or-later
 */
 
 #include "amv-instance-core.hpp"
+#include "amv-logging.hpp"
 
 #include <obs.hpp>
 #include <graphics/graphics.h>
@@ -31,6 +32,7 @@ License: GPL-2.0-or-later
 #include <util/platform.h>
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
 AmvInstanceCore::ConsumerKey AmvInstanceCore::make_consumer_key(uint32_t w, uint32_t h, ConsumerPictureMode mode) const
@@ -161,8 +163,30 @@ AmvInstanceCore::ConsumerFrame AmvInstanceCore::get_consumer_front(uint32_t w, u
 		return out;
 	const ConsumerKey key = make_consumer_key(w, h, mode);
 	auto it = consumer_targets_.find(key);
-	if (it == consumer_targets_.end() || !it->second.front_valid || !it->second.front)
+	if (it == consumer_targets_.end() || !it->second.front_valid || !it->second.front) {
+		/* Detailed-logs diagnostic (gated): a consumer requested a picture this
+		 * core has not published. Log the requested (w, h, mode) against every key
+		 * this core currently holds so a nested-source SIGNAL LOST can be traced to
+		 * a resolution/mode key mismatch (foundKey=1 means the size+mode key exists
+		 * but has no completed front yet). Throttled to one line per 500 ms so a
+		 * per-frame miss cannot flood the log. */
+		static uint64_t s_diag_ns = 0;
+		const uint64_t now = os_gettime_ns();
+		if (now - s_diag_ns > 500'000'000ULL) {
+			s_diag_ns = now;
+			std::string keys;
+			for (auto &kv : consumer_targets_)
+				keys += "(" + std::to_string(kv.first.w) + "x" + std::to_string(kv.first.h) + "," +
+					(kv.first.mode == ConsumerPictureMode::GridOnly ? "grid" : "full") +
+					",fv=" + (kv.second.front_valid ? "1" : "0") + ") ";
+			amv_log_detailed(LOG_INFO,
+					 "[consumer] %s get_consumer_front MISS want=(%ux%u,%s) foundKey=%d keys=[%s]",
+					 log_prefix().c_str(), w, h,
+					 mode == ConsumerPictureMode::GridOnly ? "grid" : "full",
+					 it != consumer_targets_.end() ? 1 : 0, keys.c_str());
+		}
 		return out;
+	}
 	out.texture = gs_texrender_get_texture(it->second.front);
 	out.width = it->second.width;
 	out.height = it->second.height;

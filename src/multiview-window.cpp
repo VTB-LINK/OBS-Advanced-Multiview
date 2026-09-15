@@ -271,6 +271,11 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 		/* Full: compose straight to the display (no texrender overhead). */
 		if (compose_tr_)
 			destroy_compose_texrender();
+		/* Issue #20 (P3): a nested "follow window" cell composes its target at
+		 * this window's canvas-aspect render area (vpW x vpH — the default
+		 * render-target size), so B keeps the SAME aspect as A's own grid. Every
+		 * instance is canvas-shaped, so B matches A's other cells rather than
+		 * stretching to the raw window aspect. */
 		core_->draw_cells(engine_.cells(), vpX, vpY, vpW, vpH);
 		return;
 	}
@@ -297,6 +302,9 @@ void MultiviewWindow::render(uint32_t cx, uint32_t cy)
 				struct vec4 clr;
 				vec4_set(&clr, 0.0f, 0.0f, 0.0f, 1.0f);
 				gs_clear(GS_CLEAR_COLOR, &clr, 0.0f, 0);
+				/* Issue #20 (P3): follow-window nested cells compose at this
+				 * pass's canvas-aspect render area (vpW x vpH), matching A's
+				 * grid aspect (see the Full path above). */
 				core_->draw_cells(engine_.cells(), 0, 0, vpW, vpH);
 				gs_texrender_end(compose_tr_);
 				compose_tr_valid_ = true;

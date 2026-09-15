@@ -27,7 +27,7 @@ License: GPL-2.0-or-later
 
 /* ---------- External output settings (issue #11) ---------- */
 
-static const char *output_res_mode_to_str(OutputResolutionMode m)
+const char *output_res_mode_to_str(OutputResolutionMode m)
 {
 	switch (m) {
 	case OutputResolutionMode::ObsOutput:
@@ -43,7 +43,7 @@ static const char *output_res_mode_to_str(OutputResolutionMode m)
 	}
 }
 
-static OutputResolutionMode output_res_mode_from_str(const char *s)
+OutputResolutionMode output_res_mode_from_str(const char *s)
 {
 	if (s && strcmp(s, "obsOutput") == 0)
 		return OutputResolutionMode::ObsOutput;

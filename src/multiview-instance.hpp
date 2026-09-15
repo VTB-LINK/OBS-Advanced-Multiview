@@ -558,6 +558,45 @@ namespace amv_nested {
 constexpr const char *kSourceId = "amv_instance_source";
 constexpr const char *kTargetUuidKey = "amv_target_uuid";
 constexpr const char *kPictureModeKey = "amv_picture_mode"; /* "full" (default) | "grid" (P3) */
+
+/* Issue #20 (P3): per-source resolution mode for the composited picture R that
+ * the target instance renders at (and which the consumer then fits into the
+ * cell). Persisted in providerSettings; unknown/absent values fall back to the
+ * FollowWindow default (forward-compatible). */
+constexpr const char *kResModeKey = "amv_res_mode"; /* "follow_window"(def)|"follow_screen"|"manual" */
+/* Manual mode reuses the external-output resolution presets. The preset id is
+ * stored under kManualResModeKey (OutputResolutionMode string, see
+ * output_res_mode_to_str) plus a custom W/H used only by the Custom preset. */
+constexpr const char *kManualResModeKey = "amv_manual_res_mode";
+constexpr const char *kManualCustomWKey = "amv_manual_custom_w";
+constexpr const char *kManualCustomHKey = "amv_manual_custom_h";
+
+enum class ResMode {
+	FollowWindow, /* R = the pulling window's render-target size (real aspect); default */
+	FollowScreen, /* R = the pulling window's screen resolution */
+	Manual,       /* R = a fixed external-output preset (canvas / output / rescale / custom) */
+};
+
+inline const char *res_mode_to_string(ResMode m)
+{
+	switch (m) {
+	case ResMode::FollowScreen:
+		return "follow_screen";
+	case ResMode::Manual:
+		return "manual";
+	default:
+		return "follow_window";
+	}
+}
+
+inline ResMode res_mode_from_string(const char *s)
+{
+	if (s && std::string(s) == "follow_screen")
+		return ResMode::FollowScreen;
+	if (s && std::string(s) == "manual")
+		return ResMode::Manual;
+	return ResMode::FollowWindow;
+}
 } // namespace amv_nested
 
 struct SignalConfig {
@@ -818,6 +857,13 @@ struct InstanceOutputSettings {
  * Shared by the render loop and the settings dialog so both agree. Returns
  * {0,0} if obs_get_video_info fails. */
 std::pair<uint32_t, uint32_t> resolve_output_dimensions(const OutputBackendSettings &s);
+
+/* Stable string <-> OutputResolutionMode mapping (canvasBase / obsOutput /
+ * obsStreamRescale / obsRecordRescale / custom). Defined in
+ * multiview-instance-serialize-output.cpp; also reused by the nested-AMV-source
+ * manual resolution mode (issue #20 P3) so both persist the preset identically. */
+const char *output_res_mode_to_str(OutputResolutionMode m);
+OutputResolutionMode output_res_mode_from_str(const char *s);
 
 struct MultiviewInstance {
 	std::string uuid;

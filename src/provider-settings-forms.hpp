@@ -37,6 +37,9 @@ License: GPL-2.0-or-later
 #include <string>
 #include <vector>
 
+class ConfigManager;
+class QFormLayout;
+
 /* Abstract base for the per-provider settings form widgets below.
  *
  * The two dialogs that host these forms (EditSourceDialog and
@@ -81,8 +84,15 @@ public:
  * Returns a heap-allocated form (Qt-parented to `parent`), or nullptr for
  * providers that have no settings form yet (e.g. the reserved WebRTC
  * slot); callers fall back to their "no editable form" path in that
- * case. */
-ProviderSettingsForm *make_provider_settings_form(SignalProviderType type, QWidget *parent = nullptr);
+ * case.
+ *
+ * `config` + `self_uuid` are used ONLY by the AmvInstance form (issue #20),
+ * which enumerates the other AMV instances and marks the current one; every
+ * other provider ignores them. Pass them from any dialog that can show that
+ * form (SourcePicker, EditSourceDialog). */
+ProviderSettingsForm *make_provider_settings_form(SignalProviderType type, QWidget *parent = nullptr,
+						  ConfigManager *config = nullptr,
+						  const std::string &self_uuid = std::string());
 
 /* Form for the FFmpeg media provider.
  *
@@ -328,4 +338,58 @@ private:
 	QCheckBox *chk_first_frame_timeout_ = nullptr;
 	QLabel *lbl_first_frame_timeout_ = nullptr;
 	QSpinBox *spin_first_frame_timeout_ = nullptr;
+};
+
+/* Form for the nested AMV-instance provider (issue #20 P3).
+ *
+ * Unlike the external media forms this configures OUR own hidden
+ * amv_instance_source: it picks WHICH other AMV instance to show (by UUID, so
+ * rename/clone are transparent), the resolution the target composes at, whether
+ * to show its full composition or just the grid, and carries a disabled audio
+ * placeholder. Shared verbatim by SourcePicker's AMV Instance tab and
+ * EditSourceDialog, so both surfaces stay identical (driven only through the
+ * ProviderSettingsForm base, like every other provider).
+ *
+ * The instance list is enumerated from the ConfigManager passed to the ctor; the
+ * current instance (self_uuid) is shown bold + italic with a "(current)" suffix
+ * and stays selectable — a self-reference is a safe feedback picture in the
+ * published-frame model (design §2.8). */
+class AmvInstanceForm : public ProviderSettingsForm {
+	Q_OBJECT
+public:
+	explicit AmvInstanceForm(ConfigManager *config = nullptr, const std::string &self_uuid = std::string(),
+				 QWidget *parent = nullptr);
+
+	void load_from(const SignalConfig &cfg) override;
+	SignalConfig to_signal_config() const override;
+	bool is_valid() const override;
+	QString invalid_reason() const override;
+	const char *invalid_title_key() const override { return "AMVPlugin.SourcePicker.AmvInstance.Heading"; }
+
+private:
+	void populate_instances();
+	void apply_res_mode_visibility();
+	void apply_manual_preset_visibility();
+	/* Ensure a target UUID that is not among the live instances (its instance was
+	 * deleted after the cell was bound) still shows as a selected, italic
+	 * "missing" row so Edit Source round-trips the binding instead of clearing it. */
+	void ensure_selected_uuid(const QString &uuid, const QString &name = QString());
+
+	ConfigManager *config_ = nullptr;
+	std::string self_uuid_;
+
+	QListWidget *instance_list_ = nullptr;
+	QComboBox *cmb_res_mode_ = nullptr;
+	QGroupBox *manual_group_ = nullptr;
+	QFormLayout *manual_form_ = nullptr;
+	QComboBox *cmb_manual_preset_ = nullptr;
+	/* The Custom-size row (W x H spinboxes), toggled as a whole via
+	 * manual_form_->setRowVisible(). It is shown only for the Custom preset, whose
+	 * dimensions are user-entered; every other preset carries its resolved size in
+	 * the combo item text, so no separate size row is needed. */
+	QWidget *custom_row_ = nullptr;
+	QSpinBox *spin_custom_w_ = nullptr;
+	QSpinBox *spin_custom_h_ = nullptr;
+	QComboBox *cmb_picture_mode_ = nullptr;
+	QCheckBox *chk_audio_ = nullptr;
 };

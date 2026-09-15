@@ -163,7 +163,10 @@ public:
 	 * detailed-log diagnostics; only the display pass sets it, so the output
 	 * pass (different cell sizes) doesn't thrash the once-per-tuple [fill] log.
 	 * `mode` selects the full overlay set (default; byte-identical to before) or
-	 * the grid-only picture for a consumer compose. */
+	 * the grid-only picture for a consumer compose. A nested amv_instance_source
+	 * cell in "follow window" mode is handed this pass's vpW/vpH as its target
+	 * compose size (issue #20 P3), so B follows the canvas-aspect render area at
+	 * the window's resolution — matching A's own grid. */
 	void draw_cells(const std::vector<CellRect> &cells, int vpX, int vpY, int vpW, int vpH, bool diag = true,
 			ConsumerPictureMode mode = ConsumerPictureMode::Full);
 

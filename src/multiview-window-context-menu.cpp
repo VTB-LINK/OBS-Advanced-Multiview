@@ -855,7 +855,7 @@ void MultiviewWindow::on_edit_source(int cellIndex)
 	 * the live assignment). */
 	SignalConfig snapshot = target->signalConfig;
 
-	EditSourceDialog dlg(snapshot, this);
+	EditSourceDialog dlg(snapshot, config_, uuid_, this);
 	if (dlg.exec() != QDialog::Accepted)
 		return;
 

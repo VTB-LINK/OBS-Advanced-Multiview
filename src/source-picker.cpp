@@ -188,8 +188,6 @@ void SourcePicker::on_filter_changed(const QString &text)
 	filter_list(special_list_);
 	filter_list(scene_list_);
 	filter_list(source_list_);
-	if (amv_instance_list_)
-		filter_list(amv_instance_list_);
 }
 
 void SourcePicker::on_item_double_clicked(QListWidgetItem *item)
@@ -208,30 +206,7 @@ void SourcePicker::on_accept()
 		activeList = scene_list_;
 	else if (idx == 2)
 		activeList = source_list_;
-	else if (tabs_->widget(idx) == amv_instance_tab_) {
-		/* Issue #20 (P2): AMV Instance (nested source). Build a CellAssignment
-		 * whose signalConfig names the selected instance's UUID. No
-		 * ProviderSettingsForm — the selection is a single list item. */
-		QListWidgetItem *cur = amv_instance_list_ ? amv_instance_list_->currentItem() : nullptr;
-		if (!cur) {
-			QMessageBox::information(this, amv::text("AMVPlugin.SourcePicker.AmvInstance.Heading"),
-						 amv::text("AMVPlugin.SourcePicker.AmvInstance.SelectHint"));
-			return;
-		}
-		const std::string target_uuid = cur->data(Qt::UserRole).toString().toStdString();
-		SignalConfig cfg;
-		cfg.provider = SignalProviderType::AmvInstance;
-		cfg.displayName = cur->text().toStdString();
-		cfg.providerSettings = obs_data_create();
-		obs_data_set_string(cfg.providerSettings, amv_nested::kTargetUuidKey, target_uuid.c_str());
-		/* P2: full composition only; the grid switch is P3. Persist "full"
-		 * explicitly so a P3 build reads a well-formed value. */
-		obs_data_set_string(cfg.providerSettings, amv_nested::kPictureModeKey, "full");
-		result_ = CellAssignment{};
-		result_.signalConfig = std::move(cfg);
-		accept();
-		return;
-	} else {
+	else {
 		/* External provider tabs. The tab -> settings-form wiring below
 		 * is the only per-provider knowledge left here; validation and
 		 * read-back are uniform through ProviderSettingsForm. `form` is
@@ -249,6 +224,7 @@ void SourcePicker::on_accept()
 			{ndi_tab_, ndi_form_, "AMVPlugin.EditSource.Error.NDIRequired"},
 			{spout_tab_, spout_form_, "AMVPlugin.EditSource.Error.SpoutRequired"},
 			{vlc_tab_, vlc_form_, "AMVPlugin.EditSource.Error.PlaylistRequired"},
+			{amv_instance_tab_, amv_instance_form_, "AMVPlugin.SourcePicker.AmvInstance.Heading"},
 		};
 
 		QWidget *cur = tabs_->widget(idx);
@@ -566,38 +542,15 @@ QWidget *SourcePicker::build_amv_instance_tab()
 	body->setWordWrap(true);
 	layout->addWidget(body);
 
-	amv_instance_list_ = new QListWidget(page);
-	layout->addWidget(amv_instance_list_, 1);
-	connect(amv_instance_list_, &QListWidget::itemDoubleClicked, this, &SourcePicker::on_item_double_clicked);
+	/* Host the shared AmvInstanceForm so the picker and EditSourceDialog present
+	 * an identical surface (both driven only through ProviderSettingsForm). The
+	 * form enumerates the other instances from config_ and marks the current one. */
+	auto *scroll = new QScrollArea(page);
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	amv_instance_form_ = make_provider_settings_form(SignalProviderType::AmvInstance, nullptr, config_, self_uuid_);
+	scroll->setWidget(amv_instance_form_);
+	layout->addWidget(scroll, 1);
 
-	populate_amv_instances();
 	return page;
-}
-
-void SourcePicker::populate_amv_instances()
-{
-	if (!amv_instance_list_)
-		return;
-	amv_instance_list_->clear();
-
-	/* List every AMV instance (name shown, UUID stored). Self is included: a
-	 * self-reference is a safe feedback picture in the published-frame model
-	 * (design §2.8). Marking the current instance is a P3 refinement. */
-	int count = 0;
-	if (config_) {
-		for (const auto &inst : config_->instances()) {
-			auto *item = new QListWidgetItem(QString::fromStdString(inst.name));
-			item->setData(Qt::UserRole, QString::fromStdString(inst.uuid));
-			amv_instance_list_->addItem(item);
-			count++;
-		}
-	}
-
-	if (count == 0) {
-		/* No instances to pick — a disabled hint item keeps the tab
-		 * self-explanatory (accept() also guards on currentItem). */
-		auto *empty = new QListWidgetItem(amv::text("AMVPlugin.SourcePicker.AmvInstance.Empty"));
-		empty->setFlags(Qt::NoItemFlags);
-		amv_instance_list_->addItem(empty);
-	}
 }

@@ -17,7 +17,9 @@ License: GPL-2.0-or-later
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : QDialog(parent)
+EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, ConfigManager *config, const std::string &self_uuid,
+				   QWidget *parent)
+	: QDialog(parent)
 {
 	setWindowTitle(amv::text("AMVPlugin.EditSource.Title"));
 	setModal(true);
@@ -41,6 +43,9 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 		break;
 	case SignalProviderType::Vlc:
 		title = amv::text("AMVPlugin.EditSource.Heading.VLC");
+		break;
+	case SignalProviderType::AmvInstance:
+		title = amv::text("AMVPlugin.EditSource.Heading.AmvInstance");
 		break;
 	default:
 		title = amv::text("AMVPlugin.EditSource.Heading.External");
@@ -102,7 +107,7 @@ EditSourceDialog::EditSourceDialog(const SignalConfig &cfg, QWidget *parent) : Q
 	 * unsupported on this platform" — provider_platform_supported is only
 	 * ever false for Spout on non-Windows, so this is a no-op for the
 	 * other providers (see signal_provider_supported_on_platform). */
-	form_ = make_provider_settings_form(cfg.provider);
+	form_ = make_provider_settings_form(cfg.provider, nullptr, config, self_uuid);
 	if (form_) {
 		auto *scroll = new QScrollArea(this);
 		scroll->setWidgetResizable(true);

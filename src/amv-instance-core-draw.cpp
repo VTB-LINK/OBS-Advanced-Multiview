@@ -16,6 +16,7 @@ License: GPL-2.0-or-later
 #include "amv-frontend-cache.hpp"
 #include "amv-logging.hpp"
 #include "amv-i18n.hpp"
+#include "multiview-window.hpp" /* amv_instance_source_note_render_target (issue #20 P3) */
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -622,6 +623,20 @@ void AmvInstanceCore::draw_cells(const std::vector<CellRect> &cells, int vpX, in
 		bool hasSignalRect = false;
 
 		if (src) {
+			/* Issue #20 (P3): hand a nested amv_instance_source cell this
+			 * pass's render-target size (vpW x vpH) BEFORE reading its
+			 * get_width/get_height below, so a "follow window" source composes
+			 * its target at this pass's real render area (the window's canvas-
+			 * aspect fit / output raster / nested R) rather than the tiny cell
+			 * size. Scoped to AmvInstance cells (a cheap enum compare); the call
+			 * itself re-checks the source id, so a fallback source substituted
+			 * for a lost target is a no-op. Other resolution modes ignore it.
+			 * This is the ONLY amv_instance_source special case here — every
+			 * other source and Full-mode caller draws byte-identically. */
+			if (i < (int)cell_sources_.size() &&
+			    cell_sources_[i].provider_type == SignalProviderType::AmvInstance)
+				amv_instance_source_note_render_target(src, (uint32_t)vpW, (uint32_t)vpH);
+
 			/* Determine source dimensions for letterbox */
 			uint32_t srcW, srcH;
 			if (isPgm) {

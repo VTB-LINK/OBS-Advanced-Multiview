@@ -18,15 +18,23 @@ License: GPL-2.0-or-later
 
 #include <QDialog>
 
+#include <string>
+
 class ProviderSettingsForm;
+class ConfigManager;
 
 class EditSourceDialog : public QDialog {
 	Q_OBJECT
 public:
 	/* Construct the dialog populated from `cfg`. The caller is responsible
 	 * for showing it modally with exec() and then reading the new config
-	 * via signal_config() if exec() returned QDialog::Accepted. */
-	EditSourceDialog(const SignalConfig &cfg, QWidget *parent = nullptr);
+	 * via signal_config() if exec() returned QDialog::Accepted.
+	 *
+	 * `config` + `self_uuid` are only used when `cfg` is an AmvInstance cell
+	 * (issue #20): the form needs them to enumerate the other instances and mark
+	 * the current one. Null/empty is fine for every other provider. */
+	EditSourceDialog(const SignalConfig &cfg, ConfigManager *config = nullptr,
+			 const std::string &self_uuid = std::string(), QWidget *parent = nullptr);
 
 	/* Build a SignalConfig from the dialog state. Only valid after exec()
 	 * returns Accepted; on Cancel/Close the cell's existing config should

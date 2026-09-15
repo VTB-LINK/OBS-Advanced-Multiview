@@ -86,20 +86,17 @@ private:
 	 * CellAssignment with provider=Vlc. */
 	QWidget *build_vlc_tab();
 
-	/* Issue #20 (P2): AMV Instance tab — a flat list of the OTHER AMV instances
-	 * (name shown, UUID stored). Selecting one returns a CellAssignment with
-	 * provider=AmvInstance and the target UUID in providerSettings. Minimal by
-	 * design: three-tier resolution / full-grid switch / current-instance marker
-	 * / audio placeholder are P3. */
+	/* Issue #20: AMV Instance tab (nested source). P3 hosts the shared
+	 * AmvInstanceForm (instance selector with the current-instance marker,
+	 * three-tier resolution, full/grid switch, audio placeholder) so the picker
+	 * and EditSourceDialog drive an identical surface through ProviderSettingsForm. */
 	QWidget *build_amv_instance_tab();
-	void populate_amv_instances();
 
 	QTabWidget *tabs_;
 	QLineEdit *filter_edit_;
 	QListWidget *special_list_;
 	QListWidget *scene_list_;
 	QListWidget *source_list_;
-	QListWidget *amv_instance_list_ = nullptr;
 
 	/* Phase 3 / M6: external provider placeholder tabs. Stored so the
 	 * tab index lookup in on_accept() can recognize them and reject
@@ -132,6 +129,9 @@ private:
 
 	/* Phase 3 / M6.4: VLC form (VLC tab). */
 	ProviderSettingsForm *vlc_form_ = nullptr;
+
+	/* Issue #20 (P3): nested AMV-instance form (AMV Instance tab). */
+	ProviderSettingsForm *amv_instance_form_ = nullptr;
 
 	/* Issue #20: instance enumeration source for the AMV Instance tab. */
 	ConfigManager *config_ = nullptr;

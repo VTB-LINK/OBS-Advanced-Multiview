@@ -16,7 +16,8 @@ License: GPL-2.0-or-later
 
 #include "provider-settings-forms.hpp"
 
-ProviderSettingsForm *make_provider_settings_form(SignalProviderType type, QWidget *parent)
+ProviderSettingsForm *make_provider_settings_form(SignalProviderType type, QWidget *parent, ConfigManager *config,
+						  const std::string &self_uuid)
 {
 	switch (type) {
 	case SignalProviderType::Ffmpeg:
@@ -27,6 +28,8 @@ ProviderSettingsForm *make_provider_settings_form(SignalProviderType type, QWidg
 		return new SpoutSenderForm(parent);
 	case SignalProviderType::Vlc:
 		return new VlcMediaForm(parent);
+	case SignalProviderType::AmvInstance:
+		return new AmvInstanceForm(config, self_uuid, parent);
 	default:
 		return nullptr;
 	}

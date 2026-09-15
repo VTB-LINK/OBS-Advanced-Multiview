@@ -132,13 +132,19 @@ public:
 			return r;
 		}
 
-		struct obs_video_info ovi;
-		const bool have_canvas = obs_get_video_info(&ovi) && ovi.base_width > 0 && ovi.base_height > 0;
+		/* Resolve the SAME (R, mode) the source's video_render will demand this
+		 * frame (issue #20 P3): its resolution mode drives R (follow-window
+		 * render target / follow-screen / manual preset), so a present front for
+		 * that exact key means the picture is genuinely renderable. In
+		 * follow-window mode R lags one frame here (this probe runs before
+		 * draw_cells hands the source the current render-target size), which the
+		 * grace window and the sticky display state absorb. */
+		uint32_t rw = 0, rh = 0;
+		const bool have_dims = amv_instance_source_resolve_dims(src, rw, rh);
 
-		AmvInstanceCore *target = have_canvas ? multiview_pull_target_graphics(uuid) : nullptr;
+		AmvInstanceCore *target = have_dims ? multiview_pull_target_graphics(uuid) : nullptr;
 		if (target) {
-			AmvInstanceCore::ConsumerFrame front =
-				target->get_consumer_front(ovi.base_width, ovi.base_height, mode);
+			AmvInstanceCore::ConsumerFrame front = target->get_consumer_front(rw, rh, mode);
 			if (front.texture) {
 				r.code = HealthCode::Active;
 				r.width = front.width;

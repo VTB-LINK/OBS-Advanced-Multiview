@@ -73,9 +73,10 @@
 其 `get_width/get_height` 报告 R，使 `draw_cells` 的 letterbox 计算不变。`create_private_source` 返回 `obs_source_create_private("amv_instance_source", …)`；`refresh_cell`、健康监督、`draw_cells` 都把它当作普通外部源，**不改**。
 
 ### 3.4 分辨率模式 → R
-- 手动：`R` 取预设（`resolve_output_dimensions`）。固定、可共享。
-- 跟随屏幕：`R` = A 窗口所在屏分辨率（从 Qt 侧传入）。
-- 跟随窗口（默认）：`R` = 该 cell 实际像素（封顶屏幕）。AMV 的 cell 渲染本就算出了 cell 像素矩形；对我们自己的源类型，绘制前把该尺寸请求给 B 的消费者合成，`get_width/get_height` 随之报告该 R。尺寸变即重合成；**对请求尺寸做量化/防抖**，避免拖动窗口时合成抖动。
+**R 是「窗口/屏幕级」的大尺寸，绝不是 cell 尺寸**：cell 在网格里很小，若按 cell 像素合成 B，B 的 UI（标签/VU 有最小字号钳制）相对那一小块会巨大变形。正确是让 B 在窗口/屏幕级尺寸下合成（看起来就像在该尺寸窗口里），再整幅缩小进小 cell。
+- 手动：`R` 取预设（`resolve_output_dimensions`：画布/输出/重缩放/自定义）。固定、可共享。
+- 跟随屏幕：`R` = 拉取方窗口所在屏的分辨率（Qt/UI 概念，需从 MultiviewWindow plumb 到源；不随窗口内缩放变）。
+- 跟随窗口（默认）：`R` = 正在渲染该 B-cell 的 **MultiviewWindow 实际渲染目标（整窗）尺寸，含被拉伸后的真实宽高比**（随窗口缩放变化，封顶屏幕分辨率）。取值走 `video_render` 里的当前渲染目标尺寸（核实 `gs_getsize()` 返回的是窗口/display 而非 cell 视口）——**不是** cell 矩形/`gs_get_viewport`，也**不是**把 R 套成画布宽高比的 letterbox 盒子。窗口被拉成超宽/超窄，B 就在该真实尺寸+真实宽高比下用 consumer_engine_ 布局（B 的网格随之拉伸/压扁，= B 自己那个尺寸/形状窗口里的样子）。`get_width/get_height` 同报这个真实 R（不套画布比），letterbox 数学与 R 一致、绝不二次缩放/黑边填充。要点：**窗口级大尺寸（非小 cell，避免 UI 巨大）＋真实宽高比（不 letterbox）两者同时满足**。A 可有多窗口（issue #10），同一 B-cell 在不同尺寸窗口按各自 R 合成（消费者合成按 (R, 画面模式) 键支持多 R，封顶 kMaxConsumerTargets=8）；拖动窗口时对 R 做量化/防抖避免合成抖动。
 
 ### 3.5 递归 / 时序安全
 消费者只读已发布 front；B 的合成由驱动独立完成。无同步嵌套合成 ⇒ 任何环/自指/深度都不递归 ⇒ 无需环检测、无需深度上限。跨实例渲染顺序未定，故消费者会看到 B 的上一帧（当 B 在其后合成）：每跳 ≤1 帧延迟、沿链累加——**文档化，非缺陷**。读已完成纹理句柄不取 B 锁；两个 core 的 `source_mutex_` 绝不嵌套。
