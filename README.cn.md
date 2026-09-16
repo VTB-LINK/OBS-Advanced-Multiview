@@ -22,7 +22,8 @@ OBS 高级多视图保留原生 Multiview 的基本用途，但去掉了一些�
 - OBS 原生 Multiview 没有细分到单元格的信号丢失处理。本插件可以显示**源缺失、Signal Lost、占位图、fallback 状态和重连操作**。
 - OBS 原生 Multiview 是一组固定监看。本插件可以保存**多个 Multiview 实例**（各有独立布局和设置），还能**为同一个实例同时打开多个投影窗口**，这些窗口共用同一组源。
 - OBS 原生 Multiview 无法创建外部监看信号。本插件会尽可能用 OBS 私有源创建外部 provider 单元格，不需要把每一路监看信号加入正式场景。
-- OBS 原生 Multiview 无法把画面送出去。本插件可以**把合成后的多视图作为 NDI、Spout 或 DeckLink 信号输出**（视频，并在支持时输出音频），无需经由场景滤镜输出。
+- OBS 原生 Multiview 无法在一个多视图里再显示另一个多视图。本插件可以把**另一个高级多视图实例作为单元格**，将它的合成画面（完整或仅网格）嵌套进另一个实例、甚至自身。
+- OBS 原生 Multiview 无法把画面送出去。本插件可以**把合成后的多视图作为 NDI、Spout、DeckLink 或 AJA 信号输出**（视频，并在支持时输出音频），无需经由场景滤镜输出。
 
 ## 功能
 
@@ -55,15 +56,24 @@ OBS 高级多视图保留原生 Multiview 的基本用途，但去掉了一些�
 - WebRTC 目前是预留 provider，运行时尚未实现。
 - NDI 和 Spout 通过宿主 OBS 插件访问。本插件不内置 NDI SDK，也不内置单独的 Spout SDK。
 
+### 嵌套多视图单元格
+
+- **把另一个高级多视图实例作为单元格** —— 在一个实例的单元格里显示另一个实例（或它自己）的实时合成画面。
+- **完整或仅网格画面** —— 目标的完整合成（标签、VU、高亮、叠加层），或仅每格源画面。
+- **单元格级分辨率** —— 跟随拉取窗口、跟随主屏，或固定的手动预设。
+- 在进程内读取目标已发布的上一帧合成，无需额外配置输出；跨引用、自引用与多层嵌套均稳定。
+
 ### 外部输出
 
 - **将合成后的多视图作为 NDI 输出**（视频 + 音频）。
 - **将合成后的多视图作为 Spout 输出**（Windows，仅视频）。
 - **将合成后的多视图输出到 Blackmagic SDI/HDMI DeckLink 输出**（视频 + 音频）。
+- **将合成后的多视图输出到 AJA SDI/HDMI 硬件**（视频 + 音频）。
 - DeckLink 支持选择设备、硬件模式、keyer 模式、强制 SDR，以及音频轨道。
+- AJA 支持选择设备、I/O 连接、视频格式、像素格式、SDI 传输，以及音频轨道。
 - 输出音频源可选：跟随推流轨道、手动指定轨道，或无音频。
 - 输出独立于场景运行，没有任何窗口打开时也持续发送。
-- NDI 和 Spout 支持选择输出分辨率与帧率；DeckLink 使用所选硬件模式。
+- NDI 和 Spout 支持选择输出分辨率与帧率；DeckLink 与 AJA 使用所选硬件格式。
 
 ### 视觉设置
 
@@ -128,6 +138,7 @@ OBS 高级多视图保留原生 Multiview 的基本用途，但去掉了一些�
   - VLC 播放列表单元格需要 OBS VLC 源支持
 - 使用 **NDI 输出**需安装 NDI 5 或 6 运行时（NDI Tools 或 NDI 运行时分发包）。NDI 输出为内置功能，不需要 DistroAV。
 - 使用 **DeckLink 输出**时，OBS 必须提供可用的 DeckLink 输出插件，并检测到受支持的 Blackmagic DeckLink 设备。所选硬件模式的帧率必须与 OBS 画布帧率一致。
+- 使用 **AJA 输出**时，OBS 必须提供可用的 AJA 输出插件，并检测到受支持的 AJA 设备。所选视频格式的帧率必须与 OBS 画布帧率一致。
 
 项目构建系统支持 macOS 和 Linux，但当前验证重点仍是 Windows。
 
@@ -207,6 +218,10 @@ cmake --build build_x64 --config RelWithDebInfo --target obs-advanced-multiview
 
 内置的 **DeckLink 外部输出**复用 OBS 已注册的 `decklink_output` 类型，构建时不需要单独的 DeckLink SDK。运行时需要 OBS 提供 DeckLink 输出插件并检测到兼容的 Blackmagic 设备。可用模式会按 OBS 画布帧率过滤；输出使用所选硬件模式的原生分辨率，并可包含 SDI/HDMI 音频。
 
+### AJA 输出
+
+内置的 **AJA 外部输出**复用 OBS 已注册的 `aja_output` 类型，构建时不需要 AJA NTV2 SDK。运行时需要 OBS 提供 AJA 输出插件（带 NTV2 支持）并检测到兼容的 AJA 设备。可用视频格式会按 OBS 画布帧率过滤；输出使用所选格式的原生分辨率，并可包含 SDI/HDMI 音频。
+
 ## 文档
 
 - [开发工作流](docs/DEVELOPMENT.md)
@@ -220,7 +235,7 @@ cmake --build build_x64 --config RelWithDebInfo --target obs-advanced-multiview
 
 ## 当前状态
 
-1.0 发布候选版聚焦于 Windows 使用体验、自定义多视图布局、**每个实例多投影窗口**、OBS 内部源监看、FFmpeg/NDI/Spout/VLC 外部信号提供器单元格、**NDI/Spout/DeckLink 外部输出**、信号丢失处理、视觉自定义，以及英文 / 简体中文双语界面。
+1.0 发布候选版聚焦于 Windows 使用体验、自定义多视图布局、**每个实例多投影窗口**、OBS 内部源监看、FFmpeg/NDI/Spout/VLC 外部信号提供器单元格、**NDI/Spout/DeckLink/AJA 外部输出**、信号丢失处理、视觉自定义，以及英文 / 简体中文双语界面。
 
 ## 许可证
 

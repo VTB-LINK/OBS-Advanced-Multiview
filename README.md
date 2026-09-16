@@ -22,7 +22,8 @@ OBS Advanced Multiview keeps the same basic idea as OBS Multiview, but removes s
 - OBS Multiview does not provide detailed per-cell signal-lost handling. This plugin can show **missing-source states, placeholder images, signal-lost images, fallback states, and reconnect controls**.
 - OBS Multiview is tied to one set of monitor views. This plugin lets you save **multiple multiview instances** with different layouts and settings, and open **several projector windows of the same instance at once**, all sharing one set of sources.
 - OBS Multiview does not create external monitoring feeds. This plugin creates external provider cells as private OBS sources where possible, so they do not need to be added to your normal scenes.
-- OBS Multiview cannot send its anywhere. This plugin can **output the composed multiview as an NDI, Spout, or DeckLink signal** (video, plus audio where supported), without routing it through a scene filter output.
+- OBS Multiview cannot show one multiview inside another. This plugin can use **another Advanced Multiview instance as a cell**, nesting one instance's composited view (full or grid-only) inside another instance or itself.
+- OBS Multiview cannot send its anywhere. This plugin can **output the composed multiview as an NDI, Spout, DeckLink, or AJA signal** (video, plus audio where supported), without routing it through a scene filter output.
 
 ## Features
 
@@ -55,15 +56,24 @@ OBS Advanced Multiview keeps the same basic idea as OBS Multiview, but removes s
 - WebRTC is present as a placeholder provider, but runtime support is not implemented yet.
 - NDI and Spout are accessed through host OBS plugins. This plugin does not bundle the NDI SDK or a separate Spout SDK.
 
+### Nested Multiview Cells
+
+- **Another Advanced Multiview instance as a cell** — show one instance's live composited grid inside a cell of another instance, or of itself.
+- **Full or grid-only picture** — the target's full composition (labels, VU meters, highlight, overlays), or just its per-cell pictures.
+- **Per-cell resolution** — follow the pulling window, follow the primary screen, or a fixed manual preset.
+- Reads the target's last composited frame in-process, with no extra output routing to set up; cross-reference, self-reference, and deep nesting stay stable.
+
 ### External Output
 
 - **NDI output of the composed multiview** (video + audio).
 - **Spout output of the composed multiview** (Windows, video only).
 - **DeckLink output of the composed multiview** to Blackmagic SDI/HDMI hardware (video + audio).
+- **AJA output of the composed multiview** to AJA SDI/HDMI hardware (video + audio).
 - DeckLink settings include the device, hardware mode, keyer mode, Force SDR, and audio track selection.
+- AJA settings include the device, I/O connection, video format, pixel format, SDI transport, and audio track selection.
 - Output audio source: follow the streaming track, a manual track, or none.
 - Output runs independently of scenes and keeps sending with no window open.
-- Selectable output resolution and frame rate for NDI and Spout; DeckLink uses the selected hardware mode.
+- Selectable output resolution and frame rate for NDI and Spout; DeckLink and AJA use the selected hardware format.
 
 ### Visual Settings
 
@@ -128,6 +138,7 @@ Performance work keeps the multiview from pressuring the program output during a
   - OBS VLC source support for VLC playlist cells
 - For **NDI output**, an NDI 5 or 6 runtime (NDI Tools or the NDI redistributable) installed. NDI output is built in and does not need DistroAV.
 - For **DeckLink output**, OBS must have its DeckLink output plugin available and a supported Blackmagic DeckLink device must be detected. The selected hardware mode must match the OBS canvas frame rate.
+- For **AJA output**, OBS must have its AJA output plugin available and a supported AJA device must be detected. The selected video format must match the OBS canvas frame rate.
 
 macOS and Linux support is planned through the cross-platform build system, but current validation is Windows-first.
 
@@ -207,6 +218,10 @@ At runtime the plugin loads the NDI runtime library dynamically (nothing is bund
 
 The built-in **DeckLink external output** reuses OBS's registered `decklink_output` type and does not require a separate DeckLink SDK to build. At runtime, OBS must provide the DeckLink output plugin and detect a compatible Blackmagic device. Available modes are filtered to the OBS canvas frame rate; the output uses the selected hardware mode's native raster and can include SDI/HDMI audio.
 
+### AJA output
+
+The built-in **AJA external output** reuses OBS's registered `aja_output` type and does not require the AJA NTV2 SDK to build. At runtime, OBS must provide the AJA output plugin (built with NTV2 support) and detect a compatible AJA device. Available video formats are filtered to the OBS canvas frame rate; the output uses the selected format's native raster and can include SDI/HDMI audio.
+
 ## Documentation
 
 - [Development workflow](docs/DEVELOPMENT.md)
@@ -220,7 +235,7 @@ Design and implementation notes are kept under [docs](docs/). Project milestones
 
 ## Current Status
 
-The 1.0 release candidate focuses on Windows operation, custom multiview layouts, **multiple projector windows per instance**, internal OBS source monitoring, external media/NDI/Spout/VLC provider cells, **NDI/Spout/DeckLink external output**, signal-lost handling, visual customization, and bilingual English / Simplified Chinese UI.
+The 1.0 release candidate focuses on Windows operation, custom multiview layouts, **multiple projector windows per instance**, internal OBS source monitoring, external media/NDI/Spout/VLC provider cells, **NDI/Spout/DeckLink/AJA external output**, signal-lost handling, visual customization, and bilingual English / Simplified Chinese UI.
 
 ## License
 
