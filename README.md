@@ -235,7 +235,7 @@ Design and implementation notes are kept under [docs](docs/). Project milestones
 
 ## Current Status
 
-The 1.0 release candidate focuses on Windows operation, custom multiview layouts, **multiple projector windows per instance**, internal OBS source monitoring, external media/NDI/Spout/VLC provider cells, **NDI/Spout/DeckLink/AJA external output**, signal-lost handling, visual customization, and bilingual English / Simplified Chinese UI.
+The 1.x focuses on Windows operation, custom multiview layouts, **multiple projector windows per instance**, internal OBS source monitoring, external media/NDI/Spout/VLC provider cells, **NDI/Spout/DeckLink/AJA external output**, signal-lost handling, visual customization, and bilingual English / Simplified Chinese UI.
 
 ## License
 

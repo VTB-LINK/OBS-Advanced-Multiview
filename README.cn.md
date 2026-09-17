@@ -235,7 +235,7 @@ cmake --build build_x64 --config RelWithDebInfo --target obs-advanced-multiview
 
 ## 当前状态
 
-1.0 发布候选版聚焦于 Windows 使用体验、自定义多视图布局、**每个实例多投影窗口**、OBS 内部源监看、FFmpeg/NDI/Spout/VLC 外部信号提供器单元格、**NDI/Spout/DeckLink/AJA 外部输出**、信号丢失处理、视觉自定义，以及英文 / 简体中文双语界面。
+1.x 版本聚焦于 Windows 使用体验、自定义多视图布局、**每个实例多投影窗口**、OBS 内部源监看、FFmpeg/NDI/Spout/VLC 外部信号提供器单元格、**NDI/Spout/DeckLink/AJA 外部输出**、信号丢失处理、视觉自定义，以及英文 / 简体中文双语界面。
 
 ## 许可证
 
